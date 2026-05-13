@@ -1,0 +1,928 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: EXPORT_MFG
+industry_name_cn: 出海制造汽车零部件机械家电
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 汽车零部件
+      - 工程机械
+      - 通用机械
+      - 工业设备
+      - 家电
+      - 工具
+      - 轻工消费品
+      - 海外收入占比高的中国制造企业
+    core_judgment: >-
+      该板块的核心是海外需求、渠道库存、本地化产能、汇率、关税和品牌/产品升级。
+      出海不是简单出口增长，而是利润率、现金流和政策风险的组合。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注海外需求、本地化、汇率、产品升级、汽车定点、贸易风险等路径。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.10}
+    - {name: 温和多头, probability: 0.30}
+    - {name: 结构分化, probability: 0.25}
+    - {name: 等待验证, probability: 0.20}
+    - {name: 杀估值, probability: 0.15}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、海外需求}
+      - {name: price_implied_expectation, description: 股价隐含, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 新闻、订单}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 出口数据 / 订单}
+      - {name: tail_risk_prob, description: 尾部风险, source: 关税 / 制裁}
+
+  path_dedup_groups: [需求组, 价格组, 竞争组, 质量组, 风险组]
+
+  exposure:
+    factors:
+      - 海外收入占比与区域分布
+      - 海外产能 / 本地化能力
+      - 客户绑定（车企 / 商超 / 平台）
+      - 汇率敏感度与套保比例
+      - 产品升级与品牌力
+      - 贸易合规与库存控制
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 海外收入高且本地化完整、订单可见
+      "4": 海外受益但本地化或汇率受限
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 出口订单与定点
+      GrossMargin: 汇率 / 产品结构 / 关税
+      OpexRatio: 海外渠道与认证
+      EBIT_EPS: 经营杠杆显著
+      FCF: 海外建厂期承压
+      Leverage: 投资期较高
+
+  valuation_mix:
+    weights:
+      PE: 0.40
+      EV_EBITDA: 0.25
+      DCF: 0.15
+      PB: 0.10
+      SOTP: 0.10
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 关税 / 制裁 / 贸易摩擦
+      - 海外需求骤降或库存高企
+      - 汇率反向 + 套保失败
+      - 客户份额丢失
+      - 海外产能利用率不足
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 出口数据 / 订单
+    - 海外渠道库存
+    - 海外产能利用率
+    - 汇率与套保比例
+    - 车企定点 / SOP
+    - 关税 / 制裁政策
+
+  falsification:
+    bullish_triggers:
+      - 海外需求修复
+      - 本地化产能利用率提升
+      - 高端产品与品牌价格上行
+      - 大客户定点订单连续
+    bearish_triggers:
+      - 海外去库存延续
+      - 关税 / 制裁升级
+      - 汇率反向 + 套保损失
+      - 价格战削弱毛利率
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    出海制造的图谱重点是判断海外需求与本地化是否真实兑现到收入和利润，并避免
+    被关税、汇率、价格战吞噬。
+
+nodes:
+  - id: EVENT.overseas_demand_recovery
+    layer: event
+    type: demand_event
+    label_cn: 海外需求修复 / 补库
+    industry_tags: [EXPORT_MFG]
+  - id: EVENT.local_factory_buildout
+    layer: event
+    type: customer_capex_event
+    label_cn: 海外建厂 / 本地化
+    industry_tags: [EXPORT_MFG]
+  - id: EVENT.fx_move
+    layer: event
+    type: macro_event
+    label_cn: 人民币贬值 / 汇兑有利
+    industry_tags: [EXPORT_MFG]
+  - id: EVENT.product_upgrade
+    layer: event
+    type: technology_event
+    label_cn: 高端产品 / 品牌渠道升级
+    industry_tags: [EXPORT_MFG]
+  - id: EVENT.auto_designation
+    layer: event
+    type: customer_capex_event
+    label_cn: 车企定点
+    industry_tags: [EXPORT_MFG]
+
+  - id: SIGNAL.export_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: 出口订单
+    industry_tags: [EXPORT_MFG]
+  - id: SIGNAL.local_capacity_util
+    layer: industry_signal
+    type: capacity_signal
+    label_cn: 海外产能利用率
+    industry_tags: [EXPORT_MFG]
+  - id: SIGNAL.fx_pass_through
+    layer: industry_signal
+    type: price_signal
+    label_cn: 汇兑收益与毛利率
+    industry_tags: [EXPORT_MFG]
+  - id: SIGNAL.asp_uplift
+    layer: industry_signal
+    type: price_signal
+    label_cn: ASP 上升 / 高毛利占比
+    industry_tags: [EXPORT_MFG]
+  - id: SIGNAL.auto_lifecycle_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: 平台生命周期订单
+    industry_tags: [EXPORT_MFG]
+
+  - id: FIN.export_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 出口收入
+    industry_tags: [EXPORT_MFG]
+    properties: {field: Revenue}
+  - id: FIN.export_gross_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 出口毛利率
+    industry_tags: [EXPORT_MFG]
+    properties: {field: GrossMargin}
+
+  - id: VAL.export_growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 出海制造成长估值
+    industry_tags: [EXPORT_MFG]
+
+  - id: RISK.tariff_sanction
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 关税 / 制裁 / 贸易摩擦
+    industry_tags: [EXPORT_MFG]
+  - id: RISK.fx_reversal
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 汇率反向 + 套保损失
+    industry_tags: [EXPORT_MFG]
+  - id: RISK.customer_share_loss
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 客户份额丢失
+    industry_tags: [EXPORT_MFG]
+
+  - id: COMPANY.EXPORT_MFG_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 出海制造板块代表 ETF
+    industry_tags: [EXPORT_MFG]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.000333_SZ
+    layer: stock
+    type: company
+    label_cn: 美的集团
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 000333.SZ, role: target}
+  - id: COMPANY.000425_SZ
+    layer: stock
+    type: company
+    label_cn: 徐工机械
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 000425.SZ, role: target}
+  - id: COMPANY.000651_SZ
+    layer: stock
+    type: company
+    label_cn: 格力电器
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 000651.SZ, role: target}
+  - id: COMPANY.00175_HK
+    layer: stock
+    type: company
+    label_cn: 吉利汽车
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 00175.HK, role: target}
+  - id: COMPANY.002050_SZ
+    layer: stock
+    type: company
+    label_cn: 三花智控
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+    properties: {ts_code: 002050.SZ, role: target}
+  - id: COMPANY.002126_SZ
+    layer: stock
+    type: company
+    label_cn: 银轮股份
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 002126.SZ, role: target}
+  - id: COMPANY.002920_SZ
+    layer: stock
+    type: company
+    label_cn: 德赛西威
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 002920.SZ, role: target}
+  - id: COMPANY.00300_HK
+    layer: stock
+    type: company
+    label_cn: 美的集团-H
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+    properties: {ts_code: 00300.HK, role: target}
+  - id: COMPANY.00669_HK
+    layer: stock
+    type: company
+    label_cn: 创科实业
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+    properties: {ts_code: 00669.HK, role: target}
+  - id: COMPANY.01211_HK
+    layer: stock
+    type: company
+    label_cn: 比亚迪股份
+    industry_tags: [STORAGE_GRID, EXPORT_MFG]
+    properties: {ts_code: 01211.HK, role: target}
+  - id: COMPANY.02015_HK
+    layer: stock
+    type: company
+    label_cn: 理想汽车
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 02015.HK, role: target}
+  - id: COMPANY.02333_HK
+    layer: stock
+    type: company
+    label_cn: 长城汽车
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 02333.HK, role: target}
+  - id: COMPANY.02338_HK
+    layer: stock
+    type: company
+    label_cn: 潍柴动力
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 02338.HK, role: target}
+  - id: COMPANY.03606_HK
+    layer: stock
+    type: company
+    label_cn: 福耀玻璃
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 03606.HK, role: target}
+  - id: COMPANY.06690_HK
+    layer: stock
+    type: company
+    label_cn: 海尔智家
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 06690.HK, role: target}
+  - id: COMPANY.09868_HK
+    layer: stock
+    type: company
+    label_cn: 小鹏汽车
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 09868.HK, role: target}
+  - id: COMPANY.600031_SH
+    layer: stock
+    type: company
+    label_cn: 三一重工
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 600031.SH, role: target}
+  - id: COMPANY.600660_SH
+    layer: stock
+    type: company
+    label_cn: 福耀玻璃
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 600660.SH, role: target}
+  - id: COMPANY.600690_SH
+    layer: stock
+    type: company
+    label_cn: 海尔智家
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: 600690.SH, role: target}
+  - id: COMPANY.601689_SH
+    layer: stock
+    type: company
+    label_cn: 拓普集团
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+    properties: {ts_code: 601689.SH, role: target}
+  - id: COMPANY.APTV_US
+    layer: stock
+    type: company
+    label_cn: Aptiv
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: APTV.US, role: target}
+  - id: COMPANY.BWA_US
+    layer: stock
+    type: company
+    label_cn: BorgWarner
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: BWA.US, role: target}
+  - id: COMPANY.CAT_US
+    layer: stock
+    type: company
+    label_cn: Caterpillar
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: CAT.US, role: target}
+  - id: COMPANY.CMI_US
+    layer: stock
+    type: company
+    label_cn: Cummins
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: CMI.US, role: target}
+  - id: COMPANY.DE_US
+    layer: stock
+    type: company
+    label_cn: Deere
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: DE.US, role: target}
+  - id: COMPANY.ETN_US
+    layer: stock
+    type: company
+    label_cn: Eaton
+    industry_tags: [STORAGE_GRID, EXPORT_MFG]
+    properties: {ts_code: ETN.US, role: target}
+  - id: COMPANY.GE_US
+    layer: stock
+    type: company
+    label_cn: GE Aerospace
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: GE.US, role: target}
+  - id: COMPANY.GEV_US
+    layer: stock
+    type: company
+    label_cn: GE Vernova
+    industry_tags: [STORAGE_GRID, EXPORT_MFG]
+    properties: {ts_code: GEV.US, role: target}
+  - id: COMPANY.MGA_US
+    layer: stock
+    type: company
+    label_cn: Magna
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: MGA.US, role: target}
+  - id: COMPANY.WHR_US
+    layer: stock
+    type: company
+    label_cn: Whirlpool
+    industry_tags: [EXPORT_MFG]
+    properties: {ts_code: WHR.US, role: target}
+
+edges:
+  - id: EDGE.EXP.001
+    source: EVENT.overseas_demand_recovery
+    target: SIGNAL.export_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.70
+    threshold: 订单持续性
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.EXP.002
+    source: SIGNAL.export_orders
+    target: FIN.export_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.60
+    threshold: 订单转收入
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.EXP.003
+    source: EVENT.local_factory_buildout
+    target: SIGNAL.local_capacity_util
+    relation: ramps_capacity
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 产能利用率达临界
+    lag: 3-8 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, supply_chain]
+  - id: EDGE.EXP.004
+    source: SIGNAL.local_capacity_util
+    target: FIN.export_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.50
+    threshold: 利用率拐点
+    lag: 1-3 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.EXP.005
+    source: EVENT.fx_move
+    target: SIGNAL.fx_pass_through
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.60
+    threshold: 套保比例
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.EXP.006
+    source: SIGNAL.fx_pass_through
+    target: FIN.export_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 汇率传导
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.EXP.007
+    source: EVENT.product_upgrade
+    target: SIGNAL.asp_uplift
+    relation: drives_asp
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.65
+    threshold: 高毛利产品占比
+    lag: 2-6 quarters
+    dedup_group: 质量组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.EXP.008
+    source: SIGNAL.asp_uplift
+    target: FIN.export_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 毛利率改善
+    lag: 1-3 quarters
+    dedup_group: 质量组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.EXP.009
+    source: EVENT.auto_designation
+    target: SIGNAL.auto_lifecycle_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.70
+    threshold: 定点金额和 SOP
+    lag: 3-10 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.EXP.010
+    source: SIGNAL.auto_lifecycle_orders
+    target: FIN.export_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.60
+    threshold: 订单确认收入
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.EXP.011
+    source: FIN.export_gross_margin
+    target: VAL.export_growth_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 估值切换
+    lag: 即时-2 quarters
+    dedup_group: 质量组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.EXP.012
+    source: VAL.export_growth_multiple
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.60
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.EXP.RISK.001
+    source: RISK.tariff_sanction
+    target: FIN.export_revenue
+    relation: dampens_revenue
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.15
+    threshold: 海外占比高时敏感
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.EXP.RISK.002
+    source: RISK.fx_reversal
+    target: FIN.export_gross_margin
+    relation: dampens_margin
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 0.95
+    threshold: 套保损失
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.EXP.RISK.003
+    source: RISK.customer_share_loss
+    target: SIGNAL.auto_lifecycle_orders
+    relation: dampens_orders
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.00
+    threshold: 客户份额下降
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.EXP.MEMBER.001
+    source: COMPANY.000333_SZ
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.002
+    source: COMPANY.000425_SZ
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.003
+    source: COMPANY.000651_SZ
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.004
+    source: COMPANY.00175_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.005
+    source: COMPANY.002050_SZ
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.006
+    source: COMPANY.002126_SZ
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.007
+    source: COMPANY.002920_SZ
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.008
+    source: COMPANY.00300_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.009
+    source: COMPANY.00669_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.010
+    source: COMPANY.01211_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.011
+    source: COMPANY.02015_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.012
+    source: COMPANY.02333_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.013
+    source: COMPANY.02338_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.014
+    source: COMPANY.03606_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.015
+    source: COMPANY.06690_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.016
+    source: COMPANY.09868_HK
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.017
+    source: COMPANY.600031_SH
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.018
+    source: COMPANY.600660_SH
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.019
+    source: COMPANY.600690_SH
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.020
+    source: COMPANY.601689_SH
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.021
+    source: COMPANY.APTV_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.022
+    source: COMPANY.BWA_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.023
+    source: COMPANY.CAT_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.024
+    source: COMPANY.CMI_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.025
+    source: COMPANY.DE_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.026
+    source: COMPANY.ETN_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.027
+    source: COMPANY.GE_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.028
+    source: COMPANY.GEV_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.029
+    source: COMPANY.MGA_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.EXP.MEMBER.030
+    source: COMPANY.WHR_US
+    target: COMPANY.EXPORT_MFG_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 海外需求 / 本地化 / 汇率 / 升级 / 定点 → alpha
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 高中心度因子（订单 / 利用率 / ASP / 毛利率 / 估值）
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 海外大客户 / 车企 / 渠道
+    include_node_types: [company, customer_capex_event, demand_signal, order_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 关税 / 汇率 / 客户份额
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

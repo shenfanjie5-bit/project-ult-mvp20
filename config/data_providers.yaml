@@ -1,0 +1,250 @@
+schema_version: 1
+catalog_id: mvp20-providers-v1
+description: >-
+  External market-data providers the MVP plans to integrate. mvp20 only
+  certifies that this catalog is well-formed and that every market in the
+  leader pool (A / HK / US) has at least one active provider. Provider
+  client implementations live upstream in data-platform — secrets stay in
+  env vars, never in this file.
+
+providers:
+  # ===== US-listed primary =====
+  - id: fmp
+    display_name: Financial Modeling Prep
+    homepage: https://site.financialmodelingprep.com
+    base_url: https://financialmodelingprep.com/api
+    auth_type: api_key
+    secret_env_var: FMP_API_KEY
+    status: active
+    supported_markets: [US]
+    # ---- Subscription tier (operator-curated; affects accessible capabilities) ----
+    # Current FMP plan: Starter ($14/mo, 300 req/min, 5+ years history).
+    # See docs/data_sources/FMP_TIER_REQUIREMENTS.md for the full mapping.
+    # When you upgrade FMP to Premium, restore the capabilities listed under
+    # `tier_locked_premium`. Same for Ultimate. The list here only declares
+    # what the active subscription can actually call — calls to locked
+    # capabilities will return 401 "Subscription Required".
+    fmp_current_tier: starter
+    capabilities:
+      # ===== Starter-accessible (active) =====
+      - price_daily
+      - price_intraday        # hourly bars only on Starter; minute bars need Premium
+      - fundamentals          # basic statements; 30+ year history needs Premium
+      - earnings_calendar
+      - news
+      - insider_trading       # basic; daily updates / roster need Premium
+      - company_profile
+      - buyback               # /historical/buyback / /shares_float
+      - dividends             # /historical-stock-dividend / /dividend-calendar
+      - market_index          # /historical-index
+      - trading_calendar      # /market-hours / /holiday-calendar
+      - ipo_calendar          # /ipo_calendar
+      - treasury_rates        # /treasury (US yield curve)
+      - corporate_actions     # /historical-stock-split (M&A history needs Premium)
+      - peer_comparison       # /stock_peers
+      - analyst_estimates     # /stable/analyst-estimates - FMP Starter verified working 2026-05 (user)
+      - dcf_valuation         # /stable/discounted-cash-flow - FMP Starter verified working 2026-05 (user)
+      - sec_filings           # /stable/sec-filings-search/symbol - Starter verified, fmp_source.py implements it
+      - forex                 # /stable/historical-price-eod (EURUSD/DXY) - FMP Starter verified 2026-05, powers L7.env.fx + L9.macro.fx
+    # The following capabilities are deliberately NOT declared under the
+    # current Starter plan because FMP returns 401. Restore them inline when
+    # you upgrade. Fallback providers shown after each.
+    tier_locked_premium:
+      - earnings_transcripts  # ❌ no fallback (FMP single-source)
+      - options_chain         # ✓ futu covers (deeper anyway)
+      - options_iv            # ✓ futu covers
+      - institutional_holdings  # ✓ tushare (top10_holders) + futu (get_holding_change_list)
+      # price_intraday minute bars: hourly-only Starter has price_intraday declared above
+    tier_locked_ultimate:
+      - esg_score             # ❌ no fallback (FMP single-source)
+      - government_trading    # ❌ no fallback (FMP single-source)
+    rate_limit_per_minute: 300
+    notes: >-
+      Primary provider for the ~98 US-listed constituents (NVDA, AAPL,
+      AMZN, AMD, etc.) plus the four customer-only Hyperscalers (META,
+      MSFT, GOOGL, AMZN). FMP also surfaces options chain and IV data
+      that feeds the future option-signal epic.
+
+  # ===== US fallback =====
+  - id: yfinance
+    display_name: Yahoo Finance (yfinance python lib)
+    homepage: https://github.com/ranaroussi/yfinance
+    base_url: https://query1.finance.yahoo.com
+    auth_type: none
+    status: active
+    supported_markets: [US, HK]
+    capabilities:
+      - price_daily
+      - fundamentals
+      - news
+      - company_profile
+      - dividends            # yfinance.Ticker.dividends 是免费且稳定的
+      - market_index         # ^GSPC / ^NDX / ^HSI 指数行情
+      - trading_calendar     # market_hours / holiday calendar
+    rate_limit_per_minute: 60
+    notes: >-
+      Free fallback for US tickers when FMP misses coverage; also
+      provides best-effort HK quotes (4-5 digit codes with .HK suffix).
+
+  # ===== A-share primary =====
+  - id: tushare
+    display_name: Tushare Pro
+    homepage: https://tushare.pro
+    base_url: https://api.tushare.pro
+    auth_type: token
+    secret_env_var: TUSHARE_TOKEN
+    status: active
+    supported_markets: [A]
+    capabilities:
+      # ===== Existing (round 1 + round 2) =====
+      - price_daily
+      - fundamentals
+      - news
+      - earnings_calendar
+      - institutional_holdings
+      - macro
+      - capital_flow
+      - cross_border_flow
+      - sector_constituents
+      - dragon_tiger_list
+      - limit_up_down
+      - margin_trading
+      - block_trade
+      - share_unlock
+      - holder_count
+      # ===== Round 3 (138-endpoint reconciliation 2026-04-28) =====
+      - ipo_calendar           # new_share (IPO 新股上市)
+      - company_profile        # stock_company / stk_managers / stock_basic
+      - trading_calendar       # trade_cal / bse_mapping / namechange / bak_basic
+      - risk_warning           # stock_st / st (ST / 退市)
+      - equity_pledge          # pledge_detail / pledge_stat (股权质押 — A 股雷区)
+      - buyback                # repurchase (股票回购 — 股东回报信号)
+      - dividends              # dividend (分红送股 — 高股息策略核心)
+      - ah_premium             # stk_ah_comparison (AH 比价 — 30+ 跨上市对必备)
+      - analyst_estimates      # report_rc (券商盈利预测 — 之前以为只有 FMP 有)
+      - chip_distribution      # cyq_perf (每日筹码及胜率)
+      - technical_factors      # stk_factor_pro / stk_nineturn / idx_factor_pro
+      - market_index           # index_basic / index_dailybasic / index_weekly /
+                               # index_monthly / idx_factor_pro / index_global /
+                               # daily_info / sz_daily_info (8 endpoints)
+      - market_capital_flow    # moneyflow_mkt_dc / moneyflow_cnt_ths / moneyflow_ind_ths
+      - sentiment_hot_list     # dc_hot / ths_hot (东财 / 同花顺 App 热榜)
+      - investor_relations_qa  # irm_qa_sh / irm_qa_sz (大模型语料 — 核心池 LLM 金矿)
+    rate_limit_per_minute: 200
+    notes: >-
+      Primary provider for the ~121 A-share constituents (.SH/.SZ/.BJ);
+      paid tier required for some endpoints (institutional holdings,
+      Northbound flows, level-2 quote).
+
+  # ===== A-share / HK fallback (free) =====
+  - id: akshare
+    display_name: AKShare
+    homepage: https://akshare.akfamily.xyz
+    base_url: https://akshare.akfamily.xyz
+    auth_type: none
+    status: active
+    supported_markets: [A, HK]
+    capabilities:
+      - price_daily
+      - fundamentals
+      - news
+      - macro
+      - alternative_data
+      - capital_flow
+      - cross_border_flow
+      - sector_constituents
+      - ipo_calendar
+      - dragon_tiger_list
+      - limit_up_down
+      - margin_trading
+      - block_trade
+      - share_unlock
+      - holder_count
+      # Round 3 cross-check coverage (free fallback for paid Tushare)
+      - company_profile
+      - trading_calendar
+      - risk_warning
+      - equity_pledge
+      - buyback
+      - dividends
+      - ah_premium
+      - chip_distribution
+      - technical_factors
+      - market_index
+      - market_capital_flow
+      - sentiment_hot_list
+    rate_limit_per_minute: 120
+    notes: >-
+      Free Python lib aggregating multiple Chinese-market sources; used
+      as A-share fallback and HK fallback when futu is not deployed.
+
+  # ===== HK primary deep + US options (Futu OpenD local daemon) =====
+  - id: futu
+    display_name: Futu OpenAPI (OpenD local gateway)
+    homepage: https://openapi.futunn.com
+    # No base_url: OpenD is a local TCP daemon, not a remote HTTP endpoint.
+    auth_type: local_gateway
+    secret_env_var: FUTU_OPEND_PASSWORD
+    status: active
+    gateway:
+      host: 127.0.0.1
+      port: 11111
+    supported_markets: [HK, US, A]
+    capabilities:
+      # Core market data
+      - price_daily
+      - price_intraday
+      - fundamentals
+      # Order-book microstructure (uniquely Futu among active providers)
+      - quote_l2
+      - tick_trades
+      - broker_queue_hk
+      - realtime_push
+      # Capital flow (Stock Connect 北向/南向 + 个股主力资金)
+      - capital_flow
+      - cross_border_flow
+      # Options + warrants + futures
+      - options_chain
+      - options_iv
+      - warrants
+      - index_futures
+      - ipo_calendar
+      - institutional_holdings
+      - sector_constituents
+      # Round 3: indices + technicals + calendar
+      - market_index           # 恒指 / 国指 / SPX / NDX 等指数 K 线
+      - technical_factors      # SDK 内置技术指标 + Greeks
+      - trading_calendar       # request_trading_days
+      # Round 4: company profile (Futu audit)
+      - company_profile        # get_security_info / get_stock_basicinfo
+    rate_limit_per_minute: 60
+    notes: >-
+      Connects to a locally-running Futu OpenD daemon (NOT a cloud REST
+      API). Operator must (1) install OpenD from
+      https://www.futunn.com/download/OpenAPI; (2) log in once with a
+      Futu account that has HK / US market data subscriptions;
+      (3) export FUTU_OPEND_PASSWORD as the encryption key the SDK
+      uses to connect to OpenD. gateway.host / gateway.port describe
+      where data-platform reaches OpenD — override locally if you run
+      OpenD on a different machine (e.g. NAS at 192.168.1.x:11111).
+      Provides deeper HK coverage than AKShare and a second source of
+      options chain / IV data alongside FMP.
+
+  # ===== Macro / Fed data (US-side macro context) =====
+  - id: fred
+    display_name: FRED (St. Louis Fed)
+    homepage: https://fred.stlouisfed.org
+    base_url: https://api.stlouisfed.org/fred
+    auth_type: api_key
+    secret_env_var: FRED_API_KEY
+    status: planned
+    supported_markets: [US]
+    capabilities:
+      - macro
+      - forex
+      - commodities
+    rate_limit_per_minute: 120
+    notes: >-
+      Macro context for AI Capex narrative (real rates, USD index, ISM,
+      etc.). Planned — wired in once macro features land in graph
+      priors.

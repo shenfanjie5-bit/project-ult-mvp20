@@ -1,0 +1,977 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: DOMESTIC_CONSUMPTION
+industry_name_cn: 内需服务消费文旅酒店航空医美
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 文旅
+      - 酒店
+      - 航空
+      - 机场
+      - 餐饮
+      - 大众消费品
+      - 医美
+      - 养老
+      - 托育
+      - 健康服务
+      - 服务消费
+    core_judgment: >-
+      该板块的核心是居民收入和消费信心、客流/客单价、供给收缩后的价格弹性以及
+      费用率控制。消费修复需要数据确认，不能只看政策口号。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注信心、出行、供给收缩、大众品、医美合规、低价竞争等路径。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.05}
+    - {name: 温和多头, probability: 0.20}
+    - {name: 等待验证, probability: 0.30}
+    - {name: 结构分化, probability: 0.20}
+    - {name: 杀估值, probability: 0.25}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、社零}
+      - {name: price_implied_expectation, description: 股价隐含, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 假期 / 新闻}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 高频客流 / 客单价}
+      - {name: tail_risk_prob, description: 尾部风险, source: 消费降级 / 监管}
+
+  path_dedup_groups: [需求组, 供给组, 质量组, 政策组, 风险组]
+
+  exposure:
+    factors:
+      - 服务消费业务占比
+      - 客流 / 客单价敏感度
+      - 渠道与门店覆盖
+      - 高端品牌力 / ASP
+      - 监管合规与政策受益
+      - 现金流与资产负债
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 直接受益于客流 / ASP 修复
+      "4": 间接受益但受供给约束
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 客流 × 客单价
+      GrossMargin: 价格 + 成本控制
+      OpexRatio: 门店 / 人员费用
+      EBIT_EPS: 经营杠杆显著
+      FCF: 现金流稳定
+      Leverage: 一般较低，部分酒店航空高
+
+  valuation_mix:
+    weights:
+      PE: 0.40
+      EV_EBITDA: 0.20
+      DCF: 0.15
+      PS: 0.15
+      Dividend: 0.10
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 消费降级 / 价格战
+      - 监管收紧（医美 / 教育）
+      - 油价 + 汇率上行（航空）
+      - 客流恢复慢于预期
+      - 资本开支期 + 负债压力
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 居民信心与社零
+    - 假期 / 商旅高频数据
+    - 客流 / 客单价 / RevPAR
+    - 门店与渠道库存
+    - 医美合规政策
+    - 现金流与资本开支
+
+  falsification:
+    bullish_triggers:
+      - 居民收入与信心连续改善
+      - 节假日 / 商旅出行恢复
+      - 龙头供给收缩 + ASP 上升
+      - 大众品渠道库存正常
+    bearish_triggers:
+      - 消费降级 / 价格战
+      - 旺丁不旺财
+      - 监管收紧 + 需求疲弱
+      - 渠道压货 + 提价失败
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    内需消费的图谱重点是看真实客流和客单价数据是否兑现，避免被政策口号或叙事
+    带跑。
+
+nodes:
+  - id: EVENT.confidence_recovery
+    layer: event
+    type: macro_event
+    label_cn: 居民信心 / 收入改善
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: EVENT.travel_resumption
+    layer: event
+    type: demand_event
+    label_cn: 节假日 / 商旅出行恢复
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: EVENT.supply_contraction
+    layer: event
+    type: cost_event
+    label_cn: 低效供给退出
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: EVENT.consumer_brand_upgrade
+    layer: event
+    type: technology_event
+    label_cn: 渠道改革 / 产品升级
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: EVENT.medical_beauty_compliance
+    layer: event
+    type: policy_event
+    label_cn: 医美合规政策
+    industry_tags: [DOMESTIC_CONSUMPTION]
+
+  - id: SIGNAL.same_store_sales
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 同店销售 / 客流
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: SIGNAL.travel_metrics
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 客座率 / RevPAR / 票价
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: SIGNAL.pricing_power
+    layer: industry_signal
+    type: price_signal
+    label_cn: 议价能力 / 客单价
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: SIGNAL.channel_health
+    layer: industry_signal
+    type: channel_signal
+    label_cn: 渠道库存 / 出厂价
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: SIGNAL.medical_beauty_share
+    layer: industry_signal
+    type: policy_signal
+    label_cn: 医美合规龙头份额
+    industry_tags: [DOMESTIC_CONSUMPTION]
+
+  - id: FIN.consumption_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 行业收入
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {field: Revenue}
+  - id: FIN.consumption_gross_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 行业毛利率
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {field: GrossMargin}
+
+  - id: VAL.consumption_growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 消费成长估值
+    industry_tags: [DOMESTIC_CONSUMPTION]
+
+  - id: RISK.consumer_downgrade
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 消费降级 / 价格战
+    industry_tags: [DOMESTIC_CONSUMPTION]
+  - id: RISK.regulatory_tightening
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 监管收紧 (医美 / 教育)
+    industry_tags: [DOMESTIC_CONSUMPTION]
+
+  - id: COMPANY.CONSUMPTION_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 消费板块代表 ETF
+    industry_tags: [DOMESTIC_CONSUMPTION]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.00027_HK
+    layer: stock
+    type: company
+    label_cn: 银河娱乐
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 00027.HK, role: target}
+  - id: COMPANY.00293_HK
+    layer: stock
+    type: company
+    label_cn: 国泰航空
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 00293.HK, role: target}
+  - id: COMPANY.00780_HK
+    layer: stock
+    type: company
+    label_cn: 同程旅行
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 00780.HK, role: target}
+  - id: COMPANY.01179_HK
+    layer: stock
+    type: company
+    label_cn: 华住集团-S
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 01179.HK, role: target}
+  - id: COMPANY.01880_HK
+    layer: stock
+    type: company
+    label_cn: 中国中免
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 01880.HK, role: target}
+  - id: COMPANY.01928_HK
+    layer: stock
+    type: company
+    label_cn: 金沙中国
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 01928.HK, role: target}
+  - id: COMPANY.02138_HK
+    layer: stock
+    type: company
+    label_cn: 医思健康
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 02138.HK, role: target}
+  - id: COMPANY.02367_HK
+    layer: stock
+    type: company
+    label_cn: 巨子生物
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 02367.HK, role: target}
+  - id: COMPANY.03690_HK
+    layer: stock
+    type: company
+    label_cn: 美团-W
+    industry_tags: [DOMESTIC_CONSUMPTION, HK_CN_INTERNET]
+    properties: {ts_code: 03690.HK, role: target}
+  - id: COMPANY.06862_HK
+    layer: stock
+    type: company
+    label_cn: 海底捞
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 06862.HK, role: target}
+  - id: COMPANY.09961_HK
+    layer: stock
+    type: company
+    label_cn: 携程集团-S
+    industry_tags: [DOMESTIC_CONSUMPTION, HK_CN_INTERNET]
+    properties: {ts_code: 09961.HK, role: target}
+  - id: COMPANY.300144_SZ
+    layer: stock
+    type: company
+    label_cn: 宋城演艺
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 300144.SZ, role: target}
+  - id: COMPANY.300896_SZ
+    layer: stock
+    type: company
+    label_cn: 爱美客
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 300896.SZ, role: target}
+  - id: COMPANY.600009_SH
+    layer: stock
+    type: company
+    label_cn: 上海机场
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 600009.SH, role: target}
+  - id: COMPANY.600029_SH
+    layer: stock
+    type: company
+    label_cn: 南方航空
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 600029.SH, role: target}
+  - id: COMPANY.600258_SH
+    layer: stock
+    type: company
+    label_cn: 首旅酒店
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 600258.SH, role: target}
+  - id: COMPANY.600754_SH
+    layer: stock
+    type: company
+    label_cn: 锦江酒店
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 600754.SH, role: target}
+  - id: COMPANY.601021_SH
+    layer: stock
+    type: company
+    label_cn: 春秋航空
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 601021.SH, role: target}
+  - id: COMPANY.601111_SH
+    layer: stock
+    type: company
+    label_cn: 中国国航
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 601111.SH, role: target}
+  - id: COMPANY.601888_SH
+    layer: stock
+    type: company
+    label_cn: 中国中免
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 601888.SH, role: target}
+  - id: COMPANY.688363_SH
+    layer: stock
+    type: company
+    label_cn: 华熙生物
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 688363.SH, role: target}
+  - id: COMPANY.688366_SH
+    layer: stock
+    type: company
+    label_cn: 昊海生科
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: 688366.SH, role: target}
+  - id: COMPANY.AAL_US
+    layer: stock
+    type: company
+    label_cn: American Airlines
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: AAL.US, role: target}
+  - id: COMPANY.ABBV_US
+    layer: stock
+    type: company
+    label_cn: AbbVie
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: ABBV.US, role: target}
+  - id: COMPANY.ABNB_US
+    layer: stock
+    type: company
+    label_cn: Airbnb
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: ABNB.US, role: target}
+  - id: COMPANY.BKNG_US
+    layer: stock
+    type: company
+    label_cn: Booking
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: BKNG.US, role: target}
+  - id: COMPANY.DAL_US
+    layer: stock
+    type: company
+    label_cn: Delta
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: DAL.US, role: target}
+  - id: COMPANY.DIS_US
+    layer: stock
+    type: company
+    label_cn: Disney
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: DIS.US, role: target}
+  - id: COMPANY.HLT_US
+    layer: stock
+    type: company
+    label_cn: Hilton
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: HLT.US, role: target}
+  - id: COMPANY.LYV_US
+    layer: stock
+    type: company
+    label_cn: Live Nation
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: LYV.US, role: target}
+  - id: COMPANY.MAR_US
+    layer: stock
+    type: company
+    label_cn: Marriott
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: MAR.US, role: target}
+  - id: COMPANY.SBUX_US
+    layer: stock
+    type: company
+    label_cn: Starbucks
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: SBUX.US, role: target}
+  - id: COMPANY.UAL_US
+    layer: stock
+    type: company
+    label_cn: United Airlines
+    industry_tags: [DOMESTIC_CONSUMPTION]
+    properties: {ts_code: UAL.US, role: target}
+
+edges:
+  - id: EDGE.CONS.001
+    source: EVENT.confidence_recovery
+    target: SIGNAL.same_store_sales
+    relation: drives_demand
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.75
+    threshold: 高频数据连续改善
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.CONS.002
+    source: SIGNAL.same_store_sales
+    target: FIN.consumption_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 同店销售上行
+    lag: 1-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.003
+    source: EVENT.travel_resumption
+    target: SIGNAL.travel_metrics
+    relation: drives_traffic
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 客流和价格同步
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.004
+    source: SIGNAL.travel_metrics
+    target: FIN.consumption_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 收入兑现
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.005
+    source: EVENT.supply_contraction
+    target: SIGNAL.pricing_power
+    relation: improves_pricing
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 客单价改善
+    lag: 2-6 quarters
+    dedup_group: 供给组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.006
+    source: SIGNAL.pricing_power
+    target: FIN.consumption_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 毛利率改善
+    lag: 1-3 quarters
+    dedup_group: 供给组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.007
+    source: EVENT.consumer_brand_upgrade
+    target: SIGNAL.channel_health
+    relation: improves_channel
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.70
+    threshold: 渠道库存正常
+    lag: 1-4 quarters
+    dedup_group: 质量组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.008
+    source: SIGNAL.channel_health
+    target: FIN.consumption_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 费用率下降
+    lag: 1-3 quarters
+    dedup_group: 质量组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.009
+    source: EVENT.medical_beauty_compliance
+    target: SIGNAL.medical_beauty_share
+    relation: drives_share
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.80
+    threshold: 合规和需求同向
+    lag: 2-6 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.010
+    source: SIGNAL.medical_beauty_share
+    target: VAL.consumption_growth_multiple
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 估值修复
+    lag: 即时-2 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.011
+    source: FIN.consumption_revenue
+    target: VAL.consumption_growth_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 估值修复
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CONS.012
+    source: VAL.consumption_growth_multiple
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.60
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.CONS.RISK.001
+    source: RISK.consumer_downgrade
+    target: SIGNAL.pricing_power
+    relation: dampens_pricing
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.10
+    threshold: 折扣率上升 + 客单价下滑
+    lag: 即时-3 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.CONS.RISK.002
+    source: RISK.consumer_downgrade
+    target: VAL.consumption_growth_multiple
+    relation: compresses_valuation
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.05
+    threshold: 估值兑现压力
+    lag: 即时-3 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.CONS.RISK.003
+    source: RISK.regulatory_tightening
+    target: SIGNAL.medical_beauty_share
+    relation: dampens_share
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.00
+    threshold: 监管收紧
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.CONS.MEMBER.001
+    source: COMPANY.00027_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.002
+    source: COMPANY.00293_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.003
+    source: COMPANY.00780_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.004
+    source: COMPANY.01179_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.005
+    source: COMPANY.01880_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.006
+    source: COMPANY.01928_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.007
+    source: COMPANY.02138_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.008
+    source: COMPANY.02367_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.009
+    source: COMPANY.03690_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.010
+    source: COMPANY.06862_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.011
+    source: COMPANY.09961_HK
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.012
+    source: COMPANY.300144_SZ
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.013
+    source: COMPANY.300896_SZ
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.014
+    source: COMPANY.600009_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.015
+    source: COMPANY.600029_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.016
+    source: COMPANY.600258_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.017
+    source: COMPANY.600754_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.018
+    source: COMPANY.601021_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.019
+    source: COMPANY.601111_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.020
+    source: COMPANY.601888_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.021
+    source: COMPANY.688363_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.022
+    source: COMPANY.688366_SH
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.023
+    source: COMPANY.AAL_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.024
+    source: COMPANY.ABBV_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.025
+    source: COMPANY.ABNB_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.026
+    source: COMPANY.BKNG_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.027
+    source: COMPANY.DAL_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.028
+    source: COMPANY.DIS_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.029
+    source: COMPANY.HLT_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.030
+    source: COMPANY.LYV_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.031
+    source: COMPANY.MAR_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.032
+    source: COMPANY.SBUX_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CONS.MEMBER.033
+    source: COMPANY.UAL_US
+    target: COMPANY.CONSUMPTION_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 信心 / 出行 / 供给 / 升级 / 合规 → 消费 alpha
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 同店 / 客流 / 客单价 / 渠道 / 估值 高中心度
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 客流 / 渠道 / 龙头与小品牌
+    include_node_types: [company, demand_signal, channel_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 消费降级 / 价格战 / 监管收紧
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

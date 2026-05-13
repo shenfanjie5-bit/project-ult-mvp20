@@ -1,0 +1,90 @@
+# Industry → Sina-futures primary commodity symbol map.
+#
+# Drives ``L0.cost.raw_material`` emission in ``mvp20/sources/akshare_source.py``.
+# Each active industry maps to a *list* of Sina-futures continuous-main
+# symbols (akshare ``ak.futures_main_sina(symbol=<CODE>)``). The fetcher
+# pulls the latest close + day-over-day change for each commodity and
+# averages them into one payload per industry. ``null`` (or missing key)
+# means "no clean 1:1 commodity exposure" — the fetcher skips emission
+# (no half-baked rows).
+#
+# Sina-futures symbol legend (selected):
+#   CU0 = 阴极铜 (LME-tracked)            AL0 = 沪铝
+#   NI0 = 沪镍                            ZN0 = 沪锌
+#   SN0 = 沪锡                            AG0 = 白银
+#   AU0 = 黄金                            LC0 = 碳酸锂
+#   SI0 = 工业硅                          PB0 = 沪铅
+#   RB0 = 螺纹钢                          HC0 = 热卷
+#   I0  = 铁矿石                          J0  = 焦炭
+#   JM0 = 焦煤                            SC0 = 上海原油
+#   FU0 = 燃料油                          BU0 = 沥青
+#   L0  = 塑料 (LLDPE)                    PP0 = 聚丙烯
+#   PVC0= PVC                              CF0 = 棉花
+#   SR0 = 白糖                            MA0 = 甲醇
+#
+# Use cases by industry (rationale next to each symbol).
+
+industries:
+  NONFERROUS_METALS:
+    # 有色冶炼成本核心: 铜 + 铝 + 镍 + 锌 + 锡
+    - CU0
+    - AL0
+    - NI0
+    - ZN0
+    - SN0
+
+  SEMI_EQUIPMENT:
+    # 半导体上游硅 / 锂 (碳酸锂 → 储能-级原料 + 多晶硅参考)
+    - SI0
+    - LC0
+
+  EXPORT_MFG:
+    # 通用设备出口: 铜价 = 全球工业需求代理 (LME 同步)
+    - CU0
+    - AL0
+
+  CONSUMER_ELECTRONICS:
+    # 消费电子: 铜 + 塑料 (LLDPE) 代表外壳 / PCB / 线缆 BOM
+    - CU0
+    - L0
+
+  STORAGE_GRID:
+    # 储能 / 电池: 锂 + 镍 (三元正极) + 铜 (集流体)
+    - LC0
+    - NI0
+    - CU0
+
+  INNOVATIVE_PHARMA:
+    # 创新药 BOM 由特殊化学品主导，无 Sina-futures 干净映射 → 跳过
+    ~
+
+  AI_COMPUTE:
+    # AI 算力硬件 BOM 由 GPU / HBM 决定，无 Sina-futures 映射 → 跳过
+    ~
+
+  ROBOTICS:
+    # 具身智能装备: 铝 + 铜 (减速器壳体 + 电机线圈)
+    - AL0
+    - CU0
+
+  HK_CN_INTERNET:
+    # 互联网平台 BOM 极轻，无原材料敏感性 → 跳过
+    ~
+
+  FINANCIAL_HIGH_DIVIDEND:
+    # 金融行业不持有大宗 BOM → 跳过
+    ~
+
+  DOMESTIC_CONSUMPTION:
+    # 内需消费 BOM 太杂 (餐饮 / 旅游 / 零售) 无干净代理 → 跳过
+    ~
+
+  ANTI_INVOLUTION_CYCLICAL:
+    # 反内卷-周期 (钢铁 / 煤炭 / 化工大头): 螺纹钢 + 铁矿 + 焦煤
+    - RB0
+    - I0
+    - JM0
+
+# TODO (next iteration):
+#   * SPACE_ECONOMY (pending graph_status) → 钛 + 高温合金；待 industry 上线。
+#   * 海外建材出口 → 待添加 CONSTRUCTION_MATERIALS active industry 后接入水泥/玻璃替代品。

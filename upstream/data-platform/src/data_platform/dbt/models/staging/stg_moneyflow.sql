@@ -1,0 +1,50 @@
+{{ config(materialized="view") }}
+
+{{ stg_latest_raw(
+    "tushare",
+    "moneyflow",
+    [
+        "ts_code",
+        "trade_date",
+        "buy_sm_vol",
+        "buy_sm_amount",
+        "sell_sm_vol",
+        "sell_sm_amount",
+        "buy_md_vol",
+        "buy_md_amount",
+        "sell_md_vol",
+        "sell_md_amount",
+        "buy_lg_vol",
+        "buy_lg_amount",
+        "sell_lg_vol",
+        "sell_lg_amount",
+        "buy_elg_vol",
+        "buy_elg_amount",
+        "sell_elg_vol",
+        "sell_elg_amount",
+        "net_mf_vol",
+        "net_mf_amount"
+    ],
+    [
+        "cast(nullif(trim(cast(\"ts_code\" as varchar)), '') as varchar) as \"ts_code\"",
+        "strptime(nullif(trim(cast(\"trade_date\" as varchar)), ''), '%Y%m%d')::date as \"trade_date\"",
+        "cast(nullif(trim(cast(\"buy_sm_vol\" as varchar)), '') as varchar) as \"buy_sm_vol\"",
+        "cast(nullif(trim(cast(\"buy_sm_amount\" as varchar)), '') as varchar) as \"buy_sm_amount\"",
+        "cast(nullif(trim(cast(\"sell_sm_vol\" as varchar)), '') as varchar) as \"sell_sm_vol\"",
+        "cast(nullif(trim(cast(\"sell_sm_amount\" as varchar)), '') as varchar) as \"sell_sm_amount\"",
+        "cast(nullif(trim(cast(\"buy_md_vol\" as varchar)), '') as varchar) as \"buy_md_vol\"",
+        "cast(nullif(trim(cast(\"buy_md_amount\" as varchar)), '') as varchar) as \"buy_md_amount\"",
+        "cast(nullif(trim(cast(\"sell_md_vol\" as varchar)), '') as varchar) as \"sell_md_vol\"",
+        "cast(nullif(trim(cast(\"sell_md_amount\" as varchar)), '') as varchar) as \"sell_md_amount\"",
+        "cast(nullif(trim(cast(\"buy_lg_vol\" as varchar)), '') as varchar) as \"buy_lg_vol\"",
+        "cast(nullif(trim(cast(\"buy_lg_amount\" as varchar)), '') as varchar) as \"buy_lg_amount\"",
+        "cast(nullif(trim(cast(\"sell_lg_vol\" as varchar)), '') as varchar) as \"sell_lg_vol\"",
+        "cast(nullif(trim(cast(\"sell_lg_amount\" as varchar)), '') as varchar) as \"sell_lg_amount\"",
+        "cast(nullif(trim(cast(\"buy_elg_vol\" as varchar)), '') as varchar) as \"buy_elg_vol\"",
+        "cast(nullif(trim(cast(\"buy_elg_amount\" as varchar)), '') as varchar) as \"buy_elg_amount\"",
+        "cast(nullif(trim(cast(\"sell_elg_vol\" as varchar)), '') as varchar) as \"sell_elg_vol\"",
+        "cast(nullif(trim(cast(\"sell_elg_amount\" as varchar)), '') as varchar) as \"sell_elg_amount\"",
+        "cast(nullif(trim(cast(\"net_mf_vol\" as varchar)), '') as varchar) as \"net_mf_vol\"",
+        "cast(nullif(trim(cast(\"net_mf_amount\" as varchar)), '') as varchar) as \"net_mf_amount\""
+    ]
+) }}

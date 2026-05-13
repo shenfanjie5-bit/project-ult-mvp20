@@ -1,0 +1,821 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: ROBOTICS
+industry_name_cn: 机器人与具身智能高端装备
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 人形机器人
+      - 工业机器人
+      - 减速器
+      - 丝杠
+      - 伺服系统
+      - 电机
+      - 传感器
+      - 控制器
+      - 灵巧手
+      - 机器视觉
+      - 工控
+      - 工业母机
+      - 高端装备
+    core_judgment: >-
+      该板块的核心是从演示叙事切换到量产订单。股价弹性来自整机量产预期、核心
+      零部件价值量、成本下降曲线和应用场景 ROI 验证。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注定点订单、AI 能力、成本下降、工业场景、估值反身性等路径。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.10}
+    - {name: 等待验证, probability: 0.25}
+    - {name: 结构分化, probability: 0.25}
+    - {name: 温和多头, probability: 0.15}
+    - {name: 杀估值, probability: 0.25}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报与产业调研}
+      - {name: price_implied_expectation, description: 股价隐含预期, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 新闻、社媒}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 公告优先}
+      - {name: tail_risk_prob, description: 尾部风险, source: 安全 / 交付}
+
+  path_dedup_groups: [需求组, 成本组, 资金组, 叙事组, 风险组]
+
+  exposure:
+    factors:
+      - 整机厂定点份额
+      - 核心零部件价值量
+      - 国产化与成本控制
+      - AI 能力与软件壁垒
+      - 工业场景客户绑定
+      - 现金储备与扩产能力
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 直接量产订单可验证
+      "4": 直接受益但 ASP 待提升
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱商业化
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 定点订单逐步释放
+      GrossMargin: BOM 成本与良率
+      OpexRatio: 研发投入前置
+      EBIT_EPS: 量产爬坡阶段经营杠杆显著
+      FCF: 扩产带来现金流压力
+      Leverage: 部分零部件需要扩产融资
+
+  valuation_mix:
+    weights:
+      PS: 0.30
+      PE: 0.25
+      EV_EBITDA: 0.15
+      DCF: 0.10
+      SOTP: 0.20
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 整机量产延期或被取消
+      - 核心零部件良率不达标
+      - 价格战导致 BOM 成本传导失败
+      - 安全事故或召回事件
+      - AI 能力商业化失败
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 整机厂定点公告
+    - 零部件量产订单与采购量
+    - BOM 成本与国产化比例
+    - AI 模型迭代与场景验证
+    - 工业自动化订单与回款
+    - 板块成交与 ETF 流入
+
+  falsification:
+    bullish_triggers:
+      - 整机厂量产计划兑现
+      - BOM 成本接近商业化阈值
+      - AI 能力进入实际生产场景
+      - 工业自动化订单连续上行
+    bearish_triggers:
+      - 量产延期或样机阶段反复
+      - 价格战或交付不及预期
+      - AI 能力 Demo 难以落地
+      - 资金面拥挤导致估值兑现
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响聚合 - 风险惩罚, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险与拥挤
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    机器人与具身智能高端装备的图谱重点是判断从演示到量产的切换是否被订单和成
+    本真实兑现，以及估值是否已经透支这一切换。
+
+nodes:
+  - id: EVENT.humanoid_mass_production_plan
+    layer: event
+    type: customer_capex_event
+    label_cn: 整机厂量产计划公告
+    industry_tags: [ROBOTICS]
+  - id: EVENT.embodied_ai_breakthrough
+    layer: event
+    type: technology_event
+    label_cn: 多模态 / 具身智能模型升级
+    industry_tags: [ROBOTICS]
+  - id: EVENT.bom_cost_decline
+    layer: event
+    type: cost_event
+    label_cn: 核心零部件国产化推动 BOM 下降
+    industry_tags: [ROBOTICS]
+  - id: EVENT.industrial_automation_capex
+    layer: event
+    type: customer_capex_event
+    label_cn: 制造业自动化投资增长
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+  - id: EVENT.safety_incident
+    layer: event
+    type: risk_event
+    label_cn: 安全事故 / 召回 / 价格战
+    industry_tags: [ROBOTICS]
+
+  - id: SIGNAL.designated_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: 整机厂零部件定点
+    industry_tags: [ROBOTICS]
+  - id: SIGNAL.scene_roi_validation
+    layer: industry_signal
+    type: validation_signal
+    label_cn: 应用场景 ROI 验证
+    industry_tags: [ROBOTICS]
+  - id: SIGNAL.industrial_robot_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: 工业机器人 / 工控订单
+    industry_tags: [ROBOTICS]
+  - id: SIGNAL.theme_capital_inflow
+    layer: industry_signal
+    type: capital_signal
+    label_cn: 主题资金流入与龙头带动
+    industry_tags: [ROBOTICS]
+
+  - id: FIN.robotics_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 行业收入
+    industry_tags: [ROBOTICS]
+    properties: {field: Revenue}
+  - id: FIN.robotics_gross_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 行业毛利率
+    industry_tags: [ROBOTICS]
+    properties: {field: GrossMargin}
+
+  - id: VAL.robotics_growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 机器人成长估值
+    industry_tags: [ROBOTICS]
+  - id: VAL.theme_crowding
+    layer: valuation
+    type: crowding_pressure
+    label_cn: 机器人主题拥挤度
+    industry_tags: [ROBOTICS]
+
+  - id: RISK.delivery_failure
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 交付不及预期 / 安全事故
+    industry_tags: [ROBOTICS]
+  - id: RISK.commodification
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 价格战与商品化压力
+    industry_tags: [ROBOTICS]
+
+  - id: COMPANY.ROBOTICS_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 机器人板块代表 ETF
+    industry_tags: [ROBOTICS]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.002008_SZ
+    layer: stock
+    type: company
+    label_cn: 大族激光
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 002008.SZ, role: target}
+  - id: COMPANY.002050_SZ
+    layer: stock
+    type: company
+    label_cn: 三花智控
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+    properties: {ts_code: 002050.SZ, role: target}
+  - id: COMPANY.002472_SZ
+    layer: stock
+    type: company
+    label_cn: 双环传动
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 002472.SZ, role: target}
+  - id: COMPANY.002747_SZ
+    layer: stock
+    type: company
+    label_cn: 埃斯顿
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 002747.SZ, role: target}
+  - id: COMPANY.00300_HK
+    layer: stock
+    type: company
+    label_cn: 美的集团-H
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+    properties: {ts_code: 00300.HK, role: target}
+  - id: COMPANY.00669_HK
+    layer: stock
+    type: company
+    label_cn: 创科实业
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+    properties: {ts_code: 00669.HK, role: target}
+  - id: COMPANY.01157_HK
+    layer: stock
+    type: company
+    label_cn: 中联重科
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 01157.HK, role: target}
+  - id: COMPANY.02498_HK
+    layer: stock
+    type: company
+    label_cn: 速腾聚创
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 02498.HK, role: target}
+  - id: COMPANY.02727_HK
+    layer: stock
+    type: company
+    label_cn: 上海电气
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 02727.HK, role: target}
+  - id: COMPANY.09660_HK
+    layer: stock
+    type: company
+    label_cn: 地平线机器人-W
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 09660.HK, role: target}
+  - id: COMPANY.09880_HK
+    layer: stock
+    type: company
+    label_cn: 优必选
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 09880.HK, role: target}
+  - id: COMPANY.300024_SZ
+    layer: stock
+    type: company
+    label_cn: 机器人
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 300024.SZ, role: target}
+  - id: COMPANY.300124_SZ
+    layer: stock
+    type: company
+    label_cn: 汇川技术
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 300124.SZ, role: target}
+  - id: COMPANY.601689_SH
+    layer: stock
+    type: company
+    label_cn: 拓普集团
+    industry_tags: [ROBOTICS, EXPORT_MFG]
+    properties: {ts_code: 601689.SH, role: target}
+  - id: COMPANY.603728_SH
+    layer: stock
+    type: company
+    label_cn: 鸣志电器
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 603728.SH, role: target}
+  - id: COMPANY.688017_SH
+    layer: stock
+    type: company
+    label_cn: 绿的谐波
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 688017.SH, role: target}
+  - id: COMPANY.688777_SH
+    layer: stock
+    type: company
+    label_cn: 中控技术
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: 688777.SH, role: target}
+  - id: COMPANY.CGNX_US
+    layer: stock
+    type: company
+    label_cn: Cognex
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: CGNX.US, role: target}
+  - id: COMPANY.HON_US
+    layer: stock
+    type: company
+    label_cn: Honeywell
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: HON.US, role: target}
+  - id: COMPANY.ISRG_US
+    layer: stock
+    type: company
+    label_cn: Intuitive Surgical
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: ISRG.US, role: target}
+  - id: COMPANY.ROK_US
+    layer: stock
+    type: company
+    label_cn: Rockwell Automation
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: ROK.US, role: target}
+  - id: COMPANY.SYM_US
+    layer: stock
+    type: company
+    label_cn: Symbotic
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: SYM.US, role: target}
+  - id: COMPANY.TER_US
+    layer: stock
+    type: company
+    label_cn: Teradyne
+    industry_tags: [SEMI_EQUIPMENT, ROBOTICS]
+    properties: {ts_code: TER.US, role: target}
+  - id: COMPANY.TSLA_US
+    layer: stock
+    type: company
+    label_cn: Tesla
+    industry_tags: [ROBOTICS, STORAGE_GRID]
+    properties: {ts_code: TSLA.US, role: both}
+  - id: COMPANY.ZBRA_US
+    layer: stock
+    type: company
+    label_cn: Zebra
+    industry_tags: [ROBOTICS]
+    properties: {ts_code: ZBRA.US, role: target}
+
+edges:
+  - id: EDGE.ROBO.001
+    source: EVENT.humanoid_mass_production_plan
+    target: SIGNAL.designated_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.85
+    beta_negative: 0.70
+    threshold: 定点公告与批量订单
+    lag: 2-8 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.ROBO.002
+    source: SIGNAL.designated_orders
+    target: FIN.robotics_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 订单转收入确认
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.ROBO.003
+    source: EVENT.embodied_ai_breakthrough
+    target: SIGNAL.scene_roi_validation
+    relation: enhances_capability
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.80
+    threshold: 模型迭代落地到场景
+    lag: 2-6 quarters
+    dedup_group: 叙事组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.ROBO.004
+    source: SIGNAL.scene_roi_validation
+    target: VAL.robotics_growth_multiple
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 估值切换
+    lag: 1-3 quarters
+    dedup_group: 叙事组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.ROBO.005
+    source: EVENT.bom_cost_decline
+    target: FIN.robotics_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.65
+    threshold: BOM 成本接近商业化阈值
+    lag: 3-8 quarters
+    dedup_group: 成本组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.ROBO.006
+    source: EVENT.industrial_automation_capex
+    target: SIGNAL.industrial_robot_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 订单和回款同步
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain]
+  - id: EDGE.ROBO.007
+    source: SIGNAL.industrial_robot_orders
+    target: FIN.robotics_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.50
+    threshold: 工业场景订单转收入
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.ROBO.008
+    source: SIGNAL.theme_capital_inflow
+    target: VAL.robotics_growth_multiple
+    relation: amplifies_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 1.00
+    threshold: 拥挤交易触发回吐
+    lag: 即时-1 quarter
+    dedup_group: 资金组
+    views: [causal_propagation]
+  - id: EDGE.ROBO.009
+    source: VAL.robotics_growth_multiple
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.60
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.ROBO.RISK.001
+    source: EVENT.safety_incident
+    target: RISK.delivery_failure
+    relation: triggers_tail_risk
+    polarity: positive
+    beta_positive: 0.45
+    beta_negative: 1.15
+    threshold: 早期产业链尾部风险
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.ROBO.RISK.002
+    source: RISK.delivery_failure
+    target: VAL.theme_crowding
+    relation: compresses_valuation
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.00
+    threshold: 拥挤度上升 + 兑现压力
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.ROBO.RISK.003
+    source: VAL.theme_crowding
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: drags_alpha
+    polarity: negative
+    beta_positive: 0.45
+    beta_negative: 1.05
+    threshold: 拥挤交易兑现
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.ROBO.RISK.004
+    source: RISK.commodification
+    target: FIN.robotics_gross_margin
+    relation: dampens_margin
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 0.85
+    threshold: 价格战吞噬毛利
+    lag: 1-3 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.ROBO.MEMBER.001
+    source: COMPANY.002008_SZ
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.002
+    source: COMPANY.002050_SZ
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.003
+    source: COMPANY.002472_SZ
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.004
+    source: COMPANY.002747_SZ
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.005
+    source: COMPANY.00300_HK
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.006
+    source: COMPANY.00669_HK
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.007
+    source: COMPANY.01157_HK
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.008
+    source: COMPANY.02498_HK
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.009
+    source: COMPANY.02727_HK
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.010
+    source: COMPANY.09660_HK
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.011
+    source: COMPANY.09880_HK
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.012
+    source: COMPANY.300024_SZ
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.013
+    source: COMPANY.300124_SZ
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.014
+    source: COMPANY.601689_SH
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.015
+    source: COMPANY.603728_SH
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.016
+    source: COMPANY.688017_SH
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.017
+    source: COMPANY.688777_SH
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.018
+    source: COMPANY.CGNX_US
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.019
+    source: COMPANY.HON_US
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.020
+    source: COMPANY.ISRG_US
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.021
+    source: COMPANY.ROK_US
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.022
+    source: COMPANY.SYM_US
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.023
+    source: COMPANY.TER_US
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.024
+    source: COMPANY.TSLA_US
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.ROBO.MEMBER.025
+    source: COMPANY.ZBRA_US
+    target: COMPANY.ROBOTICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 量产 / AI 能力 / 成本 / 工业场景 → alpha 完整传导
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 高中心度因子（量产订单、BOM、AI 能力、毛利率、估值）
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 整机厂客户与零部件链
+    include_node_types: [company, customer_capex_event, demand_signal, order_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 交付失败 / 商品化 / 拥挤兑现
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

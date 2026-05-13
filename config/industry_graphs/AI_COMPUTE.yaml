@@ -1,0 +1,1144 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: AI_COMPUTE
+industry_name_cn: AI算力硬件与通信设备
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 光模块
+      - CPO
+      - 硅光
+      - 光芯片
+      - 高速铜缆
+      - AI 服务器
+      - 交换机
+      - 液冷
+      - 数据中心电源
+      - AI PCB
+      - 数据中心基础设施
+    core_judgment: >-
+      该板块的股价核心不是 AI 叙事本身，而是云厂商与大模型公司的资本开支是否
+      持续上修，并最终转化为订单、收入、毛利率和分析师盈利上修。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 预测剥离大盘与行业贝塔后的公司特异超额收益 alpha_i_h。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.25}
+    - {name: 温和多头, probability: 0.30}
+    - {name: 结构分化, probability: 0.25}
+    - {name: 杀估值, probability: 0.10}
+    - {name: 等待验证, probability: 0.10}
+
+  shock_model:
+    formula: |
+      Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+      D_pre  = (1 - PricedIn_pre / 5) ^ gamma
+      D_post = exp(-kappa × max(0, sign(Shock) × realized_return / (abs(model_return) + epsilon)))
+    fields:
+      - {name: consensus_expectation, description: 分析师或市场的一致预期, source: 研报、业绩前瞻、产业调研}
+      - {name: price_implied_expectation, description: 股价和估值中隐含的预期, source: 事件前 5/20/60 日涨跌、成交额、ETF 资金}
+      - {name: narrative_expectation, description: 市场叙事热度, source: 新闻热度、社媒热度、路演反馈}
+      - {name: pre_event_runup, description: 事件前已上涨幅度, source: 事件前 5/20/60 日收益}
+      - {name: post_event_reaction, description: 事件后已反应幅度, source: 公告后或消息后收益}
+      - {name: remaining_impact, description: 剩余未定价影响, source: 理论影响减去已反应影响}
+      - {name: data_quality, description: 数据质量, source: 公告 > 财报 > 订单 > 传闻}
+      - {name: tail_risk_prob, description: 尾部风险概率, source: 监管、技术、客户、财务等风险}
+
+  path_dedup_groups: [需求组, 价格组, 政策组, 技术组, 竞争组, 风险组]
+
+  exposure:
+    factors:
+      - AI 相关收入占比
+      - 头部云厂商 / AI 客户绑定深度
+      - 新速率产品量产能力
+      - 供应链位置（核心器件 > 模块 > 配套）
+      - 毛利率稳定性与议价能力
+      - 客户集中度与库存周转
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 直接收入占比高、订单可验证、利润可传导、龙头地位强
+      "4": 直接受益，但收入占比或利润传导略弱
+      "3": 有业务关联，但对当期财务贡献不确定
+      "2": 更多是主题映射，商业化或订单弱
+      "1": 关系间接，难以形成财务贡献
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 订单、出货量、ASP 共同驱动
+      GrossMargin: 新产品占比、良率、价格战影响
+      OpexRatio: 研发与认证费用前置
+      EBIT_EPS: 经营杠杆显著，收入上修可能放大利润弹性
+      FCF: 扩产与备货可能压低短期现金流
+      Leverage: 轻资产环节较低，设备/制造环节需看扩产压力
+
+  valuation_mix:
+    weights:
+      PE: 0.35
+      PS: 0.20
+      EV_EBITDA: 0.20
+      DCF: 0.10
+      SOTP: 0.15
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 海外客户集中导致砍单冲击
+      - 技术路线变化导致原有产品被替代
+      - 价格战使收入增长无法传导到利润
+      - 高估值下利好兑现变成卖点
+      - 贸易与出口限制影响供应链
+    formula_note: |
+      mu_adjusted = mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR
+      alpha_i_h = R_max_i_h × tanh(mu_adjusted_i_h / tau_h)
+
+  validation_signals:
+    - 云厂商和大模型公司 Capex 指引
+    - 光模块 / 交换机 / 服务器订单与交付节奏
+    - 800G / 1.6T 产品占比和毛利率
+    - 液冷渗透率与数据中心开工
+    - 库存周转天数和应收账款
+    - 分析师盈利预测是否持续上修
+    - 板块成交占比和 ETF 资金流入
+
+  falsification:
+    bullish_triggers:
+      - AI Capex 连续两个季度上修
+      - 核心公司订单与毛利率同步改善
+      - 速率升级产品进入规模出货
+      - 国产算力招标规模明显扩大
+    bearish_triggers:
+      - 板块高位放量但盈利预测不再上修
+      - 毛利率环比下滑且库存上升
+      - 大客户 Capex 或订单指引下修
+      - 技术路线导致原供应链份额下降
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响聚合减去风险惩罚, interpretation: 剥离大盘和行业后的预期收益}
+    - {name: sigma, formula: 参数方差、路径方差、市场波动, interpretation: 越高表示判断越不稳定}
+    - {name: prob_up, formula: Phi(mu / sigma), interpretation: 不是确定涨跌，只是概率}
+    - {name: tradability, formula: mu / sigma 减去成本、流动性惩罚、拥挤惩罚, interpretation: 判断预期收益是否覆盖风险}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 防止追高已经兑现的利好}
+
+  workflow_steps:
+    - 识别事件：政策、订单、价格、技术、财报、资金
+    - 计算 Surprise：实际变化减去多来源预期
+    - 扣除 D_pre 和 D_post：判断是否已经定价
+    - 通过主路径传导：需求、价格、成本、竞争、估值、风险
+    - 按相关性分组去重
+    - 映射到公司财务向量和混合估值模型
+    - 扣除尾部风险、流动性、交易成本和拥挤度
+    - 输出超额收益、上涨概率、置信区间和可交易性
+
+  one_line_summary: >-
+    AI 算力硬件与通信设备的图谱重点不是判断这个行业好不好，而是判断：利好是否超
+    预期、是否已经反映、能否传导到公司财务、估值是否还有空间、尾部风险是否足以
+    吞掉收益。
+
+# === Nodes (events / signals / financial / valuation / risk / companies) ===
+nodes:
+  # --- Events ---
+  - id: EVENT.meta_ai_capex_upgrade
+    layer: event
+    type: customer_capex_event
+    label_cn: Meta 上调 AI Capex
+    industry_tags: [AI_COMPUTE]
+    properties: {direction_default: positive, source_role: hyperscaler}
+  - id: EVENT.cloud_capex_upgrade_generic
+    layer: event
+    type: customer_capex_event
+    label_cn: 云厂商整体 Capex 上修
+    industry_tags: [AI_COMPUTE]
+  - id: EVENT.china_ai_compute_policy
+    layer: event
+    type: policy_event
+    label_cn: 国产算力政策出台
+    industry_tags: [AI_COMPUTE]
+  - id: EVENT.speed_tier_upgrade
+    layer: event
+    type: technology_event
+    label_cn: 800G / 1.6T 速率升级
+    industry_tags: [AI_COMPUTE]
+  - id: EVENT.tech_route_shift_cpo
+    layer: event
+    type: technology_event
+    label_cn: CPO / 硅光 / 铜连接路线切换
+    industry_tags: [AI_COMPUTE]
+  - id: EVENT.dc_buildout
+    layer: event
+    type: demand_event
+    label_cn: 数据中心建设加速 / PUE 要求收紧
+    industry_tags: [AI_COMPUTE, STORAGE_GRID]
+
+  # --- Industry signals ---
+  - id: SIGNAL.hyperscaler_ai_demand
+    layer: industry_signal
+    type: demand_signal
+    label_cn: Hyperscaler AI 基建需求
+    industry_tags: [AI_COMPUTE]
+  - id: SIGNAL.blackwell_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: Blackwell / GB 系列采购预期
+    industry_tags: [AI_COMPUTE]
+  - id: SIGNAL.optical_module_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: 光模块 / 交换机订单
+    industry_tags: [AI_COMPUTE]
+  - id: SIGNAL.asp_uplift_800g
+    layer: industry_signal
+    type: price_signal
+    label_cn: 单端口价值量提升 (800G/1.6T)
+    industry_tags: [AI_COMPUTE]
+  - id: SIGNAL.supplychain_share_reshuffle
+    layer: industry_signal
+    type: competitive_signal
+    label_cn: 供应链份额重排
+    industry_tags: [AI_COMPUTE]
+  - id: SIGNAL.liquid_cooling_penetration
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 液冷 / 电源 / 机柜渗透率
+    industry_tags: [AI_COMPUTE, STORAGE_GRID]
+  - id: SIGNAL.domestic_compute_share
+    layer: industry_signal
+    type: policy_signal
+    label_cn: 国产服务器 / 网络设备份额
+    industry_tags: [AI_COMPUTE]
+
+  # --- Financial vector ---
+  - id: FIN.nvda_dc_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: NVDA 数据中心收入
+    industry_tags: [AI_COMPUTE]
+    properties: {field: Revenue, target_company: COMPANY.NVDA}
+  - id: FIN.nvda_eps
+    layer: financial
+    type: financial_vector
+    label_cn: NVDA EPS 预期
+    industry_tags: [AI_COMPUTE]
+    properties: {field: EPS, target_company: COMPANY.NVDA}
+  - id: FIN.industry_revenue_uplift
+    layer: financial
+    type: financial_vector
+    label_cn: 行业收入上修
+    industry_tags: [AI_COMPUTE]
+    properties: {field: Revenue}
+  - id: FIN.industry_gross_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 行业毛利率与库存周转
+    industry_tags: [AI_COMPUTE]
+    properties: {field: GrossMargin}
+
+  # --- Valuation ---
+  - id: VAL.growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 成长估值与估值倍数扩张
+    industry_tags: [AI_COMPUTE]
+  - id: VAL.ai_compute_crowding
+    layer: valuation
+    type: crowding_pressure
+    label_cn: AI 算力板块拥挤度
+    industry_tags: [AI_COMPUTE]
+
+  # --- Risks ---
+  - id: RISK.ai_capex_excess_concern
+    layer: risk
+    type: tail_risk_signal
+    label_cn: AI Capex 过高担忧
+    industry_tags: [AI_COMPUTE]
+  - id: RISK.fcf_pressure
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 自由现金流压力
+    industry_tags: [AI_COMPUTE]
+  - id: RISK.ai_roi_debate
+    layer: risk
+    type: tail_risk_signal
+    label_cn: AI ROI 争议升温
+    industry_tags: [AI_COMPUTE]
+  - id: RISK.customer_concentration
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 大客户砍单 / 集中度风险
+    industry_tags: [AI_COMPUTE]
+  - id: RISK.tech_route_displacement
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 技术路线被替代风险
+    industry_tags: [AI_COMPUTE]
+  - id: RISK.export_control
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 贸易 / 出口限制
+    industry_tags: [AI_COMPUTE, SEMI_EQUIPMENT]
+
+  # --- Companies (subset for cross-graph reference) ---
+  - id: COMPANY.NVDA
+    layer: stock
+    type: company
+    label_cn: NVIDIA
+    industry_tags: [AI_COMPUTE]
+    properties: {market: US, ticker: NVDA, role: target}
+  - id: COMPANY.META
+    layer: stock
+    type: company
+    label_cn: Meta Platforms
+    industry_tags: [AI_COMPUTE]
+    properties: {market: US, ticker: META, role: customer}
+  - id: COMPANY.AI_COMPUTE_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: AI 算力板块代表 ETF
+    industry_tags: [AI_COMPUTE]
+
+# === Edges ===
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.000063_SZ
+    layer: stock
+    type: company
+    label_cn: 中兴通讯
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 000063.SZ, role: target}
+  - id: COMPANY.000977_SZ
+    layer: stock
+    type: company
+    label_cn: 浪潮信息
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 000977.SZ, role: target}
+  - id: COMPANY.002463_SZ
+    layer: stock
+    type: company
+    label_cn: 沪电股份
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 002463.SZ, role: target}
+  - id: COMPANY.002916_SZ
+    layer: stock
+    type: company
+    label_cn: 深南电路
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 002916.SZ, role: target}
+  - id: COMPANY.00728_HK
+    layer: stock
+    type: company
+    label_cn: 中国电信
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 00728.HK, role: target}
+  - id: COMPANY.00762_HK
+    layer: stock
+    type: company
+    label_cn: 中国联通
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 00762.HK, role: target}
+  - id: COMPANY.00763_HK
+    layer: stock
+    type: company
+    label_cn: 中兴通讯
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 00763.HK, role: target}
+  - id: COMPANY.00941_HK
+    layer: stock
+    type: company
+    label_cn: 中国移动
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 00941.HK, role: target}
+  - id: COMPANY.00981_HK
+    layer: stock
+    type: company
+    label_cn: 中芯国际
+    industry_tags: [AI_COMPUTE, SEMI_EQUIPMENT]
+    properties: {ts_code: 00981.HK, role: target}
+  - id: COMPANY.00992_HK
+    layer: stock
+    type: company
+    label_cn: 联想集团
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 00992.HK, role: target}
+  - id: COMPANY.02476_HK
+    layer: stock
+    type: company
+    label_cn: 胜宏科技-H
+    industry_tags: [AI_COMPUTE, SEMI_EQUIPMENT, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 02476.HK, role: target}
+  - id: COMPANY.06088_HK
+    layer: stock
+    type: company
+    label_cn: 鸿腾精密
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 06088.HK, role: target}
+  - id: COMPANY.300308_SZ
+    layer: stock
+    type: company
+    label_cn: 中际旭创
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 300308.SZ, role: target}
+  - id: COMPANY.300394_SZ
+    layer: stock
+    type: company
+    label_cn: 天孚通信
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 300394.SZ, role: target}
+  - id: COMPANY.300502_SZ
+    layer: stock
+    type: company
+    label_cn: 新易盛
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 300502.SZ, role: target}
+  - id: COMPANY.601138_SH
+    layer: stock
+    type: company
+    label_cn: 工业富联
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 601138.SH, role: target}
+  - id: COMPANY.688041_SH
+    layer: stock
+    type: company
+    label_cn: 海光信息
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 688041.SH, role: target}
+  - id: COMPANY.688256_SH
+    layer: stock
+    type: company
+    label_cn: 寒武纪
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: 688256.SH, role: target}
+  - id: COMPANY.AMD_US
+    layer: stock
+    type: company
+    label_cn: AMD
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: AMD.US, role: target}
+  - id: COMPANY.AMZN_US
+    layer: stock
+    type: company
+    label_cn: Amazon (AWS)
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: AMZN.US, role: customer}
+  - id: COMPANY.ANET_US
+    layer: stock
+    type: company
+    label_cn: Arista Networks
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: ANET.US, role: target}
+  - id: COMPANY.AVGO_US
+    layer: stock
+    type: company
+    label_cn: Broadcom
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: AVGO.US, role: target}
+  - id: COMPANY.CSCO_US
+    layer: stock
+    type: company
+    label_cn: Cisco
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: CSCO.US, role: target}
+  - id: COMPANY.DELL_US
+    layer: stock
+    type: company
+    label_cn: Dell
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: DELL.US, role: target}
+  - id: COMPANY.GOOGL_US
+    layer: stock
+    type: company
+    label_cn: Alphabet (Google)
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: GOOGL.US, role: customer}
+  - id: COMPANY.META_US
+    layer: stock
+    type: company
+    label_cn: Meta Platforms
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: META.US, role: customer}
+  - id: COMPANY.MRVL_US
+    layer: stock
+    type: company
+    label_cn: Marvell
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: MRVL.US, role: target}
+  - id: COMPANY.MSFT_US
+    layer: stock
+    type: company
+    label_cn: Microsoft
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: MSFT.US, role: customer}
+  - id: COMPANY.MU_US
+    layer: stock
+    type: company
+    label_cn: Micron
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: MU.US, role: target}
+  - id: COMPANY.NVDA_US
+    layer: stock
+    type: company
+    label_cn: NVIDIA
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: NVDA.US, role: target}
+  - id: COMPANY.SMCI_US
+    layer: stock
+    type: company
+    label_cn: Super Micro
+    industry_tags: [AI_COMPUTE]
+    properties: {ts_code: SMCI.US, role: target}
+  - id: COMPANY.TSM_US
+    layer: stock
+    type: company
+    label_cn: TSMC (ADR)
+    industry_tags: [AI_COMPUTE, SEMI_EQUIPMENT]
+    properties: {ts_code: TSM.US, role: target}
+
+edges:
+  # ---- Demand path: Capex -> orders -> revenue -> EPS -> alpha ----
+  - id: EDGE.AI.001
+    source: EVENT.meta_ai_capex_upgrade
+    target: SIGNAL.hyperscaler_ai_demand
+    relation: drives_demand
+    polarity: positive
+    beta_positive: 0.85
+    beta_negative: 0.70
+    threshold: 云厂商年度/季度 Capex 上修达全年收入可见贡献
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.AI.002
+    source: SIGNAL.hyperscaler_ai_demand
+    target: SIGNAL.blackwell_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.80
+    beta_negative: 0.65
+    threshold: GPU / 整机柜采购可见
+    lag: 1-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain]
+  - id: EDGE.AI.003
+    source: SIGNAL.blackwell_orders
+    target: FIN.nvda_dc_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.65
+    threshold: 订单转收入确认
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.AI.004
+    source: FIN.nvda_dc_revenue
+    target: FIN.nvda_eps
+    relation: operates_leverage
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.60
+    threshold: 经营杠杆放大
+    lag: 1-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.AI.005
+    source: FIN.nvda_eps
+    target: COMPANY.NVDA
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 分析师盈利预测上修
+    lag: 即时-1 quarter
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.AI.006
+    source: SIGNAL.hyperscaler_ai_demand
+    target: SIGNAL.optical_module_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.60
+    threshold: 光模块订单可见
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain]
+
+  # ---- Price / value-uplift path: 800G upgrade -> ASP -> margin ----
+  - id: EDGE.AI.007
+    source: EVENT.speed_tier_upgrade
+    target: SIGNAL.asp_uplift_800g
+    relation: drives_price_uplift
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.65
+    threshold: 新速率产品占比超过拐点
+    lag: 1-3 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.AI.008
+    source: SIGNAL.asp_uplift_800g
+    target: FIN.industry_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 毛利率改善
+    lag: 1-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.AI.009
+    source: FIN.industry_gross_margin
+    target: VAL.growth_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 估值倍数扩张
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+
+  # ---- Tech-route path: CPO/硅光 reshuffle -> share -> alpha ----
+  - id: EDGE.AI.010
+    source: EVENT.tech_route_shift_cpo
+    target: SIGNAL.supplychain_share_reshuffle
+    relation: reshuffles_share
+    polarity: mixed
+    beta_positive: 0.80
+    beta_negative: 0.95
+    threshold: 进入头部客户认证清单
+    lag: 2-6 quarters
+    dedup_group: 技术组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.AI.011
+    source: SIGNAL.supplychain_share_reshuffle
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: drives_alpha
+    polarity: mixed
+    beta_positive: 0.70
+    beta_negative: 0.85
+    threshold: 龙头重估或淘汰
+    lag: 2-4 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, core_factor]
+
+  # ---- Power / cooling path: DC buildout -> liquid cooling -> revenue ----
+  - id: EDGE.AI.012
+    source: EVENT.dc_buildout
+    target: SIGNAL.liquid_cooling_penetration
+    relation: drives_demand
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 实际项目和客户绑定
+    lag: 2-5 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain]
+  - id: EDGE.AI.013
+    source: SIGNAL.liquid_cooling_penetration
+    target: FIN.industry_revenue_uplift
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.50
+    threshold: 配套设备收入增长
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+
+  # ---- Domestic substitution path ----
+  - id: EDGE.AI.014
+    source: EVENT.china_ai_compute_policy
+    target: SIGNAL.domestic_compute_share
+    relation: drives_share
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.60
+    threshold: 招标规模可验证
+    lag: 2-6 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.AI.015
+    source: SIGNAL.domestic_compute_share
+    target: FIN.industry_revenue_uplift
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.50
+    threshold: 招标转收入确认
+    lag: 2-4 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+
+  # ---- Risk path: Capex over -> FCF -> ROI debate -> crowding -> alpha down ----
+  - id: EDGE.AI.RISK.001
+    source: EVENT.meta_ai_capex_upgrade
+    target: RISK.ai_capex_excess_concern
+    relation: triggers_tail_risk
+    polarity: positive
+    beta_positive: 0.40
+    beta_negative: 0.30
+    threshold: 高位放量但盈利预测未上修
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.AI.RISK.002
+    source: RISK.ai_capex_excess_concern
+    target: RISK.fcf_pressure
+    relation: amplifies
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.45
+    threshold: 自由现金流压力上升
+    lag: 即时-1 quarter
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.AI.RISK.003
+    source: RISK.fcf_pressure
+    target: RISK.ai_roi_debate
+    relation: escalates
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.40
+    threshold: ROI 争议升温
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.AI.RISK.004
+    source: RISK.ai_roi_debate
+    target: VAL.ai_compute_crowding
+    relation: compresses_valuation
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 板块拥挤度上升
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.AI.RISK.005
+    source: VAL.ai_compute_crowding
+    target: COMPANY.NVDA
+    relation: drags_alpha
+    polarity: negative
+    beta_positive: 0.50
+    beta_negative: 1.10
+    threshold: 高估值时更易触发
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+  # ---- Customer concentration risk into target ----
+  - id: EDGE.AI.RISK.006
+    source: RISK.customer_concentration
+    target: VAL.growth_multiple
+    relation: discounts_multiple
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 0.85
+    threshold: 大客户砍单或集中度过高
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+  # ---- Tech displacement risk ----
+  - id: EDGE.AI.RISK.007
+    source: RISK.tech_route_displacement
+    target: SIGNAL.supplychain_share_reshuffle
+    relation: reshuffles_share
+    polarity: negative
+    beta_positive: 0.25
+    beta_negative: 0.95
+    threshold: 路线切换失败或落后
+    lag: 2-6 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+  # ---- Export control risk ----
+  - id: EDGE.AI.RISK.008
+    source: RISK.export_control
+    target: SIGNAL.hyperscaler_ai_demand
+    relation: dampens_demand
+    polarity: negative
+    beta_positive: 0.20
+    beta_negative: 0.80
+    threshold: 出口限制升级
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.AI.MEMBER.001
+    source: COMPANY.000063_SZ
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.002
+    source: COMPANY.000977_SZ
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.003
+    source: COMPANY.002463_SZ
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.004
+    source: COMPANY.002916_SZ
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.005
+    source: COMPANY.00728_HK
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.006
+    source: COMPANY.00762_HK
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.007
+    source: COMPANY.00763_HK
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.008
+    source: COMPANY.00941_HK
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.009
+    source: COMPANY.00981_HK
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.010
+    source: COMPANY.00992_HK
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.011
+    source: COMPANY.02476_HK
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.012
+    source: COMPANY.06088_HK
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.013
+    source: COMPANY.300308_SZ
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.014
+    source: COMPANY.300394_SZ
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.015
+    source: COMPANY.300502_SZ
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.016
+    source: COMPANY.601138_SH
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.017
+    source: COMPANY.688041_SH
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.018
+    source: COMPANY.688256_SH
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.019
+    source: COMPANY.AMD_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.020
+    source: COMPANY.AMZN_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.021
+    source: COMPANY.ANET_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.022
+    source: COMPANY.AVGO_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.023
+    source: COMPANY.CSCO_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.024
+    source: COMPANY.DELL_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.025
+    source: COMPANY.GOOGL_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.026
+    source: COMPANY.META_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.027
+    source: COMPANY.MRVL_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.028
+    source: COMPANY.MSFT_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.029
+    source: COMPANY.MU_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.030
+    source: COMPANY.NVDA_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.031
+    source: COMPANY.SMCI_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.AI.MEMBER.032
+    source: COMPANY.TSM_US
+    target: COMPANY.AI_COMPUTE_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 事件 → 行业信号 → 财务向量 → 估值 → 公司超额收益的完整传导链
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 当前最重要的变量及其状态（高中心度因子）
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 上下游、客户、供应商如何影响 target
+    include_node_types: [company, customer_capex_event, demand_signal, order_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 哪些路径会导致下跌（Capex 过高 / 拥挤 / 客户集中 / 技术替代 / 出口管制）
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

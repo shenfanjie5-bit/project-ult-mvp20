@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "description": "\u5408\u540c\u6a21\u5757\u7edf\u4e00\u9519\u8bef\u7801\u3002",
+      "enum": [
+        "CONTRACT_VALIDATION_ERROR",
+        "FORBIDDEN_INGEST_METADATA",
+        "UNKNOWN_FORMAL_OBJECT",
+        "PROTOCOL_SIGNATURE_MISMATCH",
+        "INCOMPATIBLE_CONTRACT_CHANGE",
+        "REASONER_INPUT_CONTRACT_ERROR",
+        "REASONER_MODEL_PROVIDER_ERROR",
+        "REASONER_TOOL_EXECUTION_ERROR",
+        "REASONER_TIMEOUT_ERROR",
+        "REASONER_INTERNAL_ERROR"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "HeartbeatStatus": {
+      "description": "Ex-0 \u5fc3\u8df3\u72b6\u6001\u3002",
+      "enum": [
+        "ok",
+        "degraded",
+        "failed"
+      ],
+      "title": "HeartbeatStatus",
+      "type": "string"
+    },
+    "ReasonerErrorCategory": {
+      "description": "Public reasoner error buckets shared across runtime consumers.",
+      "enum": [
+        "input_contract",
+        "model_provider",
+        "tool_execution",
+        "timeout",
+        "internal"
+      ],
+      "title": "ReasonerErrorCategory",
+      "type": "string"
+    },
+    "ReasonerErrorClassification": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "input_contract"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_INPUT_CONTRACT_ERROR"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "model_provider"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_MODEL_PROVIDER_ERROR"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "tool_execution"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_TOOL_EXECUTION_ERROR"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "timeout"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_TIMEOUT_ERROR"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "internal"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_INTERNAL_ERROR"
+              }
+            }
+          }
+        }
+      ],
+      "description": "Normalized reasoner-runtime error classification.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ReasonerErrorCategory"
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "details": {
+          "additionalProperties": true,
+          "title": "Details",
+          "type": "object"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "code",
+        "category",
+        "severity",
+        "retryable",
+        "message"
+      ],
+      "title": "ReasonerErrorClassification",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "\u9519\u8bef\u6216\u8bca\u65ad\u4e25\u91cd\u7ea7\u522b\u3002",
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "failed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error_classification": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "error_classification"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error_classification": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
+  "description": "Reasoner-runtime health contract.",
+  "properties": {
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "error_classification": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReasonerErrorClassification"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "last_success_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Success At"
+    },
+    "pending_count": {
+      "minimum": 0,
+      "title": "Pending Count",
+      "type": "integer",
+      "x-contract-runtime-validation": {
+        "strict": true
+      }
+    },
+    "status": {
+      "$ref": "#/$defs/HeartbeatStatus"
+    },
+    "subsystem_id": {
+      "minLength": 1,
+      "title": "Subsystem Id",
+      "type": "string"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "subsystem_id",
+    "version",
+    "checked_at",
+    "status",
+    "last_success_at",
+    "pending_count"
+  ],
+  "title": "ReasonerHealth",
+  "type": "object",
+  "x-contract-version": "0.1.0",
+  "x-source-model": "contracts.schemas.reasoner.ReasonerHealth"
+}

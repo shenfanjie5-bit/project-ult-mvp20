@@ -1,0 +1,140 @@
+schema_version: 1
+description: >
+  Governance roles for node/edge schema fields. This catalog classifies the
+  metadata fields themselves; 250 spec data-point roles live in
+  config/data_point_roles.yaml.
+
+field_roles:
+  - identity
+  - structure
+  - raw_input
+  - derived_metric
+  - score_component
+  - multiplier
+  - discount
+  - gate
+  - aggregation
+  - confidence
+  - missing_control
+  - evidence
+  - display
+  - audit
+
+score_targets:
+  - none
+  - node_score
+  - base_score
+  - fundamental_score
+  - expectation_gap
+  - valuation_rerating
+  - capital_sentiment
+  - funding_score
+  - funding_multiplier
+  - theme_multiplier
+  - sentiment_score
+  - sentiment_multiplier
+  - policy_sensitivity_multiplier
+  - market_regime_multiplier
+  - reflexivity_multiplier
+  - liquidity_multiplier
+  - options_momentum_multiplier
+  - gamma_multiplier
+  - valuation_sensitivity_multiplier
+  - rate_sensitivity_multiplier
+  - narrative_sensitivity_multiplier
+  - multiplier_stack
+  - confidence_multiplier
+  - risk_discount
+  - priced_in_discount
+  - uncertainty_discount
+  - optionality_score
+  - event_impulse_score
+  - time_decay
+  - option_priced_in
+  - volatility_risk
+  - valuation_pressure
+  - overheat_risk
+  - parent_score
+  - audit_only
+  - display_only
+
+derived_targets:
+  - fundamental_score
+  - expectation_gap
+  - valuation_rerating
+  - priced_in_discount
+  - risk_discount
+  - funding_score
+  - funding_multiplier
+  - theme_multiplier
+  - sentiment_score
+  - sentiment_multiplier
+  - policy_sensitivity_multiplier
+  - market_regime_multiplier
+  - reflexivity_multiplier
+  - liquidity_multiplier
+  - options_momentum_multiplier
+  - gamma_multiplier
+  - valuation_sensitivity_multiplier
+  - rate_sensitivity_multiplier
+  - narrative_sensitivity_multiplier
+  - confidence_multiplier
+  - uncertainty_discount
+  - optionality_score
+  - event_impulse_score
+  - time_decay
+  - option_priced_in
+  - volatility_risk
+  - valuation_pressure
+  - overheat_risk
+
+fallback_policies:
+  - none
+  - not_applicable_remove
+  - unknown_zero_score
+  - proxy_only
+  - proxy_then_neutral
+  - neutral_with_penalty
+  - inactive_zero_weight
+  - optionality_track
+
+defaults:
+  field_role: raw_input
+  score_target: none
+  participates_in_score: false
+  fallback_policy: unknown_zero_score
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 1.0
+
+schema_fields:
+  node_id: {field_role: identity, score_target: none}
+  dp_id: {field_role: identity, score_target: none}
+  node_name: {field_role: display, score_target: display_only}
+  node_type: {field_role: structure, score_target: none}
+  layer: {field_role: structure, score_target: none}
+  parent_node: {field_role: structure, score_target: none}
+  child_nodes: {field_role: structure, score_target: none}
+  direction: {field_role: score_component, score_target: node_score}
+  strength: {field_role: score_component, score_target: node_score}
+  base_weight: {field_role: score_component, score_target: node_score}
+  active_weight: {field_role: gate, score_target: node_score}
+  confidence: {field_role: confidence, score_target: confidence_multiplier}
+  priced_in: {field_role: discount, score_target: priced_in_discount}
+  exposure: {field_role: multiplier, score_target: multiplier_stack}
+  financial_sensitivity: {field_role: multiplier, score_target: multiplier_stack}
+  valuation_sensitivity: {field_role: multiplier, score_target: multiplier_stack}
+  required_level: {field_role: missing_control, score_target: none}
+  data_status: {field_role: missing_control, score_target: none}
+  missing_policy: {field_role: missing_control, score_target: none}
+  alert_policy: {field_role: missing_control, score_target: audit_only}
+  calculation_type: {field_role: aggregation, score_target: parent_score}
+  aggregation_policy: {field_role: aggregation, score_target: parent_score}
+  materiality: {field_role: score_component, score_target: node_score}
+  data_coverage: {field_role: confidence, score_target: confidence_multiplier}
+  evidence_quality: {field_role: evidence, score_target: confidence_multiplier}
+  data_source: {field_role: evidence, score_target: confidence_multiplier}
+  evidence_sources: {field_role: evidence, score_target: confidence_multiplier}
+  value: {field_role: raw_input, score_target: none}
+  last_updated: {field_role: audit, score_target: audit_only}
+  update_frequency: {field_role: audit, score_target: audit_only}

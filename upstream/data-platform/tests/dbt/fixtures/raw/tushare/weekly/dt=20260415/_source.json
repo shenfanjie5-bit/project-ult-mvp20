@@ -1,0 +1,20 @@
+{
+  "fixture_path": "data-platform/tests/dbt/fixtures/raw/tushare/weekly/dt=20260415/",
+  "fixture_kind": "tushare_weekly_bar_projection",
+  "corpus_root": "/Volumes/dockcase2tb/database_all",
+  "dataset_path": "/Volumes/dockcase2tb/database_all/股票数据/行情数据/周线行情",
+  "datasets": ["weekly"],
+  "selected_ts_codes": ["600519.SH"],
+  "date_window": {"start": "20251226", "end": "20260313"},
+  "audit_timestamp": "20260420",
+  "completeness_status": "未见明显遗漏",
+  "coverage_note": "未见明显遗漏",
+  "partition_date": "2026-04-15",
+  "partition_date_rationale": "dt=20260415 matches the existing stock_basic fixture sentinel; interpreted as snapshot-fetch-date, not as the trade_date of the contained rows. Weekly corpus data for 600519.SH does not extend to trade_date=2026-04-15 but that is by design — the fixture stores the last 8 weekly bars of the cut window as a historical time series snapshot fetched on 2026-04-15.",
+  "row_count": 8,
+  "normalization_notes": [
+    "corpus weekly CSV column order is [ts_code, trade_date, close, open, high, low, pre_close, change, pct_chg, vol, amount]",
+    "fixture reorders to TUSHARE_BAR_SCHEMA canonical order [ts_code, trade_date, open, high, low, close, pre_close, change, pct_chg, vol, amount] (close moved from col 3 to col 6) so the parquet schema matches src/data_platform/adapters/tushare/assets.py:TUSHARE_BAR_SCHEMA",
+    "all numeric columns kept as pa.string() per TUSHARE_RAW_NUMERIC_TYPE; type conversion is the staging model's job"
+  ]
+}

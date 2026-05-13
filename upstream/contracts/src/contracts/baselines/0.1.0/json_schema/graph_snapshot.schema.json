@@ -1,0 +1,210 @@
+{
+  "$defs": {
+    "EntityReference": {
+      "additionalProperties": false,
+      "description": "Portable reference to a canonical entity across downstream schemas.",
+      "properties": {
+        "canonical_id_rule_version": {
+          "minLength": 1,
+          "title": "Canonical Id Rule Version",
+          "type": "string"
+        },
+        "display_name": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Name"
+        },
+        "entity_id": {
+          "minLength": 1,
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "entity_type": {
+          "minLength": 1,
+          "title": "Entity Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "entity_type",
+        "canonical_id_rule_version"
+      ],
+      "title": "EntityReference",
+      "type": "object"
+    },
+    "GraphEdge": {
+      "additionalProperties": false,
+      "description": "Graph edge persisted in a graph snapshot.",
+      "properties": {
+        "edge_id": {
+          "minLength": 1,
+          "title": "Edge Id",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "properties": {
+          "additionalProperties": true,
+          "title": "Properties",
+          "type": "object"
+        },
+        "relation_type": {
+          "minLength": 1,
+          "title": "Relation Type",
+          "type": "string"
+        },
+        "source_node": {
+          "minLength": 1,
+          "title": "Source Node",
+          "type": "string"
+        },
+        "target_node": {
+          "minLength": 1,
+          "title": "Target Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge_id",
+        "source_node",
+        "target_node",
+        "relation_type"
+      ],
+      "title": "GraphEdge",
+      "type": "object"
+    },
+    "GraphNode": {
+      "additionalProperties": false,
+      "description": "Graph node persisted in a graph snapshot.",
+      "properties": {
+        "entity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntityReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "labels": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Labels",
+          "type": "array"
+        },
+        "node_id": {
+          "minLength": 1,
+          "title": "Node Id",
+          "type": "string"
+        },
+        "properties": {
+          "additionalProperties": true,
+          "title": "Properties",
+          "type": "object"
+        }
+      },
+      "required": [
+        "node_id",
+        "labels"
+      ],
+      "title": "GraphNode",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Published graph-engine snapshot contract.",
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "cycle_id": {
+      "minLength": 1,
+      "title": "Cycle Id",
+      "type": "string"
+    },
+    "edge_count": {
+      "minimum": 0,
+      "title": "Edge Count",
+      "type": "integer",
+      "x-contract-runtime-validation": {
+        "strict": true
+      }
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/GraphEdge"
+      },
+      "title": "Edges",
+      "type": "array"
+    },
+    "graph_snapshot_id": {
+      "minLength": 1,
+      "title": "Graph Snapshot Id",
+      "type": "string"
+    },
+    "node_count": {
+      "minimum": 0,
+      "title": "Node Count",
+      "type": "integer",
+      "x-contract-runtime-validation": {
+        "strict": true
+      }
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/GraphNode"
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "version": {
+      "minLength": 1,
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "graph_snapshot_id",
+    "cycle_id",
+    "version",
+    "created_at",
+    "node_count",
+    "edge_count"
+  ],
+  "title": "GraphSnapshot",
+  "type": "object",
+  "x-contract-runtime-invariants": [
+    {
+      "description": "node_count and edge_count must match the nodes and edges array lengths; enforced by Pydantic runtime validation.",
+      "id": "graph_snapshot.counts_match_payloads"
+    },
+    {
+      "description": "edge source_node and target_node values must reference declared nodes; enforced by Pydantic runtime validation.",
+      "id": "graph_snapshot.edges_reference_declared_nodes"
+    }
+  ],
+  "x-contract-version": "0.1.0",
+  "x-source-model": "contracts.schemas.graph.GraphSnapshot"
+}

@@ -1,0 +1,76 @@
+# Industry → THS / EM (Eastmoney) sector board name map.
+#
+# Drives ``L0.sentiment.sector_heat`` emission in
+# ``mvp20/sources/akshare_source.py``. Each active industry maps to a list
+# of THS (同花顺) industry board names. The fetcher pulls
+# ``ak.stock_board_industry_summary_ths()`` (one call returns ~90 sectors)
+# and aggregates the matched boards into a single sentiment payload per
+# industry (avg 涨跌幅, total 净流入, leader stock 涨幅).
+#
+# Note: We prefer THS boards over EM (东方财富) boards because the EM
+# JSON endpoint is currently flaky (frequent ``RemoteDisconnected``).
+# THS endpoint is stable. The file name is kept as
+# ``industry_to_em_board.yaml`` for forward-compat — if/when EM stabilises
+# we may add a parallel ``em_board`` list per industry without breaking
+# this contract.
+#
+# ``null`` (or missing) = "no clean THS board match" — the fetcher skips
+# the industry (no half-baked rows).
+#
+# THS board names are sourced from ``ak.stock_board_industry_name_ths()``
+# (90 boards as of 2026-05). Examples seen in current frame:
+#   半导体 / 白酒 / 白色家电 / 保险 / 包装印刷 / 玻璃陶瓷 / 中药 ...
+#   电网设备 / 电机 / 风电设备 / 非金属材料 / 钢铁 / 软件开发 /
+#   计算机设备 / 通用设备 / 自动化设备 / 工业机械 / 消费电子 /
+#   有色金属 / 化学制药 / 医药商业 / 电池 / 电源设备 /
+#   证券 / 银行 / 食品饮料 / 商业百货 / 煤炭 / ...
+
+industries:
+  SEMI_EQUIPMENT:
+    - 半导体
+
+  AI_COMPUTE:
+    - 软件开发
+    - 计算机设备
+
+  ROBOTICS:
+    - 工业机械
+    - 自动化设备
+
+  NONFERROUS_METALS:
+    - 有色金属
+
+  INNOVATIVE_PHARMA:
+    - 医药商业
+    - 化学制药
+
+  STORAGE_GRID:
+    - 电池
+    - 电源设备
+
+  EXPORT_MFG:
+    - 通用设备
+
+  CONSUMER_ELECTRONICS:
+    - 消费电子
+
+  HK_CN_INTERNET:
+    # THS 端无独立"港股互联网"板块 (港股板块在 ak.stock_board_concept_*_ths)；
+    # 后续可改接 ``ak.stock_board_concept_summary_ths`` → 跳过本次
+    ~
+
+  FINANCIAL_HIGH_DIVIDEND:
+    - 证券
+    - 银行
+
+  DOMESTIC_CONSUMPTION:
+    - 食品饮料
+    - 商业百货
+
+  ANTI_INVOLUTION_CYCLICAL:
+    - 钢铁
+    - 煤炭
+
+# TODO (next iteration):
+#   * Add an ``em_boards:`` array per industry once 东方财富 endpoint stabilises.
+#     Fetcher then re-emits with a higher-confidence payload combining THS + EM.

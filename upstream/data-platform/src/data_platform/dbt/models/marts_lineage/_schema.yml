@@ -1,0 +1,367 @@
+version: 2
+
+# Canonical lineage marts — sibling-of-canonical_v2 lineage rows joined 1:1
+# (per the canonical PK declared in CANONICAL_V2_PAIRING_KEY_COLUMNS in
+# data-platform/src/data_platform/serving/canonical_writer.py). Each row
+# carries source/run metadata explicitly (`source_provider`,
+# `source_interface_id`, `source_run_id`, `raw_loaded_at`). M1.13 coverage
+# includes canonical_lineage.fact_event for 16 promoted event_timeline source
+# interfaces (M1.6 added namechange; M1.8 added block_trade; M1.13 added
+# pledge_stat, pledge_detail, repurchase, stk_holdertrade, stk_surv,
+# limit_list_ths, limit_list_d, hm_detail).
+
+models:
+  - name: mart_lineage_dim_security
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.dim_security on security_id. source_interface_id is a composite source stream value because dim_security combines stock_basic, stock_company, and namechange fields.
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              to: ref('int_security_master')
+              field: ts_code
+              config:
+                severity: error
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_fact_holding_position
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.fact_holding_position on (holding_source, holder_id, security_id, report_date, announced_date). Per-row source_interface_id identifies the promoted holdings source.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - holding_source
+            - holder_id
+            - security_id
+            - report_date
+            - announced_date
+    columns:
+      - name: holding_source
+        tests:
+          - not_null
+      - name: holder_id
+        tests:
+          - not_null
+      - name: security_id
+        tests:
+          - not_null
+      - name: report_date
+        tests:
+          - not_null
+      - name: announced_date
+        tests:
+          - not_null
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'top10_holders'
+                - 'top10_floatholders'
+                - 'fund_portfolio'
+                - 'hsgt_hold_top10'
+              quote: true
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_fact_northbound_turnover
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.fact_northbound_turnover on (security_id, trade_date, market_type, rank). source_interface_id is hsgt_top10.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - security_id
+            - trade_date
+            - market_type
+            - rank
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: market_type
+        tests:
+          - not_null
+      - name: rank
+        tests:
+          - not_null
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'hsgt_top10'
+              quote: true
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_stock_basic
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.stock_basic on security_id. Uses the same int_security_master path as mart_lineage_dim_security; composite source_interface_id reflects multi-source assembly.
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              to: ref('int_security_master')
+              field: ts_code
+              config:
+                severity: error
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_dim_index
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.dim_index on index_id. Composite source_interface_id reflects index_basic+index_member+index_weight+index_classify assembly.
+    columns:
+      - name: index_id
+        tests:
+          - not_null
+          - unique
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_fact_price_bar
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.fact_price_bar on (security_id, trade_date, freq). Composite source_interface_id reflects daily+adj_factor assembly.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["security_id", "trade_date", "freq"]
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: freq
+        tests:
+          - not_null
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_fact_financial_indicator
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.fact_financial_indicator on (security_id, end_date, report_type). Composite source_interface_id reflects fina_indicator+income+balancesheet+cashflow assembly.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["security_id", "end_date", "report_type"]
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: end_date
+        tests:
+          - not_null
+      - name: report_type
+        tests:
+          - not_null
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_fact_market_daily_feature
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.fact_market_daily_feature on (security_id, trade_date). Composite source_interface_id reflects daily_basic+stk_limit+moneyflow assembly.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["security_id", "trade_date"]
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_fact_index_price_bar
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.fact_index_price_bar on (index_id, trade_date). source_interface_id is index_daily.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["index_id", "trade_date"]
+    columns:
+      - name: index_id
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_fact_forecast_event
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.fact_forecast_event on (security_id, announcement_date, report_period, update_flag, forecast_type). source_interface_id is forecast.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - security_id
+            - announcement_date
+            - report_period
+            - update_flag
+            - forecast_type
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: announcement_date
+        tests:
+          - not_null
+      - name: report_period
+        tests:
+          - not_null
+      - name: update_flag
+        tests:
+          - not_null
+      - name: forecast_type
+        tests:
+          - not_null
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null
+
+  - name: mart_lineage_fact_event
+    description: Provider-aware lineage rows joined 1:1 to canonical_v2.fact_event on (event_type, entity_id, event_date, event_key). Per-row source_interface_id (anns | suspend_d | dividend | share_float | stk_holdernumber | disclosure_date | namechange | block_trade | pledge_stat | pledge_detail | repurchase | stk_holdertrade | stk_surv | limit_list_ths | limit_list_d | hm_detail) so each row attributes lineage to its true source — NOT a composite hardcoded string. M1.6 added the namechange branch; M1.8 added the block_trade branch; M1.13 added the 8 candidate event_timeline branches (precondition 9 closure).
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - event_type
+            - entity_id
+            - event_date
+            - event_key
+    columns:
+      - name: event_type
+        tests:
+          - not_null
+      - name: entity_id
+        tests:
+          - not_null
+      - name: event_date
+        tests:
+          - not_null
+      - name: event_key
+        tests:
+          - not_null
+      - name: source_provider
+        tests:
+          - not_null
+      - name: source_interface_id
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'anns'
+                - 'suspend_d'
+                - 'dividend'
+                - 'share_float'
+                - 'stk_holdernumber'
+                - 'disclosure_date'
+                - 'namechange'
+                - 'block_trade'
+                # M1.13 expansion (precondition 9 closure).
+                - 'pledge_stat'
+                - 'pledge_detail'
+                - 'repurchase'
+                - 'stk_holdertrade'
+                - 'stk_surv'
+                - 'limit_list_ths'
+                - 'limit_list_d'
+                - 'hm_detail'
+              quote: true
+      - name: source_run_id
+        tests:
+          - not_null
+      - name: raw_loaded_at
+        tests:
+          - not_null

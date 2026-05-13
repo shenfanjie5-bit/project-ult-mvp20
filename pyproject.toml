@@ -5,13 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "project-ult-mvp20"
 version = "0.1.0"
-description = "20-stock Project ULT MVP orchestration shell."
+description = "13-industry Project ULT MVP orchestration shell."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
     "pydantic>=2.6",
     "pyyaml>=6.0",
+    # Phase-2 data-layer: Parquet minute-history archive read/write via DuckDB.
+    # mvp20/history.py imports duckdb + pyarrow on demand; tests skip if absent.
+    "duckdb>=1.0",
+    "pyarrow>=15.0",
+    # akshare: free aggregator for A-share news / 公告 / 雪球热度 / 概念板块
+    # (Tier-1 dp_ids in mvp20/sources/akshare_source.py). Heavy transitive
+    # deps (mini-racer / curl_cffi / openpyxl / xlrd / rich) come with it
+    # but the module wraps every endpoint in try/except so collector cycles
+    # continue even when individual akshare functions break upstream.
+    "akshare>=1.12.0",
 ]
 
 [project.scripts]
@@ -20,6 +30,30 @@ mvp20 = "mvp20.cli:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+]
+# Seven upstream project-ult modules vendored under upstream/. The 6 originally
+# planned (audit-eval / data-platform / entity-registry / graph-engine /
+# main-core / reasoner-runtime) plus `contracts` which is the base schema
+# package that 3 of the 6 import at module-load time.
+#
+# Installed via path-install (`pip install -e ./upstream/<name> --no-deps
+# --ignore-requires-python`); transitive heavy deps (neo4j / litellm / duckdb /
+# pandas / tushare / etc.) are deliberately skipped. Adapter try/except
+# ImportError auto-falls-back to a 503 envelope when a vendor's runtime deps
+# aren't present.
+#
+# This `[vendor]` extras is **declarative only** — the actual install path is
+# the `--no-deps` per-vendor loop documented in the runbook; selecting this
+# extras with `pip install -e ".[vendor]"` won't work because pip will try to
+# resolve every transitive `project-ult-contracts>=0.1.3` etc.
+vendor = [
+    "project-ult-contracts @ file:///Users/fanjie/Desktop/Cowork/project-ult-mvp20/upstream/contracts",
+    "project-ult-audit-eval @ file:///Users/fanjie/Desktop/Cowork/project-ult-mvp20/upstream/audit-eval",
+    "project-ult-data-platform @ file:///Users/fanjie/Desktop/Cowork/project-ult-mvp20/upstream/data-platform",
+    "project-ult-entity-registry @ file:///Users/fanjie/Desktop/Cowork/project-ult-mvp20/upstream/entity-registry",
+    "project-ult-graph-engine @ file:///Users/fanjie/Desktop/Cowork/project-ult-mvp20/upstream/graph-engine",
+    "project-ult-main-core @ file:///Users/fanjie/Desktop/Cowork/project-ult-mvp20/upstream/main-core",
+    "project-ult-reasoner-runtime @ file:///Users/fanjie/Desktop/Cowork/project-ult-mvp20/upstream/reasoner-runtime",
 ]
 
 [tool.setuptools.packages.find]

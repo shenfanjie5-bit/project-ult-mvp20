@@ -26,3 +26,36 @@ payloads/
 *_manifest.json
 .env
 .env.*
+
+# Frontend lives outside the mvp20 manifest+lock+CI shell — kept locally
+# but not version-controlled by the outer mvp20 repo. Was previously a
+# nested git repo; that .git was removed so the directory is now plain
+# files. Keep ignored to avoid accidentally committing large node_modules
+# / build artefacts / Tauri target / generated dist.
+FrontEnd/
+.DS_Store
+
+# Phase-1 + Phase-2 data layer outputs (collector writes here continuously).
+# hot.sqlite holds the current snapshot; history/ holds Parquet minute files
+# that get compacted daily. Neither is meaningful to git-track.
+runtime/
+
+# Vendored upstream project-ult modules under upstream/ — their source files
+# ARE tracked (those define the public API our adapters call), but their
+# build / cache / test artefacts and editable-install metadata should not
+# pollute mvp20's main git history.
+upstream/**/__pycache__/
+upstream/**/*.egg-info/
+upstream/**/.pytest_cache/
+upstream/**/build/
+upstream/**/dist/
+upstream/**/.venv/
+upstream/**/.ruff_cache/
+upstream/**/.mypy_cache/
+upstream/**/artifacts/
+
+# Claude Code session / plan state (per-user, not portable).
+.claude/
+
+# Project-local scratch files (assistant pin'ed CSVs, ad-hoc payloads).
+available_complete_interfaces_*.csv

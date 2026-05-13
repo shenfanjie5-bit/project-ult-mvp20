@@ -1,0 +1,895 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: ANTI_INVOLUTION_CYCLICAL
+industry_name_cn: 反内卷周期化工建材钢铁
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 化工
+      - 钢铁
+      - 水泥
+      - 玻璃
+      - 建材
+      - 煤化工
+      - 制造周期品
+      - 反内卷受益行业
+    core_judgment: >-
+      该板块不是单纯看需求复苏，而是看供给约束 + 库存去化 + 价格/价差修复。
+      反内卷逻辑只有传导到价格和利润，才会变成股价超额收益。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注供给约束、需求修复、库存周期、成本价差、并购集中、价值陷阱等。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.10}
+    - {name: 温和多头, probability: 0.25}
+    - {name: 等待验证, probability: 0.30}
+    - {name: 结构分化, probability: 0.20}
+    - {name: 杀估值, probability: 0.15}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、价格}
+      - {name: price_implied_expectation, description: 股价隐含, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 政策、新闻}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 价格 / 库存 / 开工}
+      - {name: tail_risk_prob, description: 尾部风险, source: 弱需求 + 价格反弹}
+
+  path_dedup_groups: [供给组, 需求组, 库存组, 价格组, 竞争组, 风险组]
+
+  exposure:
+    factors:
+      - 行业龙头地位与定价权
+      - 成本曲线位置
+      - 低效产能比例
+      - 产品价差敏感度
+      - 库存与开工率
+      - 政策约束传导
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 行业龙头 / 价差弹性强
+      "4": 区域龙头 / 价格敏感
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 价格 × 销量
+      GrossMargin: 价差与成本
+      OpexRatio: 重资产稳态低
+      EBIT_EPS: 周期弹性显著
+      FCF: 价格上行期改善
+      Leverage: 重资产 / 高杠杆
+
+  valuation_mix:
+    weights:
+      PB: 0.30
+      EV_EBITDA: 0.30
+      PE: 0.20
+      DCF: 0.10
+      Dividend: 0.10
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 政策执行偏弱 / 产能复产
+      - 需求疲弱 + 库存高企
+      - 价格短暂反弹后回落
+      - 海外贸易壁垒
+      - 利率上行 + 债务压力
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 限产执行与产能退出
+    - 地产 / 基建 / PMI
+    - 库存与开工率
+    - 价差与原料价格
+    - 行业并购与 CR 提升
+    - 现金流与债务
+
+  falsification:
+    bullish_triggers:
+      - 反内卷政策落地 + 价格上行
+      - 库存连续去化 + 补库启动
+      - 价差扩大并稳定
+      - 龙头并购 / 集中度提升
+    bearish_triggers:
+      - 政策执行弱 / 产能复产
+      - 库存回升 + 需求转弱
+      - 价格短暂反弹后回落
+      - 利率上行 + 现金流恶化
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    反内卷周期的图谱重点是判断供给收缩 + 价差修复是否真实兑现到利润，并防止
+    在弱需求 + 假反弹时被价值陷阱套牢。
+
+nodes:
+  - id: EVENT.anti_involution_policy
+    layer: event
+    type: policy_event
+    label_cn: 反内卷政策 / 限产
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: EVENT.real_estate_recovery
+    layer: event
+    type: demand_event
+    label_cn: 地产 / 基建 / 制造业改善
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: EVENT.inventory_destocking
+    layer: event
+    type: cost_event
+    label_cn: 行业库存去化
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: EVENT.commodity_spread_widening
+    layer: event
+    type: price_event
+    label_cn: 原料 / 产品价差扩大
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: EVENT.industry_consolidation
+    layer: event
+    type: cost_event
+    label_cn: 落后产能退出 / 并购
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+
+  - id: SIGNAL.effective_supply_contraction
+    layer: industry_signal
+    type: supply_signal
+    label_cn: 有效供给收缩
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: SIGNAL.demand_recovery
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 开工和出货改善
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: SIGNAL.inventory_cycle
+    layer: industry_signal
+    type: inventory_signal
+    label_cn: 库存周期上行
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: SIGNAL.product_price
+    layer: industry_signal
+    type: price_signal
+    label_cn: 产品价格 / 价差
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: SIGNAL.industry_concentration
+    layer: industry_signal
+    type: competitive_signal
+    label_cn: 行业集中度 (CR)
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+
+  - id: FIN.cyclical_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 行业收入
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {field: Revenue}
+  - id: FIN.cyclical_gross_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 行业毛利率
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {field: GrossMargin}
+
+  - id: VAL.cyclical_pb_multiple
+    layer: valuation
+    type: pb_multiple
+    label_cn: 周期股 PB / EV/EBITDA
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+
+  - id: RISK.weak_demand_value_trap
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 弱需求价值陷阱
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+  - id: RISK.policy_execution_weak
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 政策执行弱 / 产能复产
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+
+  - id: COMPANY.CYCLICAL_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 周期板块代表 ETF
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.000786_SZ
+    layer: stock
+    type: company
+    label_cn: 北新建材
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 000786.SZ, role: target}
+  - id: COMPANY.000932_SZ
+    layer: stock
+    type: company
+    label_cn: 华菱钢铁
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 000932.SZ, role: target}
+  - id: COMPANY.002648_SZ
+    layer: stock
+    type: company
+    label_cn: 卫星化学
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 002648.SZ, role: target}
+  - id: COMPANY.00323_HK
+    layer: stock
+    type: company
+    label_cn: 马鞍山钢铁
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 00323.HK, role: target}
+  - id: COMPANY.00347_HK
+    layer: stock
+    type: company
+    label_cn: 鞍钢股份
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 00347.HK, role: target}
+  - id: COMPANY.00386_HK
+    layer: stock
+    type: company
+    label_cn: 中国石油化工股份
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 00386.HK, role: target}
+  - id: COMPANY.00914_HK
+    layer: stock
+    type: company
+    label_cn: 海螺水泥
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 00914.HK, role: target}
+  - id: COMPANY.01053_HK
+    layer: stock
+    type: company
+    label_cn: 重庆钢铁
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 01053.HK, role: target}
+  - id: COMPANY.01313_HK
+    layer: stock
+    type: company
+    label_cn: 华润建材科技
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 01313.HK, role: target}
+  - id: COMPANY.01378_HK
+    layer: stock
+    type: company
+    label_cn: 中国宏桥
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 01378.HK, role: target}
+  - id: COMPANY.01866_HK
+    layer: stock
+    type: company
+    label_cn: 中国心连心化肥
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 01866.HK, role: target}
+  - id: COMPANY.03323_HK
+    layer: stock
+    type: company
+    label_cn: 中国建材
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 03323.HK, role: target}
+  - id: COMPANY.600019_SH
+    layer: stock
+    type: company
+    label_cn: 宝钢股份
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 600019.SH, role: target}
+  - id: COMPANY.600309_SH
+    layer: stock
+    type: company
+    label_cn: 万华化学
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 600309.SH, role: target}
+  - id: COMPANY.600346_SH
+    layer: stock
+    type: company
+    label_cn: 恒力石化
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 600346.SH, role: target}
+  - id: COMPANY.600426_SH
+    layer: stock
+    type: company
+    label_cn: 华鲁恒升
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 600426.SH, role: target}
+  - id: COMPANY.600585_SH
+    layer: stock
+    type: company
+    label_cn: 海螺水泥
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 600585.SH, role: target}
+  - id: COMPANY.600801_SH
+    layer: stock
+    type: company
+    label_cn: 华新水泥
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 600801.SH, role: target}
+  - id: COMPANY.600989_SH
+    layer: stock
+    type: company
+    label_cn: 宝丰能源
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: 600989.SH, role: target}
+  - id: COMPANY.CLF_US
+    layer: stock
+    type: company
+    label_cn: Cleveland-Cliffs
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: CLF.US, role: target}
+  - id: COMPANY.DD_US
+    layer: stock
+    type: company
+    label_cn: DuPont
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: DD.US, role: target}
+  - id: COMPANY.DOW_US
+    layer: stock
+    type: company
+    label_cn: Dow
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: DOW.US, role: target}
+  - id: COMPANY.LYB_US
+    layer: stock
+    type: company
+    label_cn: LyondellBasell
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: LYB.US, role: target}
+  - id: COMPANY.MLM_US
+    layer: stock
+    type: company
+    label_cn: Martin Marietta
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: MLM.US, role: target}
+  - id: COMPANY.NUE_US
+    layer: stock
+    type: company
+    label_cn: Nucor
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: NUE.US, role: target}
+  - id: COMPANY.OC_US
+    layer: stock
+    type: company
+    label_cn: Owens Corning
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: OC.US, role: target}
+  - id: COMPANY.RS_US
+    layer: stock
+    type: company
+    label_cn: Reliance
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: RS.US, role: target}
+  - id: COMPANY.STLD_US
+    layer: stock
+    type: company
+    label_cn: Steel Dynamics
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: STLD.US, role: target}
+  - id: COMPANY.VMC_US
+    layer: stock
+    type: company
+    label_cn: Vulcan Materials
+    industry_tags: [ANTI_INVOLUTION_CYCLICAL]
+    properties: {ts_code: VMC.US, role: target}
+
+edges:
+  - id: EDGE.CYC.001
+    source: EVENT.anti_involution_policy
+    target: SIGNAL.effective_supply_contraction
+    relation: drives_supply_cut
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.70
+    threshold: 价格和库存数据变化
+    lag: 1-4 quarters
+    dedup_group: 供给组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.002
+    source: SIGNAL.effective_supply_contraction
+    target: SIGNAL.product_price
+    relation: drives_price
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 价差扩大
+    lag: 即时-2 quarters
+    dedup_group: 供给组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.003
+    source: EVENT.real_estate_recovery
+    target: SIGNAL.demand_recovery
+    relation: drives_demand
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.75
+    threshold: 需求数据连续改善
+    lag: 2-6 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.CYC.004
+    source: EVENT.inventory_destocking
+    target: SIGNAL.inventory_cycle
+    relation: improves_cycle
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 库存去化是前提
+    lag: 1-3 quarters
+    dedup_group: 库存组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.005
+    source: SIGNAL.inventory_cycle
+    target: SIGNAL.product_price
+    relation: drives_price
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 补库启动
+    lag: 即时-2 quarters
+    dedup_group: 库存组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.006
+    source: EVENT.commodity_spread_widening
+    target: FIN.cyclical_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.70
+    threshold: 价差比单一价格更重要
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.007
+    source: SIGNAL.product_price
+    target: FIN.cyclical_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.60
+    threshold: 价格上行
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.008
+    source: EVENT.industry_consolidation
+    target: SIGNAL.industry_concentration
+    relation: improves_concentration
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.50
+    threshold: CR 提升
+    lag: 4-12 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.009
+    source: SIGNAL.industry_concentration
+    target: VAL.cyclical_pb_multiple
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.50
+    threshold: 龙头估值修复
+    lag: 即时-4 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.010
+    source: FIN.cyclical_gross_margin
+    target: VAL.cyclical_pb_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 估值修复
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CYC.011
+    source: VAL.cyclical_pb_multiple
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.CYC.RISK.001
+    source: SIGNAL.product_price
+    target: RISK.weak_demand_value_trap
+    relation: triggers_tail_risk
+    polarity: positive
+    beta_positive: 0.45
+    beta_negative: 1.15
+    threshold: 价格反弹但需求弱
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.CYC.RISK.002
+    source: RISK.weak_demand_value_trap
+    target: VAL.cyclical_pb_multiple
+    relation: compresses_valuation
+    polarity: negative
+    beta_positive: 0.35
+    beta_negative: 1.05
+    threshold: 盈利修复失败
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.CYC.RISK.003
+    source: RISK.policy_execution_weak
+    target: SIGNAL.effective_supply_contraction
+    relation: dampens_supply_cut
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 0.90
+    threshold: 政策执行弱
+    lag: 即时-3 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.CYC.MEMBER.001
+    source: COMPANY.000786_SZ
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.002
+    source: COMPANY.000932_SZ
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.003
+    source: COMPANY.002648_SZ
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.004
+    source: COMPANY.00323_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.005
+    source: COMPANY.00347_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.006
+    source: COMPANY.00386_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.007
+    source: COMPANY.00914_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.008
+    source: COMPANY.01053_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.009
+    source: COMPANY.01313_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.010
+    source: COMPANY.01378_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.011
+    source: COMPANY.01866_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.012
+    source: COMPANY.03323_HK
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.013
+    source: COMPANY.600019_SH
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.014
+    source: COMPANY.600309_SH
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.015
+    source: COMPANY.600346_SH
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.016
+    source: COMPANY.600426_SH
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.017
+    source: COMPANY.600585_SH
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.018
+    source: COMPANY.600801_SH
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.019
+    source: COMPANY.600989_SH
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.020
+    source: COMPANY.CLF_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.021
+    source: COMPANY.DD_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.022
+    source: COMPANY.DOW_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.023
+    source: COMPANY.LYB_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.024
+    source: COMPANY.MLM_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.025
+    source: COMPANY.NUE_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.026
+    source: COMPANY.OC_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.027
+    source: COMPANY.RS_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.028
+    source: COMPANY.STLD_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CYC.MEMBER.029
+    source: COMPANY.VMC_US
+    target: COMPANY.CYCLICAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 反内卷 / 需求 / 库存 / 价差 / 集中度 → 周期股 alpha
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 供给 / 需求 / 库存 / 价差 / CR 高中心度
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 上下游 / 政策 / 集中度
+    include_node_types: [company, policy_event, demand_signal, inventory_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 弱需求 + 假反弹 / 政策落空
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

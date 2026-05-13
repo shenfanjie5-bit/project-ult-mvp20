@@ -1,0 +1,871 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: SEMI_EQUIPMENT
+industry_name_cn: 半导体设备材料与先进封装
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 刻蚀
+      - 薄膜沉积
+      - 清洗
+      - CMP
+      - 检测量测
+      - 离子注入
+      - 零部件
+      - 光刻胶
+      - 靶材
+      - 电子特气
+      - 先进封装
+      - Chiplet
+      - HBM 配套
+      - 存储
+      - EDA
+      - 国产 AI 芯片
+    core_judgment: >-
+      该板块的核心因果变量是国产替代订单、晶圆厂资本开支、存储周期、先进封装
+      瓶颈和关键工艺良率。估值需要同时看政策安全溢价与真实订单兑现。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 公司特异超额收益来自国产替代、Capex、存储、先进封装、良率突破等路径。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.10}
+    - {name: 温和多头, probability: 0.30}
+    - {name: 结构分化, probability: 0.30}
+    - {name: 等待验证, probability: 0.20}
+    - {name: 杀估值, probability: 0.10}
+
+  shock_model:
+    formula: |
+      Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、业绩前瞻、产业调研}
+      - {name: price_implied_expectation, description: 股价隐含预期, source: 事件前涨跌、ETF 资金}
+      - {name: narrative_expectation, description: 叙事热度, source: 新闻、社媒、路演}
+      - {name: pre_event_runup, description: 事件前涨幅, source: 事件前 5/20/60 日收益}
+      - {name: post_event_reaction, description: 事件后反应, source: 公告后或消息后收益}
+      - {name: remaining_impact, description: 剩余影响, source: 理论影响减去已反应}
+      - {name: data_quality, description: 数据质量, source: 公告 > 财报 > 订单}
+      - {name: tail_risk_prob, description: 尾部风险, source: 监管、技术、客户、财务}
+
+  path_dedup_groups: [需求组, 价格组, 政策组, 技术组, 竞争组, 风险组]
+
+  exposure:
+    factors:
+      - 国产化收入占比
+      - 客户验证阶段（样品 / 导入 / 量产 / 复购）
+      - 设备/材料所在工艺环节稀缺度
+      - 先进封装或 AI 芯片相关收入占比
+      - 研发强度与技术壁垒
+      - 现金储备与扩产能力
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 直接收入占比高、订单可验证、利润可传导、龙头地位强
+      "4": 直接受益，但收入占比或利润传导略弱
+      "3": 有业务关联，但对当期财务贡献不确定
+      "2": 更多是主题映射，商业化或订单弱
+      "1": 关系间接
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 招标到收入存在滞后
+      GrossMargin: 量产良率、产品结构、议价决定
+      OpexRatio: 研发费用高
+      EBIT_EPS: 收入规模过临界点后经营杠杆明显
+      FCF: 扩产、备货、研发投入波动
+      ROE: 成熟设备商规模化提升
+
+  valuation_mix:
+    weights:
+      PE: 0.25
+      PS: 0.25
+      EV_EBITDA: 0.15
+      DCF: 0.10
+      SOTP_Pipeline: 0.25
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 关键设备或材料技术突破低于预期
+      - 晶圆厂 Capex 下修
+      - 存储周期反转
+      - 海外限制升级导致供应链断点
+      - 估值过高但订单兑现慢
+    formula_note: mu_adjusted = mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR
+
+  validation_signals:
+    - 晶圆厂招标和国产设备中标
+    - 客户验证与量产导入公告
+    - 存储价格和库存周期
+    - 先进封装产能扩张数据
+    - 毛利率与研发费用率变化
+    - 分析师订单和收入预测上修
+    - 海外管制政策变化
+
+  falsification:
+    bullish_triggers:
+      - 国产设备材料中标密度提升
+      - 先进封装和 HBM 配套订单放量
+      - 存储价格持续上行并带动 Capex
+      - 量产客户数量增加
+    bearish_triggers:
+      - 招标延期或中标单价下降
+      - 客户验证迟迟无法转量产
+      - 存储价格回落
+      - 研发投入上升但收入不放量
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响聚合减去风险惩罚, interpretation: 预期超额收益}
+    - {name: sigma, formula: 参数与路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma 减去成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre 与 D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险与拥挤
+    - 输出 alpha、概率、置信区间和可交易性
+
+  one_line_summary: >-
+    半导体设备材料与先进封装的图谱重点不是判断这个行业好不好，而是判断：利好
+    是否超预期、是否已经反映、能否传导到公司财务、估值是否还有空间、尾部风险
+    是否足以吞掉收益。
+
+nodes:
+  - id: EVENT.export_control_escalation
+    layer: event
+    type: policy_event
+    label_cn: 出口限制 / 产业安全升级
+    industry_tags: [SEMI_EQUIPMENT, AI_COMPUTE]
+  - id: EVENT.fab_capex_upgrade
+    layer: event
+    type: customer_capex_event
+    label_cn: 晶圆厂扩产 / 先进制程投入
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: EVENT.memory_price_upturn
+    layer: event
+    type: price_event
+    label_cn: 存储价格上行
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: EVENT.ai_packaging_demand
+    layer: event
+    type: demand_event
+    label_cn: AI 芯片封装瓶颈 (CoWoS / HBM)
+    industry_tags: [SEMI_EQUIPMENT, AI_COMPUTE]
+  - id: EVENT.yield_breakthrough
+    layer: event
+    type: technology_event
+    label_cn: 关键工艺良率突破
+    industry_tags: [SEMI_EQUIPMENT]
+
+  - id: SIGNAL.domestic_equipment_share
+    layer: industry_signal
+    type: policy_signal
+    label_cn: 国产设备材料份额
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: SIGNAL.fab_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: 晶圆厂招标与订单
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: SIGNAL.memory_capex_recovery
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 存储厂 Capex 恢复
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: SIGNAL.advanced_packaging_capacity
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 先进封装产能扩张
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: SIGNAL.mass_production_validation
+    layer: industry_signal
+    type: competitive_signal
+    label_cn: 客户量产导入
+    industry_tags: [SEMI_EQUIPMENT]
+
+  - id: FIN.semi_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 行业收入确认
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {field: Revenue}
+  - id: FIN.semi_gross_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 行业毛利率
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {field: GrossMargin}
+
+  - id: VAL.security_premium
+    layer: valuation
+    type: policy_premium
+    label_cn: 国产替代估值溢价
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: VAL.semi_growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 半导体成长估值
+    industry_tags: [SEMI_EQUIPMENT]
+
+  - id: RISK.tech_chokepoint
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 技术卡点
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: RISK.export_control_supply
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 海外管制升级影响供应链
+    industry_tags: [SEMI_EQUIPMENT]
+  - id: RISK.memory_cycle_reversal
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 存储周期反转
+    industry_tags: [SEMI_EQUIPMENT]
+
+  - id: COMPANY.SEMI_EQUIPMENT_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 半导体设备材料板块代表 ETF
+    industry_tags: [SEMI_EQUIPMENT]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.002156_SZ
+    layer: stock
+    type: company
+    label_cn: 通富微电
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 002156.SZ, role: target}
+  - id: COMPANY.002371_SZ
+    layer: stock
+    type: company
+    label_cn: 北方华创
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 002371.SZ, role: target}
+  - id: COMPANY.002409_SZ
+    layer: stock
+    type: company
+    label_cn: 雅克科技
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 002409.SZ, role: target}
+  - id: COMPANY.00522_HK
+    layer: stock
+    type: company
+    label_cn: ASMPT
+    industry_tags: [SEMI_EQUIPMENT, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 00522.HK, role: target}
+  - id: COMPANY.00981_HK
+    layer: stock
+    type: company
+    label_cn: 中芯国际
+    industry_tags: [AI_COMPUTE, SEMI_EQUIPMENT]
+    properties: {ts_code: 00981.HK, role: target}
+  - id: COMPANY.01347_HK
+    layer: stock
+    type: company
+    label_cn: 华虹半导体
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 01347.HK, role: target}
+  - id: COMPANY.01385_HK
+    layer: stock
+    type: company
+    label_cn: 上海复旦
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 01385.HK, role: target}
+  - id: COMPANY.02476_HK
+    layer: stock
+    type: company
+    label_cn: 胜宏科技-H
+    industry_tags: [AI_COMPUTE, SEMI_EQUIPMENT, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 02476.HK, role: target}
+  - id: COMPANY.02878_HK
+    layer: stock
+    type: company
+    label_cn: 晶门半导体
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 02878.HK, role: target}
+  - id: COMPANY.300346_SZ
+    layer: stock
+    type: company
+    label_cn: 南大光电
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 300346.SZ, role: target}
+  - id: COMPANY.300666_SZ
+    layer: stock
+    type: company
+    label_cn: 江丰电子
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 300666.SZ, role: target}
+  - id: COMPANY.600584_SH
+    layer: stock
+    type: company
+    label_cn: 长电科技
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 600584.SH, role: target}
+  - id: COMPANY.688012_SH
+    layer: stock
+    type: company
+    label_cn: 中微公司
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 688012.SH, role: target}
+  - id: COMPANY.688072_SH
+    layer: stock
+    type: company
+    label_cn: 拓荆科技
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 688072.SH, role: target}
+  - id: COMPANY.688120_SH
+    layer: stock
+    type: company
+    label_cn: 华海清科
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 688120.SH, role: target}
+  - id: COMPANY.688126_SH
+    layer: stock
+    type: company
+    label_cn: 沪硅产业
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: 688126.SH, role: target}
+  - id: COMPANY.AMAT_US
+    layer: stock
+    type: company
+    label_cn: Applied Materials
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: AMAT.US, role: target}
+  - id: COMPANY.AMKR_US
+    layer: stock
+    type: company
+    label_cn: Amkor
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: AMKR.US, role: target}
+  - id: COMPANY.ASML_US
+    layer: stock
+    type: company
+    label_cn: ASML
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: ASML.US, role: target}
+  - id: COMPANY.ENTG_US
+    layer: stock
+    type: company
+    label_cn: Entegris
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: ENTG.US, role: target}
+  - id: COMPANY.GFS_US
+    layer: stock
+    type: company
+    label_cn: GlobalFoundries
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: GFS.US, role: target}
+  - id: COMPANY.KLAC_US
+    layer: stock
+    type: company
+    label_cn: KLA
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: KLAC.US, role: target}
+  - id: COMPANY.LRCX_US
+    layer: stock
+    type: company
+    label_cn: Lam Research
+    industry_tags: [SEMI_EQUIPMENT]
+    properties: {ts_code: LRCX.US, role: target}
+  - id: COMPANY.TER_US
+    layer: stock
+    type: company
+    label_cn: Teradyne
+    industry_tags: [SEMI_EQUIPMENT, ROBOTICS]
+    properties: {ts_code: TER.US, role: target}
+  - id: COMPANY.TSM_US
+    layer: stock
+    type: company
+    label_cn: TSMC (ADR)
+    industry_tags: [AI_COMPUTE, SEMI_EQUIPMENT]
+    properties: {ts_code: TSM.US, role: target}
+
+edges:
+  - id: EDGE.SEMI.001
+    source: EVENT.export_control_escalation
+    target: SIGNAL.domestic_equipment_share
+    relation: drives_share
+    polarity: positive
+    beta_positive: 0.80
+    beta_negative: 0.70
+    threshold: 招标或产线导入可见
+    lag: 2-8 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.SEMI.002
+    source: SIGNAL.domestic_equipment_share
+    target: SIGNAL.fab_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.60
+    threshold: 中标金额可见
+    lag: 1-3 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, supply_chain]
+  - id: EDGE.SEMI.003
+    source: EVENT.fab_capex_upgrade
+    target: SIGNAL.fab_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 招标批次和产线建设
+    lag: 2-6 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.SEMI.004
+    source: SIGNAL.fab_orders
+    target: FIN.semi_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.60
+    threshold: 订单转收入
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.SEMI.005
+    source: EVENT.memory_price_upturn
+    target: SIGNAL.memory_capex_recovery
+    relation: drives_capex
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.75
+    threshold: 价格趋势持续一个季度
+    lag: 1-4 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.SEMI.006
+    source: SIGNAL.memory_capex_recovery
+    target: FIN.semi_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.70
+    threshold: Capex 恢复到收入
+    lag: 1-3 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.SEMI.007
+    source: EVENT.ai_packaging_demand
+    target: SIGNAL.advanced_packaging_capacity
+    relation: drives_demand
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.60
+    threshold: 产能扩张和订单同步
+    lag: 2-6 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.SEMI.008
+    source: SIGNAL.advanced_packaging_capacity
+    target: VAL.semi_growth_multiple
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 设备材料估值切换
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.SEMI.009
+    source: EVENT.yield_breakthrough
+    target: SIGNAL.mass_production_validation
+    relation: drives_validation
+    polarity: positive
+    beta_positive: 0.90
+    beta_negative: 0.95
+    threshold: 量产比样品更重要
+    lag: 3-8 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.SEMI.010
+    source: SIGNAL.mass_production_validation
+    target: VAL.security_premium
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 估值切换
+    lag: 2-4 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.SEMI.011
+    source: VAL.semi_growth_multiple
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.60
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+
+  # ---- Risk paths ----
+  - id: EDGE.SEMI.RISK.001
+    source: RISK.tech_chokepoint
+    target: SIGNAL.mass_production_validation
+    relation: dampens_validation
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.00
+    threshold: 关键工艺无法验证
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.SEMI.RISK.002
+    source: EVENT.export_control_escalation
+    target: RISK.export_control_supply
+    relation: triggers_tail_risk
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.45
+    threshold: 海外限制升级
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.SEMI.RISK.003
+    source: RISK.export_control_supply
+    target: VAL.security_premium
+    relation: compresses_valuation
+    polarity: negative
+    beta_positive: 0.40
+    beta_negative: 1.10
+    threshold: 供应链断点
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.SEMI.RISK.004
+    source: EVENT.memory_price_upturn
+    target: RISK.memory_cycle_reversal
+    relation: triggers_tail_risk
+    polarity: positive
+    beta_positive: 0.30
+    beta_negative: 0.80
+    threshold: 价格回落、库存高企
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.SEMI.RISK.005
+    source: RISK.memory_cycle_reversal
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: drags_alpha
+    polarity: negative
+    beta_positive: 0.35
+    beta_negative: 1.05
+    threshold: 周期反转
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.SEMI.MEMBER.001
+    source: COMPANY.002156_SZ
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.002
+    source: COMPANY.002371_SZ
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.003
+    source: COMPANY.002409_SZ
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.004
+    source: COMPANY.00522_HK
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.005
+    source: COMPANY.00981_HK
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.006
+    source: COMPANY.01347_HK
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.007
+    source: COMPANY.01385_HK
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.008
+    source: COMPANY.02476_HK
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.009
+    source: COMPANY.02878_HK
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.010
+    source: COMPANY.300346_SZ
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.011
+    source: COMPANY.300666_SZ
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.012
+    source: COMPANY.600584_SH
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.013
+    source: COMPANY.688012_SH
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.014
+    source: COMPANY.688072_SH
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.015
+    source: COMPANY.688120_SH
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.016
+    source: COMPANY.688126_SH
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.017
+    source: COMPANY.AMAT_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.018
+    source: COMPANY.AMKR_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.019
+    source: COMPANY.ASML_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.020
+    source: COMPANY.ENTG_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.021
+    source: COMPANY.GFS_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.022
+    source: COMPANY.KLAC_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.023
+    source: COMPANY.LRCX_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.024
+    source: COMPANY.TER_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.SEMI.MEMBER.025
+    source: COMPANY.TSM_US
+    target: COMPANY.SEMI_EQUIPMENT_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 国产替代/Capex/存储/先进封装/良率 → 设备材料公司 alpha 的完整传导
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 当前最重要的设备/材料/封装变量
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 晶圆厂客户、出口管制对设备/材料公司的影响
+    include_node_types: [company, customer_capex_event, demand_signal, order_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 技术卡点 / 出口管制 / 存储周期反转
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

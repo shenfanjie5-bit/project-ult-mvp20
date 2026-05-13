@@ -1,0 +1,36 @@
+# Three-backend example. Load exactly one backend by passing a selector to
+# `load_provider_profiles(..., selector="minimax" | "codex" | "claude_code")`.
+# The selected list is then passed as `provider_profiles` at runtime; we do NOT
+# fall back between these backends.
+#
+# Required env vars per backend:
+#   minimax       — MINIMAX_API_KEY (+ optional MINIMAX_API_BASE)
+#   openai-codex  — REASONER_RUNTIME_ENABLE_CODEX_OAUTH=1 + `codex login` once
+#   claude-code   — REASONER_RUNTIME_ENABLE_CLAUDE_CODE_CLI=1 + `claude /login` once
+
+# --- Backend A: MiniMax (LiteLLM default path, public API key) ---
+providers_minimax:
+  - provider: minimax
+    model: MiniMax-M2.5
+    timeout_ms: 30000
+    fallback_priority: 0
+
+# --- Backend B: OpenAI Codex (ChatGPT subscription via codex CLI auth file) ---
+providers_codex:
+  - provider: openai-codex
+    model: gpt-5.5
+    timeout_ms: 60000
+    fallback_priority: 0
+    auth:
+      kind: codex_cli
+      # path: ~/.codex/auth.json   # default; override only for non-standard installs
+
+# --- Backend C: Claude Code (Pro/Max subscription via claude CLI subprocess) ---
+providers_claude_code:
+  - provider: claude-code
+    model: claude-sonnet-4-6
+    timeout_ms: 60000
+    fallback_priority: 0
+    auth:
+      kind: claude_code_cli
+      # binary_path: /usr/local/bin/claude   # default uses PATH lookup

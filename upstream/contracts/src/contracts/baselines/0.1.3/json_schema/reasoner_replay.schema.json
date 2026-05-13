@@ -1,0 +1,394 @@
+{
+  "$defs": {
+    "ErrorCode": {
+      "description": "\u5408\u540c\u6a21\u5757\u7edf\u4e00\u9519\u8bef\u7801\u3002",
+      "enum": [
+        "CONTRACT_VALIDATION_ERROR",
+        "FORBIDDEN_INGEST_METADATA",
+        "UNKNOWN_FORMAL_OBJECT",
+        "PROTOCOL_SIGNATURE_MISMATCH",
+        "INCOMPATIBLE_CONTRACT_CHANGE",
+        "REASONER_INPUT_CONTRACT_ERROR",
+        "REASONER_MODEL_PROVIDER_ERROR",
+        "REASONER_TOOL_EXECUTION_ERROR",
+        "REASONER_TIMEOUT_ERROR",
+        "REASONER_INTERNAL_ERROR"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "ReasonerErrorCategory": {
+      "description": "Public reasoner error buckets shared across runtime consumers.",
+      "enum": [
+        "input_contract",
+        "model_provider",
+        "tool_execution",
+        "timeout",
+        "internal"
+      ],
+      "title": "ReasonerErrorCategory",
+      "type": "string"
+    },
+    "ReasonerErrorClassification": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "input_contract"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_INPUT_CONTRACT_ERROR"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "model_provider"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_MODEL_PROVIDER_ERROR"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "tool_execution"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_TOOL_EXECUTION_ERROR"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "timeout"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_TIMEOUT_ERROR"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "internal"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code": {
+                "const": "REASONER_INTERNAL_ERROR"
+              }
+            }
+          }
+        }
+      ],
+      "description": "Normalized reasoner-runtime error classification.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ReasonerErrorCategory"
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "details": {
+          "additionalProperties": true,
+          "title": "Details",
+          "type": "object"
+        },
+        "message": {
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "title": "Retryable",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "code",
+        "category",
+        "severity",
+        "retryable",
+        "message"
+      ],
+      "title": "ReasonerErrorClassification",
+      "type": "object"
+    },
+    "ReasonerRequest": {
+      "additionalProperties": false,
+      "description": "Request envelope accepted by reasoner-runtime.",
+      "properties": {
+        "context": {
+          "additionalProperties": true,
+          "title": "Context",
+          "type": "object"
+        },
+        "cycle_id": {
+          "minLength": 1,
+          "title": "Cycle Id",
+          "type": "string"
+        },
+        "input_refs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Input Refs",
+          "type": "array"
+        },
+        "prompt": {
+          "minLength": 1,
+          "title": "Prompt",
+          "type": "string"
+        },
+        "reasoner_name": {
+          "minLength": 1,
+          "title": "Reasoner Name",
+          "type": "string"
+        },
+        "reasoner_version": {
+          "minLength": 1,
+          "title": "Reasoner Version",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "requested_at": {
+          "format": "date-time",
+          "title": "Requested At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "cycle_id",
+        "reasoner_name",
+        "reasoner_version",
+        "prompt",
+        "context",
+        "requested_at"
+      ],
+      "title": "ReasonerRequest",
+      "type": "object"
+    },
+    "ReasonerResult": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_classification": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "error_classification"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "accepted",
+                  "completed"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "error_classification": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "description": "Result envelope returned by reasoner-runtime.",
+      "properties": {
+        "completed_at": {
+          "format": "date-time",
+          "title": "Completed At",
+          "type": "string"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "error_classification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasonerErrorClassification"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence_refs": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "output": {
+          "additionalProperties": true,
+          "title": "Output",
+          "type": "object"
+        },
+        "reasoner_name": {
+          "minLength": 1,
+          "title": "Reasoner Name",
+          "type": "string"
+        },
+        "reasoner_version": {
+          "minLength": 1,
+          "title": "Reasoner Version",
+          "type": "string"
+        },
+        "request_id": {
+          "minLength": 1,
+          "title": "Request Id",
+          "type": "string"
+        },
+        "result_id": {
+          "minLength": 1,
+          "title": "Result Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ReasonerStatus"
+        }
+      },
+      "required": [
+        "result_id",
+        "request_id",
+        "status",
+        "reasoner_name",
+        "reasoner_version",
+        "output",
+        "completed_at"
+      ],
+      "title": "ReasonerResult",
+      "type": "object"
+    },
+    "ReasonerStatus": {
+      "description": "Stable status values for reasoner request execution.",
+      "enum": [
+        "accepted",
+        "completed",
+        "failed"
+      ],
+      "title": "ReasonerStatus",
+      "type": "string"
+    },
+    "Severity": {
+      "description": "\u9519\u8bef\u6216\u8bca\u65ad\u4e25\u91cd\u7ea7\u522b\u3002",
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ],
+      "title": "Severity",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Replay bundle for deterministic reasoner-runtime inspection.",
+  "properties": {
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "replay_id": {
+      "minLength": 1,
+      "title": "Replay Id",
+      "type": "string"
+    },
+    "replay_version": {
+      "minLength": 1,
+      "title": "Replay Version",
+      "type": "string"
+    },
+    "request": {
+      "$ref": "#/$defs/ReasonerRequest"
+    },
+    "result": {
+      "$ref": "#/$defs/ReasonerResult"
+    }
+  },
+  "required": [
+    "replay_id",
+    "request",
+    "result",
+    "recorded_at",
+    "replay_version"
+  ],
+  "title": "ReasonerReplay",
+  "type": "object",
+  "x-contract-version": "0.1.3",
+  "x-source-model": "contracts.schemas.reasoner.ReasonerReplay"
+}

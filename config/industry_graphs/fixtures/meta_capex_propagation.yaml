@@ -1,0 +1,67 @@
+fixture_id: META_CAPEX_2026_Q1_NVDA
+schema_version: 1
+described_in: docs/industry_graphs/FOUR_VIEWS_DESIGN.md
+description: >-
+  Walk-through fixture: Meta upgrades AI Capex → simultaneous positive and
+  negative propagation paths to NVDA. The system does not output "bullish" or
+  "bearish" — it returns aggregate strengths for both directions and lets the
+  consumer compare. mvp20 only validates that all referenced node and edge ids
+  exist in the industry graph YAMLs; aggregate_strength values are golden
+  expectations for a future graph-engine simulator and are not computed here.
+
+given_event:
+  node_id: EVENT.meta_ai_capex_upgrade
+  industry_id: AI_COMPUTE
+  surprise: 0.6
+  data_quality: high
+
+target:
+  node_id: COMPANY.NVDA
+
+horizon: "1-2 quarters"
+
+propagation_paths:
+  positive:
+    - id: PATH.POS.001
+      description: 主路径 — Meta Capex 上修推升 GPU 需求与 NVDA 数据中心收入
+      sequence:
+        - EVENT.meta_ai_capex_upgrade
+        - SIGNAL.hyperscaler_ai_demand
+        - SIGNAL.blackwell_orders
+        - FIN.nvda_dc_revenue
+        - FIN.nvda_eps
+        - COMPANY.NVDA
+      edges_used:
+        - EDGE.AI.001
+        - EDGE.AI.002
+        - EDGE.AI.003
+        - EDGE.AI.004
+        - EDGE.AI.005
+      aggregate_strength: 0.72
+  negative:
+    - id: PATH.NEG.001
+      description: 风险路径 — Capex 过高导致 ROI 争议升温压制估值
+      sequence:
+        - EVENT.meta_ai_capex_upgrade
+        - RISK.ai_capex_excess_concern
+        - RISK.fcf_pressure
+        - RISK.ai_roi_debate
+        - VAL.ai_compute_crowding
+        - COMPANY.NVDA
+      edges_used:
+        - EDGE.AI.RISK.001
+        - EDGE.AI.RISK.002
+        - EDGE.AI.RISK.003
+        - EDGE.AI.RISK.004
+        - EDGE.AI.RISK.005
+      aggregate_strength: 0.41
+
+verdict:
+  positive_strength: 0.72
+  negative_strength: 0.41
+  net: 0.31
+  net_direction: positive
+  rationale: >-
+    正向路径 0.72 vs 负向路径 0.41，净正向 0.31。系统不输出"利好/利空"，仅给出
+    两条路径的强度对比。当 negative > positive 时方向反转，当两者相近时
+    net_direction = neutral。

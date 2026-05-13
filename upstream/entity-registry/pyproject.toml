@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-ult-entity-registry"
+version = "0.1.1"
+description = "Canonical entity ID + alias resolution for project-ult (ENT_* IDs, A+H separation, unresolved-explicit)."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "project-ult-contracts>=0.1.3",
+]
+
+[project.optional-dependencies]
+# Pure-pip dev tools — offline-first per SUBPROJECT_TESTING_STANDARD.md §2.2.
+dev = [
+    "pytest>=8.0",
+]
+# Cross-repo schema source-of-truth pin (iron rule #6 + main-core sub-rule).
+contracts-schemas = [
+    "project-ult-contracts @ git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@v0.1.3",
+]
+# Shared regression fixtures (iron rule #6).
+# Pinned to v0.2.5 (bumped 2026-05-01 stage 1 consistency lane to align
+# all 10 consumers with the audit-eval producer release; carries forward
+# v0.2.4 dot-form canonical_entity_id reconciliation).
+shared-fixtures = [
+    "project-ult-audit-eval @ git+https://github.com/shenfanjie5-bit/project-ult-audit-eval.git@v0.2.5",
+]
+ner = [
+    "hanlp>=2.1",
+]
+fuzzy = [
+    "splink>=4.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+testpaths = ["tests"]

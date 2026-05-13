@@ -1,0 +1,928 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: FINANCIAL_HIGH_DIVIDEND
+industry_name_cn: 金融券商保险银行高股息
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 券商
+      - 保险
+      - 银行
+      - 多元金融
+      - 交易所产业链
+      - 金融科技
+      - 高股息央国企
+      - 红利资产
+    core_judgment: >-
+      该板块的核心变量是资本市场成交和风险偏好、利率曲线、资产质量、权益市场
+      表现、分红回购和政策呵护。金融股对大盘和行业贝塔尤其敏感，必须先剥离市
+      场影响。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注券商弹性、保险投资、银行资产质量、红利、政策、信用尾部等路径。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.10}
+    - {name: 温和多头, probability: 0.30}
+    - {name: 结构分化, probability: 0.20}
+    - {name: 等待验证, probability: 0.20}
+    - {name: 杀估值, probability: 0.20}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、宏观}
+      - {name: price_implied_expectation, description: 股价隐含, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 新闻、资金面}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 财务披露}
+      - {name: tail_risk_prob, description: 尾部风险, source: 信用风险}
+
+  path_dedup_groups: [资金组, 估值组, 信用组, 政策组, 风险组]
+
+  exposure:
+    factors:
+      - 经纪 / 自营 / 投行收入弹性
+      - 投资资产配置（权益与债券）
+      - 资产质量（不良 / 拨备）
+      - 分红率与现金流可持续性
+      - 政策受益与资本市场风险偏好
+      - 区域 / 客户结构
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 直接受益于成交 / 利率 / 红利
+      "4": 间接受益但弹性小
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 成交 + 利率 + 投资收益
+      GrossMargin: 不适用，看费用 / ROE
+      OpexRatio: 人力与科技投入
+      EBIT_EPS: 经营杠杆敏感
+      FCF: 银行 / 保险特殊
+      Leverage: 高杠杆行业，注意监管资本
+
+  valuation_mix:
+    weights:
+      PB: 0.40
+      PE: 0.25
+      Dividend: 0.20
+      ROE_PB: 0.10
+      SOTP: 0.05
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 地产 / 地方债 / 企业信用风险
+      - 资本市场大幅回落
+      - 长端利率持续下行
+      - 资本监管收紧
+      - 黑天鹅信用违约
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 日均成交额 / 两融余额
+    - 长端利率 / 10Y 国债
+    - 不良率 / 拨备覆盖率
+    - 分红与回购公告
+    - IPO / 再融资节奏
+    - 政策信号
+
+  falsification:
+    bullish_triggers:
+      - 成交持续放大 + 风险偏好回升
+      - 长端利率改善 + 权益走强
+      - 资产质量数据连续改善
+      - 分红 / 回购显著提升
+    bearish_triggers:
+      - 成交萎缩 / 权益回落
+      - 利率持续下行 + 投资亏损
+      - 不良率上行 + 拨备消耗
+      - 信用违约扩散
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    金融与高股息的图谱重点是判断成交、利率、资产质量与分红改善是否可持续，并
+    避免在低估值假象下踩信用尾部。
+
+nodes:
+  - id: EVENT.market_volume_expansion
+    layer: event
+    type: market_event
+    label_cn: 市场成交放大
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: EVENT.long_rate_change
+    layer: event
+    type: macro_event
+    label_cn: 长端利率改善 / 权益走强
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: EVENT.credit_quality_change
+    layer: event
+    type: credit_event
+    label_cn: 经济修复 / 信用风险缓和
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: EVENT.dividend_buyback_uplift
+    layer: event
+    type: capital_return_event
+    label_cn: 央国企分红回购提升
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: EVENT.policy_supportive
+    layer: event
+    type: policy_event
+    label_cn: 资本市场稳定政策
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: EVENT.credit_default_spread
+    layer: event
+    type: credit_event
+    label_cn: 地产 / 地方债信用扩散
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+
+  - id: SIGNAL.broker_earnings
+    layer: industry_signal
+    type: earnings_signal
+    label_cn: 券商业绩 (经纪 / 两融 / 自营)
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: SIGNAL.insurer_investment_yield
+    layer: industry_signal
+    type: investment_signal
+    label_cn: 保险投资收益 / 内含价值
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: SIGNAL.bank_asset_quality
+    layer: industry_signal
+    type: credit_signal
+    label_cn: 银行资产质量 / 拨备
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: SIGNAL.dividend_yield
+    layer: industry_signal
+    type: capital_signal
+    label_cn: 分红 / 股息率
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: SIGNAL.market_sentiment
+    layer: industry_signal
+    type: sentiment_signal
+    label_cn: 风险偏好回升 / 基金发行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+
+  - id: FIN.financial_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 金融行业收入
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {field: Revenue}
+
+  - id: VAL.bank_pb_repair
+    layer: valuation
+    type: pb_multiple
+    label_cn: 银行 PB 修复
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: VAL.financial_growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 金融估值修复
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+
+  - id: RISK.credit_default
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 信用违约扩散
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+  - id: RISK.equity_drawdown
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 权益市场回落 / 投资亏损
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+
+  - id: COMPANY.FINANCIAL_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 金融板块代表 ETF
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.00005_HK
+    layer: stock
+    type: company
+    label_cn: 汇丰控股
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 00005.HK, role: target}
+  - id: COMPANY.00388_HK
+    layer: stock
+    type: company
+    label_cn: 香港交易所
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 00388.HK, role: target}
+  - id: COMPANY.00939_HK
+    layer: stock
+    type: company
+    label_cn: 建设银行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 00939.HK, role: target}
+  - id: COMPANY.01299_HK
+    layer: stock
+    type: company
+    label_cn: 友邦保险
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 01299.HK, role: target}
+  - id: COMPANY.01398_HK
+    layer: stock
+    type: company
+    label_cn: 工商银行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 01398.HK, role: target}
+  - id: COMPANY.02318_HK
+    layer: stock
+    type: company
+    label_cn: 中国平安
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 02318.HK, role: target}
+  - id: COMPANY.02628_HK
+    layer: stock
+    type: company
+    label_cn: 中国人寿
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 02628.HK, role: target}
+  - id: COMPANY.03968_HK
+    layer: stock
+    type: company
+    label_cn: 招商银行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 03968.HK, role: target}
+  - id: COMPANY.06030_HK
+    layer: stock
+    type: company
+    label_cn: 中信证券
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 06030.HK, role: target}
+  - id: COMPANY.300059_SZ
+    layer: stock
+    type: company
+    label_cn: 东方财富
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND, HK_CN_INTERNET]
+    properties: {ts_code: 300059.SZ, role: target}
+  - id: COMPANY.600030_SH
+    layer: stock
+    type: company
+    label_cn: 中信证券
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 600030.SH, role: target}
+  - id: COMPANY.600036_SH
+    layer: stock
+    type: company
+    label_cn: 招商银行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 600036.SH, role: target}
+  - id: COMPANY.600900_SH
+    layer: stock
+    type: company
+    label_cn: 长江电力
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 600900.SH, role: target}
+  - id: COMPANY.601088_SH
+    layer: stock
+    type: company
+    label_cn: 中国神华
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 601088.SH, role: target}
+  - id: COMPANY.601288_SH
+    layer: stock
+    type: company
+    label_cn: 农业银行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 601288.SH, role: target}
+  - id: COMPANY.601318_SH
+    layer: stock
+    type: company
+    label_cn: 中国平安
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 601318.SH, role: target}
+  - id: COMPANY.601398_SH
+    layer: stock
+    type: company
+    label_cn: 工商银行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 601398.SH, role: target}
+  - id: COMPANY.601628_SH
+    layer: stock
+    type: company
+    label_cn: 中国人寿
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 601628.SH, role: target}
+  - id: COMPANY.601939_SH
+    layer: stock
+    type: company
+    label_cn: 建设银行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 601939.SH, role: target}
+  - id: COMPANY.601988_SH
+    layer: stock
+    type: company
+    label_cn: 中国银行
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: 601988.SH, role: target}
+  - id: COMPANY.BAC_US
+    layer: stock
+    type: company
+    label_cn: Bank of America
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: BAC.US, role: target}
+  - id: COMPANY.BLK_US
+    layer: stock
+    type: company
+    label_cn: BlackRock
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: BLK.US, role: target}
+  - id: COMPANY.BRK_B_US
+    layer: stock
+    type: company
+    label_cn: Berkshire Hathaway
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: BRK.B.US, role: target}
+  - id: COMPANY.GS_US
+    layer: stock
+    type: company
+    label_cn: Goldman Sachs
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: GS.US, role: target}
+  - id: COMPANY.JPM_US
+    layer: stock
+    type: company
+    label_cn: JPMorgan
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: JPM.US, role: target}
+  - id: COMPANY.MA_US
+    layer: stock
+    type: company
+    label_cn: Mastercard
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: MA.US, role: target}
+  - id: COMPANY.MS_US
+    layer: stock
+    type: company
+    label_cn: Morgan Stanley
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: MS.US, role: target}
+  - id: COMPANY.PGR_US
+    layer: stock
+    type: company
+    label_cn: Progressive
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: PGR.US, role: target}
+  - id: COMPANY.V_US
+    layer: stock
+    type: company
+    label_cn: Visa
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: V.US, role: target}
+  - id: COMPANY.WFC_US
+    layer: stock
+    type: company
+    label_cn: Wells Fargo
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND]
+    properties: {ts_code: WFC.US, role: target}
+
+edges:
+  - id: EDGE.FIN.001
+    source: EVENT.market_volume_expansion
+    target: SIGNAL.broker_earnings
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.80
+    beta_negative: 0.85
+    threshold: 日均成交持续
+    lag: 即时-2 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.002
+    source: SIGNAL.broker_earnings
+    target: FIN.financial_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 业绩兑现
+    lag: 1-2 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.003
+    source: EVENT.long_rate_change
+    target: SIGNAL.insurer_investment_yield
+    relation: improves_yield
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.75
+    threshold: 投资收益与负债端同步
+    lag: 1-4 quarters
+    dedup_group: 估值组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.004
+    source: SIGNAL.insurer_investment_yield
+    target: VAL.financial_growth_multiple
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 估值修复
+    lag: 即时-2 quarters
+    dedup_group: 估值组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.005
+    source: EVENT.credit_quality_change
+    target: SIGNAL.bank_asset_quality
+    relation: improves_quality
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.70
+    threshold: 资产质量改善
+    lag: 2-6 quarters
+    dedup_group: 信用组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.006
+    source: SIGNAL.bank_asset_quality
+    target: VAL.bank_pb_repair
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: PB 修复
+    lag: 即时-2 quarters
+    dedup_group: 信用组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.007
+    source: EVENT.dividend_buyback_uplift
+    target: SIGNAL.dividend_yield
+    relation: drives_yield
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 现金流支撑
+    lag: 1-4 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.008
+    source: SIGNAL.dividend_yield
+    target: VAL.financial_growth_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.50
+    threshold: 长线资金配置
+    lag: 即时-2 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.009
+    source: EVENT.policy_supportive
+    target: SIGNAL.market_sentiment
+    relation: drives_sentiment
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.70
+    threshold: 市场资金确认
+    lag: 即时-2 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.010
+    source: SIGNAL.market_sentiment
+    target: VAL.financial_growth_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 估值修复
+    lag: 即时-2 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.FIN.011
+    source: VAL.financial_growth_multiple
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.65
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.FIN.RISK.001
+    source: EVENT.credit_default_spread
+    target: RISK.credit_default
+    relation: triggers_tail_risk
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 1.20
+    threshold: 信用违约扩散
+    lag: 即时-6 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.FIN.RISK.002
+    source: RISK.credit_default
+    target: SIGNAL.bank_asset_quality
+    relation: dampens_quality
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.15
+    threshold: 不良率上行 + 拨备消耗
+    lag: 1-6 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.FIN.RISK.003
+    source: RISK.equity_drawdown
+    target: SIGNAL.insurer_investment_yield
+    relation: dampens_yield
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.10
+    threshold: 权益回落
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.FIN.RISK.004
+    source: RISK.credit_default
+    target: VAL.financial_growth_multiple
+    relation: compresses_valuation
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.10
+    threshold: 价值陷阱
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.FIN.MEMBER.001
+    source: COMPANY.00005_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.002
+    source: COMPANY.00388_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.003
+    source: COMPANY.00939_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.004
+    source: COMPANY.01299_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.005
+    source: COMPANY.01398_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.006
+    source: COMPANY.02318_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.007
+    source: COMPANY.02628_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.008
+    source: COMPANY.03968_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.009
+    source: COMPANY.06030_HK
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.010
+    source: COMPANY.300059_SZ
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.011
+    source: COMPANY.600030_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.012
+    source: COMPANY.600036_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.013
+    source: COMPANY.600900_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.014
+    source: COMPANY.601088_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.015
+    source: COMPANY.601288_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.016
+    source: COMPANY.601318_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.017
+    source: COMPANY.601398_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.018
+    source: COMPANY.601628_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.019
+    source: COMPANY.601939_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.020
+    source: COMPANY.601988_SH
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.021
+    source: COMPANY.BAC_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.022
+    source: COMPANY.BLK_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.023
+    source: COMPANY.BRK_B_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.024
+    source: COMPANY.GS_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.025
+    source: COMPANY.JPM_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.026
+    source: COMPANY.MA_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.027
+    source: COMPANY.MS_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.028
+    source: COMPANY.PGR_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.029
+    source: COMPANY.V_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.FIN.MEMBER.030
+    source: COMPANY.WFC_US
+    target: COMPANY.FINANCIAL_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 成交 / 利率 / 资产质量 / 红利 / 政策 → 金融板块 alpha
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 成交 / 投资收益 / 资产质量 / 红利 高中心度
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 资本市场 / 实体经济 / 监管对金融板块的影响
+    include_node_types: [company, market_event, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 信用违约 / 权益回落 / 监管收紧
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

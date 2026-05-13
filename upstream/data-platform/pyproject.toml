@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=69,<90", "wheel>=0.42,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-ult-data-platform"
+version = "0.1.1"
+description = "Layer A canonical truth + Raw/Canonical/Formal serving + Layer B ingestion for project-ult."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "pyiceberg[sql-postgres,pyarrow]>=0.8,<2",
+    "duckdb>=1.0,<2",
+    "dbt-core>=1.7,<2",
+    "dbt-duckdb>=1.7,<2",
+    "sqlalchemy>=2.0,<3",
+    "psycopg[binary]>=3.1,<4",
+    "pydantic>=2,<3",
+    "pydantic-settings>=2,<3",
+    "pandas>=2,<3",
+    "pyarrow>=15,<30",
+    "tushare>=1.4,<2",
+]
+
+[project.optional-dependencies]
+# Pure-pip dev tools — offline-first per SUBPROJECT_TESTING_STANDARD.md §2.2.
+# Used by test-fast / smoke CI lanes. Never includes git+URL deps.
+dev = [
+    "pytest>=8,<10",
+    "pytest-cov>=5,<8",
+    "ruff>=0.6,<1",
+    "mypy>=1.10,<2",
+    "pre-commit>=3.7,<5",
+]
+# Cross-repo schema source-of-truth pin (iron rule #6 + main-core
+# stage 2.3 follow-up #1 sub-rule). Required by tests/contract/
+# test_contracts_alignment.py for cross-repo enum alignment.
+contracts-schemas = [
+    "project-ult-contracts @ git+https://github.com/shenfanjie5-bit/project-ult-contracts.git@v0.1.3",
+]
+# Shared regression fixtures bundled with project-ult-audit-eval.
+# Pinned to v0.2.5 (carries forward v0.2.4 dot-form canonical_entity_id
+# reconciliation and v0.2.1+ real sha256 fixture hashes; bumped 2026-05-01
+# stage 1 consistency lane to align with audit-eval producer release;
+# iron rule #6).
+shared-fixtures = [
+    "project-ult-audit-eval @ git+https://github.com/shenfanjie5-bit/project-ult-audit-eval.git@v0.2.5",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["data_platform*"]
+
+[tool.setuptools.package-data]
+data_platform = [
+    "ddl/migrations/*.sql",
+    "provider_catalog/*.csv",
+    "dbt/**/*.sql",
+    "dbt/**/*.yml",
+    "dbt/dbt_project.yml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["data_platform"]
+exclude = ["^src/data_platform/dbt/"]
+
+[[tool.mypy.overrides]]
+module = ["dbt", "dbt.*", "pyiceberg.cli", "pyiceberg.cli.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "spike: long-running architecture spike tests that require external services",
+]

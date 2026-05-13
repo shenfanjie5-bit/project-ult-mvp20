@@ -1,0 +1,52 @@
+{{ config(materialized="view") }}
+
+{{ stg_latest_raw(
+    "tushare",
+    "fina_indicator",
+    [
+        "ts_code",
+        "ann_date",
+        "f_ann_date",
+        "end_date",
+        "report_type",
+        "comp_type",
+        "update_flag",
+        "eps",
+        "dt_eps",
+        "total_revenue_ps",
+        "revenue_ps",
+        "ocfps",
+        "bps",
+        "grossprofit_margin",
+        "netprofit_margin",
+        "roe",
+        "roe_waa",
+        "roa",
+        "debt_to_assets",
+        "or_yoy",
+        "netprofit_yoy"
+    ],
+    [
+        "cast(nullif(trim(cast(\"ts_code\" as varchar)), '') as varchar) as \"ts_code\"",
+        "strptime(nullif(trim(cast(\"ann_date\" as varchar)), ''), '%Y%m%d')::date as \"ann_date\"",
+        "strptime(nullif(trim(cast(\"f_ann_date\" as varchar)), ''), '%Y%m%d')::date as \"f_ann_date\"",
+        "strptime(nullif(trim(cast(\"end_date\" as varchar)), ''), '%Y%m%d')::date as \"end_date\"",
+        "cast(nullif(trim(cast(\"report_type\" as varchar)), '') as varchar) as \"report_type\"",
+        "cast(nullif(trim(cast(\"comp_type\" as varchar)), '') as varchar) as \"comp_type\"",
+        "cast(nullif(trim(cast(\"update_flag\" as varchar)), '') as varchar) as \"update_flag\"",
+        "cast(\"eps\" as decimal(38, 18)) as \"eps\"",
+        "cast(\"dt_eps\" as decimal(38, 18)) as \"dt_eps\"",
+        "cast(\"total_revenue_ps\" as decimal(38, 18)) as \"total_revenue_ps\"",
+        "cast(\"revenue_ps\" as decimal(38, 18)) as \"revenue_ps\"",
+        "cast(\"ocfps\" as decimal(38, 18)) as \"ocfps\"",
+        "cast(\"bps\" as decimal(38, 18)) as \"bps\"",
+        "cast(\"grossprofit_margin\" as decimal(38, 18)) as \"grossprofit_margin\"",
+        "cast(\"netprofit_margin\" as decimal(38, 18)) as \"netprofit_margin\"",
+        "cast(\"roe\" as decimal(38, 18)) as \"roe\"",
+        "cast(\"roe_waa\" as decimal(38, 18)) as \"roe_waa\"",
+        "cast(\"roa\" as decimal(38, 18)) as \"roa\"",
+        "cast(\"debt_to_assets\" as decimal(38, 18)) as \"debt_to_assets\"",
+        "cast(\"or_yoy\" as decimal(38, 18)) as \"or_yoy\"",
+        "cast(\"netprofit_yoy\" as decimal(38, 18)) as \"netprofit_yoy\""
+    ]
+) }}

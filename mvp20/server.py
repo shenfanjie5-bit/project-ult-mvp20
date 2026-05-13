@@ -1,0 +1,1010 @@
+"""Minimal HTTP server exposing mvp20 manifest data as JSON for the frontend.
+
+Stdlib-only (no new deps). Serves a curated subset of `/api/project-ult/*`
+endpoints that the FrontEnd Vite app expects:
+
+* /api/health                              → service liveness
+* /api/project-ult/health                  → mvp20 module count + lock status
+* /api/project-ult/compat                  → schema versions / build stamp
+* /api/project-ult/manifests/latest        → industries.yaml + universe.yaml
+* /api/project-ult/modules                 → modules.lock.yaml as JSON
+* /api/project-ult/reasoner/providers      → data_providers.yaml as JSON
+* /api/project-ult/profiles                → universe constituents shaped as profiles
+* /api/project-ult/cycles                  → empty list (mvp20 doesn't run cycles)
+* /api/project-ult/cycles/<id>             → 503 (upstream main-core / orchestrator)
+* /api/project-ult/graph/<...>             → 503 (upstream graph-engine)
+* /api/project-ult/audit/<...>             → 503 (upstream audit-eval)
+* /api/project-ult/backtests[/<id>]        → 503
+* /api/project-ult/data/canonical/<table>  → 503 (upstream data-platform)
+* /api/project-ult/entities[/<id>]         → 503 (upstream entity-registry)
+* anything else under /api/project-ult/    → 503 envelope
+
+503 endpoints return a structured ApiErrorEnvelope so the frontend can
+surface "this needs upstream module X to be running" rather than crashing.
+
+Read-only: every handler is GET. POST/PUT/DELETE return 405.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from dataclasses import dataclass
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Callable
+from urllib.parse import parse_qs, urlsplit
+
+import yaml
+
+from mvp20 import lock as lock_mod
+from mvp20 import manifest as manifest_mod
+from mvp20 import providers as providers_mod
+from mvp20 import graph as graph_mod
+from mvp20.json_utils import dumps_strict_json
+from mvp20.adapters import (
+    audit_eval as audit_eval_adapter,
+    data_platform as data_platform_adapter,
+    entity_registry as entity_registry_adapter,
+    graph_engine as graph_engine_adapter,
+    main_core as main_core_adapter,
+    reasoner_runtime as reasoner_runtime_adapter,
+)
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+CONFIG_DIR = REPO_ROOT / "config"
+LOCKS_DIR = REPO_ROOT / "locks"
+RUNTIME_DIR = REPO_ROOT / "runtime"
+
+
+@dataclass
+class ServerConfig:
+    host: str = "127.0.0.1"
+    port: int = 8701
+    cors_origin: str = "http://127.0.0.1:1420"
+    universe_path: Path = CONFIG_DIR / "mvp20.universe.yaml"
+    industries_path: Path = CONFIG_DIR / "mvp20.industries.yaml"
+    providers_path: Path = CONFIG_DIR / "data_providers.yaml"
+    industry_graphs_dir: Path = CONFIG_DIR / "industry_graphs"
+    lock_path: Path = LOCKS_DIR / "modules.lock.yaml"
+    # ── Data-layer paths (phase 1 hot snapshot + phase 2 history) ──
+    stock_overlays_dir: Path = CONFIG_DIR / "stock_overlays"
+    industry_overlays_dir: Path = CONFIG_DIR / "industry_overlays"
+    hot_db_path: Path = RUNTIME_DIR / "hot.sqlite"
+    history_dir: Path = RUNTIME_DIR / "history"
+
+
+# ---------------------------------------------------------------------------
+# Envelope helpers
+# ---------------------------------------------------------------------------
+
+
+def _ok_envelope(data: Any) -> dict:
+    return {"data": data, "request_id": _request_id()}
+
+
+def _error_envelope(code: str, message: str, *, status: int = 500,
+                    details: dict | None = None) -> dict:
+    return {
+        "error": {
+            "code": code,
+            "message": message,
+            "details": details or {},
+            "request_id": _request_id(),
+        }
+    }
+
+
+def _upstream_unavailable(module: str, path: str) -> dict:
+    return _error_envelope(
+        code="UPSTREAM_NOT_RUNNING",
+        message=(
+            f"Endpoint {path} is owned by upstream module "
+            f"`{module}` which is not part of mvp20. mvp20 is a manifest "
+            "shell — start the upstream service or use VITE_DATA_MODE=demo."
+        ),
+        status=503,
+        details={"upstream_module": module, "path": path},
+    )
+
+
+def _request_id() -> str:
+    return f"mvp20-{int(time.time() * 1000)}"
+
+
+# ---------------------------------------------------------------------------
+# Handlers (each returns (status, body_dict))
+# ---------------------------------------------------------------------------
+
+
+HandlerResult = tuple[int, dict]
+
+
+def handle_health(_: ServerConfig, _q: dict) -> HandlerResult:
+    return 200, _ok_envelope({
+        "service": "mvp20",
+        "status": "ok",
+        "version": "0.1.0",
+        "scope": "manifest_shell_read_only",
+    })
+
+
+def handle_project_ult_health(cfg: ServerConfig, _q: dict) -> HandlerResult:
+    lock = lock_mod.validate_lock(cfg.lock_path)
+    return 200, _ok_envelope({
+        "service": "mvp20",
+        "status": "ok" if lock.ok else "degraded",
+        "lock_module_count": lock.module_count,
+        "lock_errors": list(lock.errors),
+    })
+
+
+def handle_compat(_: ServerConfig, _q: dict) -> HandlerResult:
+    return 200, _ok_envelope({
+        "schema_versions": {
+            "manifest": 2,
+            "industries": 1,
+            "industry_graph": 1,
+            "data_providers": 1,
+            "lock": 1,
+        },
+        "mvp20_version": "0.1.0",
+        "compatibility_note": "manifest+lock+CI shell; no runtime cycle orchestration",
+    })
+
+
+def handle_manifests_latest(cfg: ServerConfig, _q: dict) -> HandlerResult:
+    universe = yaml.safe_load(cfg.universe_path.read_text(encoding="utf-8"))
+    industries = yaml.safe_load(cfg.industries_path.read_text(encoding="utf-8"))
+    return 200, _ok_envelope({
+        "universe": universe,
+        "industries": industries,
+    })
+
+
+def handle_modules(cfg: ServerConfig, _q: dict) -> HandlerResult:
+    payload = yaml.safe_load(cfg.lock_path.read_text(encoding="utf-8"))
+    return 200, _ok_envelope(payload)
+
+
+def handle_providers(cfg: ServerConfig, _q: dict) -> HandlerResult:
+    catalog = yaml.safe_load(cfg.providers_path.read_text(encoding="utf-8"))
+    validation = providers_mod.validate_provider_catalog(
+        cfg.providers_path,
+        required_markets={"A", "HK", "US"},
+    )
+    return 200, _ok_envelope({
+        "catalog": catalog,
+        "validation": {
+            "ok": validation.ok,
+            "active_providers": list(validation.active_providers),
+            "market_coverage": validation.market_coverage,
+            "capability_coverage": validation.capability_coverage,
+            "warnings": list(validation.warnings),
+            "errors": list(validation.errors),
+        },
+    })
+
+
+def handle_profiles(cfg: ServerConfig, query: dict) -> HandlerResult:
+    universe = yaml.safe_load(cfg.universe_path.read_text(encoding="utf-8"))
+    constituents = universe.get("constituents", [])
+
+    # Optional filtering
+    pool = query.get("pool", [None])[0]
+    role = query.get("role", [None])[0]
+    industry = query.get("industry", [None])[0]
+    market = query.get("market", [None])[0]
+
+    profiles = []
+    for c in constituents:
+        if pool and c.get("pool", "regular") != pool:
+            continue
+        if role and c.get("role", "target") != role:
+            continue
+        if industry and industry not in c.get("industry_ids", []):
+            continue
+        if market:
+            ts = c.get("ts_code", "")
+            mk = "A" if ts.endswith((".SH", ".SZ", ".BJ")) else \
+                 "HK" if ts.endswith(".HK") else \
+                 "US" if ts.endswith(".US") else "?"
+            if mk != market:
+                continue
+        profiles.append(c)
+
+    return 200, _ok_envelope({
+        "profiles": profiles,
+        "total": len(profiles),
+        "universe_total": len(constituents),
+    })
+
+
+def handle_industry_graph(cfg: ServerConfig, query: dict) -> HandlerResult:
+    industry_id = query.get("industry_id", [None])[0]
+    if not industry_id:
+        # Return list of available graphs
+        graphs = []
+        for path in sorted(cfg.industry_graphs_dir.glob("*.yaml")):
+            try:
+                payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError:
+                payload = {}
+            if payload.get("graph_status") == "pending":
+                continue
+            graphs.append({
+                "industry_id": path.stem,
+                "path": str(path.relative_to(REPO_ROOT)),
+            })
+        return 200, _ok_envelope({"graphs": graphs})
+
+    target = cfg.industry_graphs_dir / f"{industry_id}.yaml"
+    if not target.exists():
+        return 404, _error_envelope(
+            "INDUSTRY_GRAPH_NOT_FOUND",
+            f"No industry graph for {industry_id}; check industries.yaml",
+            status=404,
+        )
+    payload = yaml.safe_load(target.read_text(encoding="utf-8"))
+    return 200, _ok_envelope(payload)
+
+
+def handle_cycles_list(_: ServerConfig, _q: dict) -> HandlerResult:
+    """mvp20 has no cycle orchestration — return empty list (not 503) so the
+    UI renders a clean empty state."""
+
+    return 200, _ok_envelope({
+        "cycles": [],
+        "note": "mvp20 is a manifest shell — cycles are produced by upstream main-core / orchestrator",
+    })
+
+
+def handle_subsystems_status(cfg: ServerConfig, _q: dict) -> HandlerResult:
+    """Empty subsystem health array — mvp20 only locks module SHAs."""
+
+    lock = lock_mod.validate_lock(cfg.lock_path)
+    return 200, _ok_envelope({
+        "subsystems": [
+            {
+                "id": name,
+                "status": "unknown",
+                "note": "mvp20 only pins commit SHA; live status requires running upstream",
+            }
+            for name in sorted(lock_mod.EXPECTED_MODULES)
+        ],
+        "lock_ok": lock.ok,
+    })
+
+
+def handle_admin_stub(_: ServerConfig, _q: dict) -> HandlerResult:
+    """Stub for legacy /api/admin/* — the FrontEnd app uses MSW handlers in
+    demo mode for admin controls; in projectUlt mode mvp20 returns an empty
+    envelope (no real admin actions are exposed by the manifest shell).
+
+    Owned by mvp20 directly — `frontend-api` is NOT vendored under upstream/
+    because the FrontEnd Vite app (under FrontEnd/) is the only frontend in
+    this repo, and mvp20 server.py serves as its BFF without needing a
+    separate FastAPI module."""
+
+    return 200, _ok_envelope({
+        "module": "mvp20-bff",
+        "fixture": True,
+        "note": "admin actions are mock — mvp20 is a read-only manifest shell",
+        "overrides": [],
+        "config": {},
+        "providers": [],
+    })
+
+
+def handle_alerts_stub(_: ServerConfig, _q: dict) -> HandlerResult:
+    """Stub for legacy /api/alerts/* — alert stream is the responsibility of
+    a future stream-layer module; mvp20 returns an empty envelope so the UI
+    shows a clean empty-state instead of a 503 banner."""
+
+    return 200, _ok_envelope({
+        "module": "mvp20-bff",
+        "fixture": True,
+        "note": "alert stream not implemented — stream-layer is upstream-planned",
+        "alerts": [],
+        "total": 0,
+    })
+
+
+def handle_history(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """Time-series replay for one (ts_code, dp_id) from Parquet history."""
+
+    ts_code = (query.get("ts_code") or [None])[0]
+    dp_id = (query.get("dp_id") or [None])[0]
+    if not ts_code or not dp_id:
+        return 400, _error_envelope(
+            "MISSING_PARAM",
+            "ts_code and dp_id query parameters required",
+            status=400,
+        )
+
+    try:
+        since = int((query.get("since") or [str(int(time.time()) - 86400)])[0])
+        until_raw = (query.get("until") or [None])[0]
+        until = int(until_raw) if until_raw else None
+        limit = min(int((query.get("limit") or ["5000"])[0]), 50_000)
+    except (TypeError, ValueError) as e:
+        return 400, _error_envelope(
+            "BAD_PARAM", f"invalid integer parameter: {e}", status=400,
+        )
+
+    try:
+        from mvp20.history import query_history
+    except ImportError as e:
+        return 503, _error_envelope(
+            "HISTORY_UNAVAILABLE",
+            f"history layer requires duckdb+pyarrow: {e}",
+            status=503,
+        )
+
+    points = query_history(cfg.history_dir, ts_code, dp_id, since, until, limit=limit)
+    return 200, _ok_envelope({
+        "ts_code": ts_code,
+        "dp_id": dp_id,
+        "since": since,
+        "until": until,
+        "points": points,
+        "total": len(points),
+    })
+
+
+def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """Read one company graph overlay plus the minute-level hot snapshot.
+
+    Preferred path is the compiled SQLite snapshot:
+    ``company_graph_snapshot.payload_json``. If the compiler has not been run
+    yet, this falls back to the YAML overlay so local authoring remains cheap.
+    """
+
+    from mvp20.storage import (
+        read_available_overlay_industries,
+        read_compiled_graph_snapshot,
+        read_freshness_meta,
+        read_hot_snapshot,
+        read_overlay_alerts,
+    )
+
+    ts_code = (query.get("ts_code") or [None])[0]
+    if not ts_code:
+        return 400, _error_envelope(
+            "MISSING_PARAM", "ts_code query parameter required", status=400
+        )
+
+    requested_industry_id = (query.get("industry_id") or [None])[0]
+
+    # 1. Fast path — compiled SQLite snapshot.
+    compiled = read_compiled_graph_snapshot(
+        cfg.hot_db_path,
+        ts_code,
+        industry_id=requested_industry_id,
+    )
+    realtime = read_hot_snapshot(cfg.hot_db_path, ts_code)
+    freshness_layers = read_freshness_meta(cfg.hot_db_path)
+    realtime_ages = [v["age_seconds"] for v in realtime.values()]
+
+    if compiled:
+        industry_id = compiled.get("industry_id")
+        available_industries = read_available_overlay_industries(cfg.hot_db_path, ts_code)
+        if not available_industries:
+            available_industries = compiled.get("available_industries") or [industry_id]
+        alerts = read_overlay_alerts(cfg.hot_db_path, ts_code, industry_id)
+        if not alerts:
+            alerts = compiled.get("alerts") or []
+        static_overlay = compiled.get("static_overlay") or {}
+        return 200, _ok_envelope({
+            "ts_code": ts_code,
+            "industry_id": industry_id,
+            "available_industries": available_industries,
+            "compiled_graph": compiled.get("compiled_graph") or {},
+            "realtime": realtime,
+            "scores": compiled.get("scores") or {},
+            "coverage": compiled.get("coverage") or {},
+            "alerts": alerts,
+            "freshness": {
+                "static_period": static_overlay.get("period") or compiled.get("data_version"),
+                "compiled_at": compiled.get("compiled_at"),
+                "realtime_max_age_seconds": max(realtime_ages, default=None),
+                "realtime_min_age_seconds": min(realtime_ages, default=None),
+                "realtime_node_count": len(realtime),
+                "layers": freshness_layers,
+            },
+            "static_overlay": static_overlay,
+            # Backward-compatible aliases for the current frontend/tests.
+            "static": static_overlay,
+            "industry_context": _read_industry_overlay(cfg, industry_id),
+        })
+
+    # 2. Fallback path — YAML authoring files.
+    static_path = _find_stock_overlay_path(cfg, ts_code, requested_industry_id)
+    if static_path is None:
+        looked_at = (
+            cfg.stock_overlays_dir / requested_industry_id / f"{ts_code}.yaml"
+            if requested_industry_id else cfg.stock_overlays_dir / f"*/{ts_code}.yaml"
+        )
+        return 404, _error_envelope(
+            "OVERLAY_NOT_FOUND",
+            f"no stock_overlay for {ts_code} under {cfg.stock_overlays_dir}",
+            status=404,
+            details={"ts_code": ts_code, "industry_id": requested_industry_id, "looked_at": str(looked_at)},
+        )
+    try:
+        static = yaml.safe_load(static_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        return 500, _error_envelope(
+            "OVERLAY_PARSE_ERROR",
+            f"failed to parse {static_path.name}: {e}",
+            status=500,
+        )
+
+    industry_id = static.get("industry_id") or (static.get("industry_ids") or [None])[0]
+    available_industries = (
+        static.get("available_industries")
+        or static.get("industry_ids")
+        or ([industry_id] if industry_id else [])
+    )
+    industry_context = _read_industry_overlay(cfg, industry_id)
+
+    return 200, _ok_envelope({
+        "ts_code": ts_code,
+        "industry_id": industry_id,
+        "available_industries": available_industries,
+        "compiled_graph": {
+            "nodes": static.get("nodes") or [],
+            "hierarchy_edges": static.get("hierarchy_edges") or [],
+            "causal_edges": static.get("causal_edges") or [],
+            "views": static.get("views") or {},
+        },
+        "scores": static.get("scores") or {},
+        "coverage": static.get("coverage") or {},
+        "alerts": [],
+        "static": static,
+        "static_overlay": static,
+        "industry_context": industry_context,
+        "realtime": realtime,
+        "freshness": {
+            "static_period": static.get("period"),
+            "realtime_max_age_seconds": max(realtime_ages, default=None),
+            "realtime_min_age_seconds": min(realtime_ages, default=None),
+            "realtime_node_count": len(realtime),
+            "layers": freshness_layers,
+        },
+    })
+
+
+def _find_stock_overlay_path(
+    cfg: ServerConfig,
+    ts_code: str,
+    industry_id: str | None,
+) -> Path | None:
+    if industry_id:
+        path = cfg.stock_overlays_dir / industry_id / f"{ts_code}.yaml"
+        return path if path.exists() else None
+
+    nested = sorted(cfg.stock_overlays_dir.glob(f"*/{ts_code}.yaml"))
+    if nested:
+        primary = []
+        for path in nested:
+            try:
+                payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError:
+                continue
+            if payload.get("primary_industry") is True:
+                primary.append(path)
+        return sorted(primary or nested)[0]
+
+    legacy = cfg.stock_overlays_dir / f"{ts_code}.yaml"
+    return legacy if legacy.exists() else None
+
+
+def _load_stock_overlay_payload(
+    cfg: ServerConfig,
+    ts_code: str,
+    requested_industry_id: str | None,
+) -> tuple[dict | None, int, dict, str | None]:
+    """Locate and parse a stock overlay YAML.
+
+    Returns ``(overlay_or_None, status, envelope, industry_id)``. When
+    ``overlay`` is ``None`` the caller must return ``status``+``envelope``
+    directly. On success ``status == 200`` and ``envelope == {}``.
+    """
+
+    path = _find_stock_overlay_path(cfg, ts_code, requested_industry_id)
+    if path is None:
+        looked_at = (
+            str(cfg.stock_overlays_dir / requested_industry_id / f"{ts_code}.yaml")
+            if requested_industry_id
+            else str(cfg.stock_overlays_dir / f"*/{ts_code}.yaml")
+        )
+        return None, 404, _error_envelope(
+            "OVERLAY_NOT_FOUND",
+            f"no stock_overlay for {ts_code} under {cfg.stock_overlays_dir}",
+            status=404,
+            details={
+                "ts_code": ts_code,
+                "industry_id": requested_industry_id,
+                "looked_at": looked_at,
+            },
+        ), None
+    try:
+        overlay = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        return None, 500, _error_envelope(
+            "OVERLAY_PARSE_ERROR",
+            f"failed to parse {path.name}: {exc}",
+            status=500,
+        ), None
+
+    industry_id = (
+        requested_industry_id
+        or overlay.get("industry_id")
+        or (overlay.get("industry_ids") or [None])[0]
+    )
+    return overlay, 200, {}, industry_id
+
+
+def _load_industry_overlay_payload(
+    cfg: ServerConfig,
+    industry_id: str | None,
+) -> dict | None:
+    if not industry_id:
+        return None
+    path = cfg.industry_overlays_dir / f"{industry_id}.yaml"
+    if not path.exists():
+        return None
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return None
+
+
+def handle_aggregate(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """Run aggregator A1 on a stock overlay and return per-node score +
+    three-horizon mix. See spec §27 / §29."""
+
+    ts_code = (query.get("ts_code") or [None])[0]
+    if not ts_code:
+        return 400, _error_envelope(
+            "MISSING_PARAM", "ts_code query parameter required", status=400
+        )
+    requested_industry_id = (query.get("industry_id") or [None])[0]
+
+    overlay, status, err, industry_id = _load_stock_overlay_payload(
+        cfg, ts_code, requested_industry_id
+    )
+    if overlay is None:
+        return status, err
+
+    industry_overlay = _load_industry_overlay_payload(cfg, industry_id)
+
+    try:
+        from mvp20.aggregator import aggregate_company_graph
+        nodes = aggregate_company_graph(overlay, industry_overlay) or {}
+    except Exception as exc:  # noqa: BLE001 — surface as 500
+        return 500, _error_envelope(
+            "AGGREGATE_FAILED",
+            f"aggregate_company_graph raised: {exc}",
+            status=500,
+            details={"ts_code": ts_code, "industry_id": industry_id},
+        )
+
+    return 200, _ok_envelope({
+        "ts_code": ts_code,
+        "industry_id": industry_id,
+        "nodes": nodes,
+    })
+
+
+def handle_coverage(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """Run coverage A2 on a stock overlay and return Data Coverage + alerts.
+    See spec §23."""
+
+    ts_code = (query.get("ts_code") or [None])[0]
+    if not ts_code:
+        return 400, _error_envelope(
+            "MISSING_PARAM", "ts_code query parameter required", status=400
+        )
+    requested_industry_id = (query.get("industry_id") or [None])[0]
+
+    overlay, status, err, industry_id = _load_stock_overlay_payload(
+        cfg, ts_code, requested_industry_id
+    )
+    if overlay is None:
+        return status, err
+
+    try:
+        from mvp20.coverage import coverage_summary_for_overlay
+        report = coverage_summary_for_overlay(overlay) or {}
+    except Exception as exc:  # noqa: BLE001
+        return 500, _error_envelope(
+            "COVERAGE_FAILED",
+            f"coverage_summary_for_overlay raised: {exc}",
+            status=500,
+            details={"ts_code": ts_code, "industry_id": industry_id},
+        )
+
+    overall = report.get("overall") or {}
+    per_node_list = report.get("per_node") or []
+    per_node: dict[str, dict] = {}
+    for entry in per_node_list:
+        key = entry.get("dp_id") or entry.get("node_id")
+        if not key:
+            continue
+        per_node[str(key)] = entry
+
+    return 200, _ok_envelope({
+        "ts_code": report.get("ts_code") or ts_code,
+        "industry_id": report.get("industry_id") or industry_id,
+        "overall_data_coverage": overall.get("data_coverage", 0.0),
+        "warning_level": overall.get("warning_level", "ok"),
+        "n_parents": overall.get("n_parents", 0),
+        "totals": overall.get("totals", {}),
+        "per_node": per_node,
+        "alerts": report.get("alerts") or [],
+    })
+
+
+def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """Run scoring A3 on a stock overlay (A1 + A2 fed in) and return the
+    top-level company score, mode classification, and trading signal.
+    See spec §27.1/27.3/27.4 and §30."""
+
+    ts_code = (query.get("ts_code") or [None])[0]
+    if not ts_code:
+        return 400, _error_envelope(
+            "MISSING_PARAM", "ts_code query parameter required", status=400
+        )
+    requested_industry_id = (query.get("industry_id") or [None])[0]
+
+    overlay, status, err, industry_id = _load_stock_overlay_payload(
+        cfg, ts_code, requested_industry_id
+    )
+    if overlay is None:
+        return status, err
+
+    industry_overlay = _load_industry_overlay_payload(cfg, industry_id)
+
+    try:
+        from mvp20.aggregator import aggregate_company_graph
+        from mvp20.coverage import coverage_summary_for_overlay
+        from mvp20.scoring import score_company
+    except Exception as exc:  # noqa: BLE001
+        return 500, _error_envelope(
+            "IMPORT_FAILED",
+            f"failed to import scoring layer: {exc}",
+            status=500,
+        )
+
+    try:
+        aggregated = aggregate_company_graph(overlay, industry_overlay) or {}
+    except Exception as exc:  # noqa: BLE001
+        return 500, _error_envelope(
+            "AGGREGATE_FAILED",
+            f"aggregate_company_graph raised: {exc}",
+            status=500,
+            details={"ts_code": ts_code, "industry_id": industry_id},
+        )
+
+    try:
+        coverage_report = coverage_summary_for_overlay(overlay) or {}
+    except Exception as exc:  # noqa: BLE001
+        return 500, _error_envelope(
+            "COVERAGE_FAILED",
+            f"coverage_summary_for_overlay raised: {exc}",
+            status=500,
+            details={"ts_code": ts_code, "industry_id": industry_id},
+        )
+
+    # Best-effort realtime — score_company tolerates an empty dict
+    try:
+        from mvp20.storage import read_hot_snapshot
+        realtime_data = read_hot_snapshot(cfg.hot_db_path, ts_code)
+    except Exception:  # noqa: BLE001
+        realtime_data = {}
+
+    # Aggregator returns ``{node_id: {...}}``; score_company auto-detects
+    # this flat shape via ``_is_flat_aggregator_output``.
+    try:
+        result = score_company(
+            stock_overlay=overlay,
+            aggregated_nodes=aggregated,
+            coverage_report=coverage_report,
+            realtime_data=realtime_data,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return 500, _error_envelope(
+            "SCORE_FAILED",
+            f"score_company raised: {exc}",
+            status=500,
+            details={"ts_code": ts_code, "industry_id": industry_id},
+        )
+
+    final_score = result.get("final_score") or {}
+    top_paths = result.get("top_paths") or {"positive": [], "negative": []}
+    return 200, _ok_envelope({
+        "ts_code": result.get("ts_code") or ts_code,
+        "industry_id": result.get("industry_id") or industry_id,
+        "mode": result.get("mode_display") or result.get("mode"),
+        "mode_code": result.get("mode"),
+        "mode_confidence": result.get("mode_confidence"),
+        "mode_rationale": result.get("mode_rationale"),
+        "primary_drivers": result.get("mode_drivers") or [],
+        "short_total": result.get("short_total"),
+        "medium_total": result.get("medium_total"),
+        "long_total": result.get("long_total"),
+        "trading_signal": result.get("trading_signal"),
+        "trading_meaning": final_score.get("trading_meaning"),
+        "company_score": result.get("company_score") or {},
+        "final_score": final_score,
+        "top_paths": top_paths,
+        "signals": result.get("signals") or {},
+    })
+
+
+def _read_industry_overlay(cfg: ServerConfig, industry_id: str | None) -> dict:
+    if not industry_id:
+        return {}
+    ind_path = cfg.industry_overlays_dir / f"{industry_id}.yaml"
+    if not ind_path.exists():
+        return {}
+    try:
+        return yaml.safe_load(ind_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return {"error": "industry_overlay_parse_failed"}
+
+
+# ---------------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------------
+
+
+# (method, path_regex, handler, upstream_module_if_unavailable)
+# Upstream-only routes: pre-empt with 503 envelope so the UI shows a clean
+# "this needs upstream X" banner instead of crashing.
+# Empty — every former 503-only route is now either wired to a vendored
+# upstream module via mvp20.adapters.* (returning 200 fixture) or handled
+# directly by mvp20 (admin/alerts stubs above). frontend-api is intentionally
+# NOT vendored: the FrontEnd Vite app under FrontEnd/ is the sole frontend,
+# and mvp20 server.py serves as its BFF directly. Any future upstream-only
+# routes can be added here to surface a 503 banner cleanly.
+_UPSTREAM_ONLY: list[tuple[str, str]] = []
+
+
+def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerConfig, dict], HandlerResult]]]:
+    return [
+        # === mvp20 own implementations (read YAML, no upstream dependency) ===
+        (re.compile(r"^/api/health$"), handle_health),
+        (re.compile(r"^/api/project-ult/health$"), handle_project_ult_health),
+        (re.compile(r"^/api/project-ult/compat$"), handle_compat),
+        (re.compile(r"^/api/project-ult/manifests/latest$"), handle_manifests_latest),
+        (re.compile(r"^/api/project-ult/modules$"), handle_modules),
+        (re.compile(r"^/api/project-ult/reasoner/providers$"), handle_providers),
+        (re.compile(r"^/api/project-ult/profiles$"), handle_profiles),
+        (re.compile(r"^/api/project-ult/industry-graphs$"), handle_industry_graph),
+        (re.compile(r"^/api/project-ult/cycles$"), handle_cycles_list),
+        (re.compile(r"^/api/subsystems/status$"), handle_subsystems_status),
+        # === vendored upstream modules wired via mvp20/adapters/* ===
+        # graph-engine
+        (re.compile(r"^/api/project-ult/graph/.*$"), graph_engine_adapter.handle_graph_query),
+        # data-platform
+        (re.compile(r"^/api/project-ult/data/canonical/.*$"), data_platform_adapter.handle_canonical),
+        (re.compile(r"^/api/project-ult/data/raw/.*$"), data_platform_adapter.handle_raw),
+        # entity-registry
+        (re.compile(r"^/api/project-ult/entities.*$"), entity_registry_adapter.handle_entities),
+        # reasoner-runtime (note: /reasoner/providers stays on handle_providers above)
+        (re.compile(r"^/api/project-ult/reasoner/(?!providers)[^/]+.*$"),
+         reasoner_runtime_adapter.handle_reasoner),
+        # main-core
+        (re.compile(r"^/api/project-ult/cycles/[^/]+$"), main_core_adapter.handle_cycle_detail),
+        (re.compile(r"^/api/stocks/.*$"), main_core_adapter.handle_stocks),
+        (re.compile(r"^/api/pool/.*$"), main_core_adapter.handle_pool),
+        (re.compile(r"^/api/world-state/.*$"), main_core_adapter.handle_world_state),
+        # audit-eval
+        (re.compile(r"^/api/project-ult/audit/[^/]+$"), audit_eval_adapter.handle_audit),
+        (re.compile(r"^/api/audit/.*$"), audit_eval_adapter.handle_audit),
+        (re.compile(r"^/api/project-ult/backtests/?.*$"), audit_eval_adapter.handle_backtest),
+        (re.compile(r"^/api/backtest/.*$"), audit_eval_adapter.handle_backtest),
+        # mvp20 own BFF stubs — frontend-api not vendored; FrontEnd/ uses these
+        (re.compile(r"^/api/admin/.*$"), handle_admin_stub),
+        (re.compile(r"^/api/alerts/.*$"), handle_alerts_stub),
+        # Phase-1 data-layer: merged stock overlay (YAML static + SQLite hot)
+        (re.compile(r"^/api/project-ult/stock-overlay$"), handle_stock_overlay),
+        # Phase-2 data-layer: Parquet minute history replay
+        (re.compile(r"^/api/project-ult/history$"), handle_history),
+        # Derived layers — A1 / A2 / A3 (spec §23 / §27 / §29 / §30)
+        (re.compile(r"^/api/project-ult/aggregate$"), handle_aggregate),
+        (re.compile(r"^/api/project-ult/coverage$"), handle_coverage),
+        (re.compile(r"^/api/project-ult/score$"), handle_score),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# HTTP layer
+# ---------------------------------------------------------------------------
+
+
+class _Handler(BaseHTTPRequestHandler):
+    server_version = "mvp20/0.1"
+    _config: ServerConfig | None = None  # set by the wrapper class
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        # Concise access log — single line per request
+        print(f"{self.log_date_time_string()} {self.address_string()} "
+              f"{format % args}", flush=True)
+
+    def _set_cors(self) -> None:
+        cfg = self._config
+        if cfg is None:
+            return
+        self.send_header("Access-Control-Allow-Origin", cfg.cors_origin)
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+
+    def _write_json(self, status: int, body: dict) -> None:
+        encoded = dumps_strict_json(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(encoded)))
+        self._set_cors()
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(204)
+        self._set_cors()
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802
+        cfg = self._config
+        if cfg is None:
+            self._write_json(500, _error_envelope(
+                "SERVER_NOT_CONFIGURED", "ServerConfig not bound", status=500))
+            return
+
+        parsed = urlsplit(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+
+        # Long-lived SSE streams take over the response — do not pass through
+        # the normal _write_json envelope. Each stream blocks the handler
+        # thread for its duration; ThreadingHTTPServer handles concurrency.
+        if path == "/api/project-ult/stream/realtime":
+            self._serve_sse_realtime(cfg, query)
+            return
+
+        # Match exact handlers first
+        for pattern, handler in _routes(cfg):
+            if pattern.match(path):
+                try:
+                    status, body = handler(cfg, query)
+                except Exception as exc:  # noqa: BLE001 - surface as 500
+                    body = _error_envelope(
+                        "HANDLER_ERROR", str(exc), status=500,
+                        details={"path": path},
+                    )
+                    status = 500
+                self._write_json(status, body)
+                return
+
+        # Upstream-only patterns return 503 envelope
+        for pattern_str, module in _UPSTREAM_ONLY:
+            if re.match(pattern_str, path):
+                self._write_json(503, _upstream_unavailable(module, path))
+                return
+
+        # Unknown path
+        if path.startswith("/api/"):
+            self._write_json(404, _error_envelope(
+                "ROUTE_NOT_FOUND",
+                f"No mvp20 handler for {path}; this might be served by "
+                "an upstream module or the frontend's MSW mock layer.",
+                status=404,
+                details={"path": path},
+            ))
+        else:
+            self._write_json(404, _error_envelope(
+                "NOT_API_PATH",
+                f"mvp20 server only exposes /api/*; got {path}",
+                status=404,
+            ))
+
+    def do_POST(self) -> None:  # noqa: N802
+        self._reject_write()
+
+    def do_PUT(self) -> None:  # noqa: N802
+        self._reject_write()
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        self._reject_write()
+
+    def _reject_write(self) -> None:
+        self._write_json(405, _error_envelope(
+            "METHOD_NOT_ALLOWED",
+            f"mvp20 server is read-only; {self.command} not allowed",
+            status=405,
+        ))
+
+    # ── SSE: long-lived event stream for one ts_code ──────────────────────
+    def _serve_sse_realtime(self, cfg: ServerConfig, query: dict) -> None:
+        """Open a Server-Sent Events stream of realtime_current deltas.
+
+        Sends headers first, then loops in ``mvp20.sse.stream_realtime_delta``.
+        Connection stays open until client disconnects or max-duration hits.
+        """
+
+        from mvp20 import sse as sse_mod
+
+        ts_code_list = query.get("ts_code") or []
+        if not ts_code_list:
+            self._write_json(400, _error_envelope(
+                "MISSING_PARAM",
+                "ts_code query parameter required for SSE stream",
+                status=400,
+            ))
+            return
+        ts_code = ts_code_list[0]
+        industry_id = (query.get("industry_id") or [None])[0]
+
+        try:
+            poll = int((query.get("poll_seconds") or [str(sse_mod.DEFAULT_POLL_INTERVAL_SECONDS)])[0])
+        except (TypeError, ValueError):
+            poll = sse_mod.DEFAULT_POLL_INTERVAL_SECONDS
+        # Hard-cap poll interval so a client can't ask for 0.1s polling
+        poll = max(1, min(poll, 60))
+
+        # Headers for SSE — chunked-friendly, no compression, no caching
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")  # disable proxy buffering
+        self._set_cors()
+        self.end_headers()
+
+        try:
+            sse_mod.stream_realtime_delta(
+                write_bytes=self.wfile.write,
+                flush=self.wfile.flush,
+                hot_db_path=cfg.hot_db_path,
+                ts_code=ts_code,
+                industry_id=industry_id,
+                poll_interval_seconds=poll,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Best-effort: tell the client we crashed, then close.
+            try:
+                self.wfile.write(
+                    f"event: error\ndata: {json.dumps({'error': str(exc)})}\n\n".encode("utf-8")
+                )
+                self.wfile.flush()
+            except OSError:
+                pass
+
+
+def make_handler_class(cfg: ServerConfig) -> type[_Handler]:
+    cls = type("BoundHandler", (_Handler,), {"_config": cfg})
+    return cls
+
+
+def serve_forever(cfg: ServerConfig) -> None:
+    handler_cls = make_handler_class(cfg)
+    httpd = ThreadingHTTPServer((cfg.host, cfg.port), handler_cls)
+    print(f"mvp20 HTTP server listening on http://{cfg.host}:{cfg.port}/api/*")
+    print(f"  CORS origin allowed: {cfg.cors_origin}")
+    print(f"  Universe:    {cfg.universe_path}")
+    print(f"  Industries:  {cfg.industries_path}")
+    print(f"  Providers:   {cfg.providers_path}")
+    print(f"  Lock:        {cfg.lock_path}")
+    print("  Press Ctrl+C to stop.")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nshutting down …")
+        httpd.shutdown()

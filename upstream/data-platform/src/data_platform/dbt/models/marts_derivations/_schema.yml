@@ -1,0 +1,153 @@
+version: 2
+
+models:
+  - name: mart_deriv_top_holder_qoq_change
+    description: Quarter-over-quarter change rows derived from canonical holdings for top holder sources only.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - mart_key
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - holding_source
+            - holder_id
+            - security_id
+            - report_date
+            - announced_date
+    columns:
+      - name: mart_key
+        tests:
+          - not_null
+      - name: holding_source
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'top_holder'
+                - 'top_float_holder'
+              quote: true
+      - name: holder_id
+        tests:
+          - not_null
+      - name: security_id
+        tests:
+          - not_null
+      - name: report_date
+        tests:
+          - not_null
+      - name: announced_date
+        tests:
+          - not_null
+
+  - name: mart_deriv_fund_co_holding
+    description: Fund co-holding security pairs derived from canonical fund portfolio holdings, ordered lexicographically to avoid self-pairs and inverse duplicates.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - mart_key
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - report_date
+            - security_id_left
+            - security_id_right
+    columns:
+      - name: mart_key
+        tests:
+          - not_null
+      - name: row_id
+        tests:
+          - not_null
+      - name: report_date
+        tests:
+          - not_null
+      - name: security_id_left
+        tests:
+          - not_null
+      - name: security_id_right
+        tests:
+          - not_null
+      - name: co_holding_fund_count
+        tests:
+          - not_null
+      - name: security_left_fund_count
+        tests:
+          - not_null
+      - name: security_right_fund_count
+        tests:
+          - not_null
+      - name: jaccard_score
+        tests:
+          - not_null
+      - name: latest_announced_date
+        tests:
+          - not_null
+      - name: evidence_ref
+        tests:
+          - not_null
+
+  - name: mart_deriv_northbound_holding_z_score
+    description: Rolling z-score features derived from canonical northbound holdings for holding amount and holding ratio.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - mart_key
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - security_id
+            - holder_id
+            - report_date
+            - z_score_metric
+    columns:
+      - name: mart_key
+        tests:
+          - not_null
+      - name: row_id
+        tests:
+          - not_null
+      - name: security_id
+        tests:
+          - not_null
+      - name: holder_id
+        tests:
+          - not_null
+      - name: report_date
+        tests:
+          - not_null
+      - name: z_score_metric
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'holding_amount'
+                - 'holding_ratio'
+              quote: true
+      - name: lookback_observations
+        tests:
+          - not_null
+          - accepted_values:
+              values: [8]
+              quote: false
+      - name: window_start_date
+        tests:
+          - not_null
+      - name: window_end_date
+        tests:
+          - not_null
+      - name: observation_count
+        tests:
+          - not_null
+      - name: metric_value
+        tests:
+          - not_null
+      - name: metric_mean
+        tests:
+          - not_null
+      - name: metric_stddev
+        tests:
+          - not_null
+      - name: metric_z_score
+        tests:
+          - not_null
+      - name: evidence_ref
+        tests:
+          - not_null

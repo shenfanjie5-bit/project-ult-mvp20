@@ -1,0 +1,199 @@
+schema_version: 2
+formula: exp(kappa * weighted_sum_factor_scores)
+description: >
+  Market adapter defaults for applying local market microstructure,
+  participant, liquidity, theme, policy, derivatives/shorting, cross-border,
+  and regime effects outside the shared company graph formula.
+
+factor_range: [-1.0, 1.0]
+factor_score_method: tanh
+factor_score_scale: 2.0
+base_horizon: mid
+stock_beta_bounds:
+  min: 0.0
+  max: 2.0
+multiplier_bounds:
+  min: 0.2
+  max: null
+factors:
+  - microstructure
+  - participant
+  - liquidity
+  - theme
+  - policy
+  - derivatives_shorting
+  - crossborder_fx
+  - market_regime
+
+market_rules:
+  CN_A:
+    identity:
+      market_code: CN_A
+      default_listing_boards: [SSE Main Board, SZSE Main Board, STAR, ChiNext, BSE]
+    source_notes:
+      - source: https://star.sse.com.cn/en/gettingstarted/features/trading/
+        note: STAR Market has no price limit for first 5 trading days and 20% daily limit afterwards.
+    kappa:
+      short: 0.80
+      mid: 0.45
+      long: 0.25
+    factor_weights:
+      short:
+        theme: 0.25
+        microstructure: 0.20
+        participant: 0.17
+        liquidity: 0.12
+        policy: 0.12
+        derivatives_shorting: 0.02
+        crossborder_fx: 0.04
+        market_regime: 0.08
+      mid:
+        theme: 0.18
+        microstructure: 0.05
+        participant: 0.08
+        liquidity: 0.10
+        policy: 0.24
+        derivatives_shorting: 0.02
+        crossborder_fx: 0.12
+        market_regime: 0.21
+      long:
+        theme: 0.08
+        microstructure: 0.02
+        participant: 0.04
+        liquidity: 0.08
+        policy: 0.28
+        derivatives_shorting: 0.01
+        crossborder_fx: 0.10
+        market_regime: 0.39
+    target_map:
+      microstructure: []
+      participant: [funding_score, funding_multiplier]
+      liquidity: [liquidity_multiplier]
+      theme: [theme_multiplier, sentiment_multiplier, reflexivity_multiplier]
+      policy: [policy_sensitivity_multiplier]
+      derivatives_shorting: [options_momentum_multiplier, gamma_multiplier]
+      crossborder_fx: [funding_multiplier]
+      market_regime: [market_regime_multiplier, rate_sensitivity_multiplier]
+    local_scores:
+      local_funding_score: [funding_score, sentiment_score]
+      local_event_score: [event_impulse_score, expectation_gap]
+    discounts:
+      local_risk_discount: [risk_discount, uncertainty_discount, overheat_risk]
+      local_overheat_risk: [overheat_risk]
+      local_uncertainty_discount: [uncertainty_discount]
+
+  US:
+    identity:
+      market_code: US
+      default_listing_boards: [NYSE, Nasdaq, AMEX]
+    source_notes:
+      - source: https://www.luldplan.com/
+        note: LULD prevents NMS Stock trades outside specified price bands.
+      - source: https://www.finra.org/filing-reporting/regulatory-filing-systems/short-interest
+        note: FINRA short interest is reported twice monthly.
+    kappa:
+      short: 0.65
+      mid: 0.45
+      long: 0.30
+    factor_weights:
+      short:
+        theme: 0.12
+        microstructure: 0.10
+        participant: 0.14
+        liquidity: 0.12
+        policy: 0.05
+        derivatives_shorting: 0.28
+        crossborder_fx: 0.06
+        market_regime: 0.13
+      mid:
+        theme: 0.10
+        microstructure: 0.05
+        participant: 0.20
+        liquidity: 0.08
+        policy: 0.08
+        derivatives_shorting: 0.15
+        crossborder_fx: 0.08
+        market_regime: 0.26
+      long:
+        theme: 0.06
+        microstructure: 0.02
+        participant: 0.22
+        liquidity: 0.05
+        policy: 0.08
+        derivatives_shorting: 0.06
+        crossborder_fx: 0.10
+        market_regime: 0.41
+    target_map:
+      microstructure: []
+      participant: [funding_score, funding_multiplier]
+      liquidity: [liquidity_multiplier]
+      theme: [theme_multiplier, sentiment_multiplier]
+      policy: [policy_sensitivity_multiplier]
+      derivatives_shorting: [options_momentum_multiplier, gamma_multiplier, volatility_risk]
+      crossborder_fx: [market_regime_multiplier]
+      market_regime: [market_regime_multiplier, rate_sensitivity_multiplier]
+    local_scores:
+      local_funding_score: [funding_score, sentiment_score]
+      local_event_score: [event_impulse_score, expectation_gap]
+    discounts:
+      local_risk_discount: [risk_discount, uncertainty_discount, volatility_risk, overheat_risk]
+      local_overheat_risk: [overheat_risk]
+      local_uncertainty_discount: [uncertainty_discount]
+
+  HK:
+    identity:
+      market_code: HK
+      default_listing_boards: [HK Main Board, GEM]
+    source_notes:
+      - source: https://www.hkex.com.hk/Global/Exchange/FAQ/Securities-Market/Trading/VCM?sc_lang=en
+        note: HKEX VCM can trigger a 5-minute cooling-off period.
+      - source: https://www.hkex.com.hk/Mutual-Market/Connect-Hub/Stock-Connect?sc_lang=en
+        note: Stock Connect Northbound quota is RMB 52bn each route and Southbound quota is RMB 42bn each route.
+    kappa:
+      short: 0.55
+      mid: 0.45
+      long: 0.35
+    factor_weights:
+      short:
+        theme: 0.10
+        microstructure: 0.06
+        participant: 0.08
+        liquidity: 0.16
+        policy: 0.14
+        derivatives_shorting: 0.12
+        crossborder_fx: 0.30
+        market_regime: 0.04
+      mid:
+        theme: 0.08
+        microstructure: 0.03
+        participant: 0.08
+        liquidity: 0.16
+        policy: 0.20
+        derivatives_shorting: 0.08
+        crossborder_fx: 0.28
+        market_regime: 0.09
+      long:
+        theme: 0.05
+        microstructure: 0.01
+        participant: 0.08
+        liquidity: 0.20
+        policy: 0.20
+        derivatives_shorting: 0.04
+        crossborder_fx: 0.25
+        market_regime: 0.17
+    target_map:
+      microstructure: []
+      participant: [funding_score, funding_multiplier]
+      liquidity: [liquidity_multiplier]
+      theme: [theme_multiplier, sentiment_multiplier]
+      policy: [policy_sensitivity_multiplier]
+      derivatives_shorting: [options_momentum_multiplier, gamma_multiplier, volatility_risk]
+      crossborder_fx: [funding_multiplier, market_regime_multiplier]
+      market_regime: [market_regime_multiplier, rate_sensitivity_multiplier]
+    local_scores:
+      local_funding_score: [funding_score, sentiment_score]
+      local_event_score: [event_impulse_score, expectation_gap]
+    discounts:
+      local_risk_discount: [risk_discount, uncertainty_discount, volatility_risk, overheat_risk]
+      local_overheat_risk: [overheat_risk]
+      local_uncertainty_discount: [uncertainty_discount]

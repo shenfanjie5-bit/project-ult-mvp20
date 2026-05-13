@@ -1,0 +1,909 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: NONFERROUS_METALS
+industry_name_cn: 有色资源黄金铜稀土小金属
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 黄金
+      - 白银
+      - 铜
+      - 铝
+      - 锂
+      - 镍
+      - 钴
+      - 稀土
+      - 钨
+      - 锑
+      - 锡
+      - 钼
+      - 矿山
+      - 冶炼
+      - 资源回收
+      - 资源 ETF
+    core_judgment: >-
+      该板块的核心是商品价格、库存周期、供给扰动和资源安全溢价。股价弹性通常
+      来自价格上涨 × 资源储量/产量 × 成本曲线位置 × 估值重估。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注实际利率、库存、供给扰动、资源安全溢价、成本曲线和反转风险。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.20}
+    - {name: 温和多头, probability: 0.25}
+    - {name: 结构分化, probability: 0.20}
+    - {name: 杀估值, probability: 0.15}
+    - {name: 等待验证, probability: 0.20}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、产业链}
+      - {name: price_implied_expectation, description: 股价隐含预期, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 新闻、社媒}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 价格/库存数据}
+      - {name: tail_risk_prob, description: 尾部风险, source: 商品反转}
+
+  path_dedup_groups: [价格组, 需求组, 政策组, 供给组, 盈利组, 风险组]
+
+  exposure:
+    factors:
+      - 资源储量与产量
+      - 成本曲线位置（现金成本）
+      - 资源安全 / 政策受益
+      - 海外资源占比
+      - 库存与套保比例
+      - 资本开支与扩产能力
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 资源储量大 / 成本低 / 价格弹性强
+      "4": 资源储量较大但价格弹性受套保影响
+      "3": 部分资源敞口
+      "2": 主要为冶炼或贸易
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 价格 × 产量
+      GrossMargin: 价格与现金成本差
+      OpexRatio: 矿山稳态运营低
+      EBIT_EPS: 价格弹性带来利润放大
+      FCF: 资本开支期承压
+      Leverage: 重资产 / 矿山扩产融资
+
+  valuation_mix:
+    weights:
+      PE: 0.25
+      PB: 0.20
+      EV_EBITDA: 0.25
+      DCF_MineNPV: 0.20
+      Dividend: 0.10
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 商品价格高位回落
+      - 美元走强 / 实际利率上行
+      - 库存堆积 / 需求逆转
+      - 成本曲线右移
+      - 政策回收资源安全溢价
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 实际利率与美元指数
+    - LME / SHFE 库存与持仓
+    - PMI 与电网 / 新能源投资
+    - 矿山新闻与产量
+    - 现金成本与品位数据
+    - 期货曲线与央行购金
+
+  falsification:
+    bullish_triggers:
+      - 实际利率回落带动黄金
+      - 工业金属库存连续下降
+      - 资源安全政策落地
+      - 矿山供给扰动持续
+    bearish_triggers:
+      - 美元走强 + 实际利率上行
+      - 工业金属库存回补 + 需求疲弱
+      - 政策执行偏弱
+      - 商品价格高位放量回落
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响聚合 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 商品波动 + 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    有色资源的图谱重点是判断商品价格的剩余涨幅是否还能传导到企业利润和估值，
+    并避免在反转风险已经积累时追入。
+
+nodes:
+  - id: EVENT.real_rate_decline
+    layer: event
+    type: macro_event
+    label_cn: 实际利率下行 / 避险升温
+    industry_tags: [NONFERROUS_METALS]
+  - id: EVENT.industrial_demand_recovery
+    layer: event
+    type: demand_event
+    label_cn: 电力 / 新能源 / 制造业需求复苏
+    industry_tags: [NONFERROUS_METALS, STORAGE_GRID]
+  - id: EVENT.export_restriction_critical_metal
+    layer: event
+    type: policy_event
+    label_cn: 出口限制 / 资源安全政策
+    industry_tags: [NONFERROUS_METALS]
+  - id: EVENT.mine_supply_disruption
+    layer: event
+    type: supply_event
+    label_cn: 矿山事故 / 罢工 / 地缘扰动
+    industry_tags: [NONFERROUS_METALS]
+  - id: EVENT.high_cost_capacity_exit
+    layer: event
+    type: cost_event
+    label_cn: 高成本产能出清
+    industry_tags: [NONFERROUS_METALS]
+
+  - id: SIGNAL.gold_silver_price
+    layer: industry_signal
+    type: price_signal
+    label_cn: 黄金白银价格
+    industry_tags: [NONFERROUS_METALS]
+  - id: SIGNAL.industrial_metal_inventory
+    layer: industry_signal
+    type: inventory_signal
+    label_cn: 工业金属库存与价格
+    industry_tags: [NONFERROUS_METALS]
+  - id: SIGNAL.critical_metal_premium
+    layer: industry_signal
+    type: policy_signal
+    label_cn: 稀土小金属溢价
+    industry_tags: [NONFERROUS_METALS]
+  - id: SIGNAL.commodity_price_curve
+    layer: industry_signal
+    type: price_signal
+    label_cn: 商品价格曲线
+    industry_tags: [NONFERROUS_METALS]
+
+  - id: FIN.miner_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 矿企收入
+    industry_tags: [NONFERROUS_METALS]
+    properties: {field: Revenue}
+  - id: FIN.miner_unit_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 吨毛利
+    industry_tags: [NONFERROUS_METALS]
+    properties: {field: GrossMargin}
+
+  - id: VAL.resource_safety_premium
+    layer: valuation
+    type: policy_premium
+    label_cn: 资源安全估值溢价
+    industry_tags: [NONFERROUS_METALS]
+  - id: VAL.commodity_multiple
+    layer: valuation
+    type: cycle_multiple
+    label_cn: 资源股周期估值
+    industry_tags: [NONFERROUS_METALS]
+
+  - id: RISK.commodity_price_reversal
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 商品价格反转
+    industry_tags: [NONFERROUS_METALS]
+  - id: RISK.dollar_strength
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 美元走强 / 实际利率上行
+    industry_tags: [NONFERROUS_METALS]
+
+  - id: COMPANY.NONFERROUS_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 有色金属板块代表 ETF
+    industry_tags: [NONFERROUS_METALS]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.002460_SZ
+    layer: stock
+    type: company
+    label_cn: 赣锋锂业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 002460.SZ, role: target}
+  - id: COMPANY.002466_SZ
+    layer: stock
+    type: company
+    label_cn: 天齐锂业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 002466.SZ, role: target}
+  - id: COMPANY.00358_HK
+    layer: stock
+    type: company
+    label_cn: 江西铜业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 00358.HK, role: target}
+  - id: COMPANY.01208_HK
+    layer: stock
+    type: company
+    label_cn: 五矿资源
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 01208.HK, role: target}
+  - id: COMPANY.01772_HK
+    layer: stock
+    type: company
+    label_cn: 赣锋锂业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 01772.HK, role: target}
+  - id: COMPANY.01787_HK
+    layer: stock
+    type: company
+    label_cn: 山东黄金
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 01787.HK, role: target}
+  - id: COMPANY.01818_HK
+    layer: stock
+    type: company
+    label_cn: 招金矿业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 01818.HK, role: target}
+  - id: COMPANY.02259_HK
+    layer: stock
+    type: company
+    label_cn: 紫金黄金国际
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 02259.HK, role: target}
+  - id: COMPANY.02600_HK
+    layer: stock
+    type: company
+    label_cn: 中国铝业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 02600.HK, role: target}
+  - id: COMPANY.02899_HK
+    layer: stock
+    type: company
+    label_cn: 紫金矿业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 02899.HK, role: target}
+  - id: COMPANY.03993_HK
+    layer: stock
+    type: company
+    label_cn: 洛阳钼业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 03993.HK, role: target}
+  - id: COMPANY.09696_HK
+    layer: stock
+    type: company
+    label_cn: 天齐锂业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 09696.HK, role: target}
+  - id: COMPANY.600111_SH
+    layer: stock
+    type: company
+    label_cn: 北方稀土
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 600111.SH, role: target}
+  - id: COMPANY.600362_SH
+    layer: stock
+    type: company
+    label_cn: 江西铜业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 600362.SH, role: target}
+  - id: COMPANY.600489_SH
+    layer: stock
+    type: company
+    label_cn: 中金黄金
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 600489.SH, role: target}
+  - id: COMPANY.600547_SH
+    layer: stock
+    type: company
+    label_cn: 山东黄金
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 600547.SH, role: target}
+  - id: COMPANY.601600_SH
+    layer: stock
+    type: company
+    label_cn: 中国铝业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 601600.SH, role: target}
+  - id: COMPANY.601899_SH
+    layer: stock
+    type: company
+    label_cn: 紫金矿业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 601899.SH, role: target}
+  - id: COMPANY.603799_SH
+    layer: stock
+    type: company
+    label_cn: 华友钴业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 603799.SH, role: target}
+  - id: COMPANY.603993_SH
+    layer: stock
+    type: company
+    label_cn: 洛阳钼业
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: 603993.SH, role: target}
+  - id: COMPANY.AA_US
+    layer: stock
+    type: company
+    label_cn: Alcoa
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: AA.US, role: target}
+  - id: COMPANY.AEM_US
+    layer: stock
+    type: company
+    label_cn: Agnico Eagle
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: AEM.US, role: target}
+  - id: COMPANY.ALB_US
+    layer: stock
+    type: company
+    label_cn: Albemarle
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: ALB.US, role: target}
+  - id: COMPANY.B_US
+    layer: stock
+    type: company
+    label_cn: Barrick Mining
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: B.US, role: target}
+  - id: COMPANY.FCX_US
+    layer: stock
+    type: company
+    label_cn: Freeport-McMoRan
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: FCX.US, role: target}
+  - id: COMPANY.MP_US
+    layer: stock
+    type: company
+    label_cn: MP Materials
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: MP.US, role: target}
+  - id: COMPANY.NEM_US
+    layer: stock
+    type: company
+    label_cn: Newmont
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: NEM.US, role: target}
+  - id: COMPANY.RIO_US
+    layer: stock
+    type: company
+    label_cn: Rio Tinto
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: RIO.US, role: target}
+  - id: COMPANY.SCCO_US
+    layer: stock
+    type: company
+    label_cn: Southern Copper
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: SCCO.US, role: target}
+  - id: COMPANY.TECK_US
+    layer: stock
+    type: company
+    label_cn: Teck
+    industry_tags: [NONFERROUS_METALS]
+    properties: {ts_code: TECK.US, role: target}
+
+edges:
+  - id: EDGE.NONFE.001
+    source: EVENT.real_rate_decline
+    target: SIGNAL.gold_silver_price
+    relation: drives_price
+    polarity: positive
+    beta_positive: 0.80
+    beta_negative: 0.85
+    threshold: 价格突破并保持
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.NONFE.002
+    source: SIGNAL.gold_silver_price
+    target: FIN.miner_unit_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 现金成本不动则吨毛利扩大
+    lag: 即时-2 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.NONFE.003
+    source: EVENT.industrial_demand_recovery
+    target: SIGNAL.industrial_metal_inventory
+    relation: dampens_inventory
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.70
+    threshold: 库存与需求同步
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.NONFE.004
+    source: SIGNAL.industrial_metal_inventory
+    target: SIGNAL.commodity_price_curve
+    relation: drives_price
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.65
+    threshold: 库存下降伴随升水
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.NONFE.005
+    source: EVENT.export_restriction_critical_metal
+    target: SIGNAL.critical_metal_premium
+    relation: drives_premium
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.60
+    threshold: 政策实际影响供需
+    lag: 即时-3 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.NONFE.006
+    source: SIGNAL.critical_metal_premium
+    target: VAL.resource_safety_premium
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.50
+    threshold: 估值溢价兑现
+    lag: 即时-2 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.NONFE.007
+    source: EVENT.mine_supply_disruption
+    target: SIGNAL.commodity_price_curve
+    relation: drives_price
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.75
+    threshold: 扰动影响全球供给
+    lag: 即时-2 quarters
+    dedup_group: 供给组
+    views: [causal_propagation, supply_chain]
+  - id: EDGE.NONFE.008
+    source: EVENT.high_cost_capacity_exit
+    target: FIN.miner_unit_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 成本优势明确
+    lag: 1-4 quarters
+    dedup_group: 盈利组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.NONFE.009
+    source: FIN.miner_unit_margin
+    target: VAL.commodity_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.60
+    threshold: 周期估值修复
+    lag: 即时-2 quarters
+    dedup_group: 盈利组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.NONFE.010
+    source: VAL.commodity_multiple
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.65
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 盈利组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.NONFE.RISK.001
+    source: SIGNAL.commodity_price_curve
+    target: RISK.commodity_price_reversal
+    relation: triggers_tail_risk
+    polarity: negative
+    beta_positive: 0.40
+    beta_negative: 1.20
+    threshold: 价格高位放量回落
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.NONFE.RISK.002
+    source: RISK.commodity_price_reversal
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: drags_alpha
+    polarity: negative
+    beta_positive: 0.40
+    beta_negative: 1.10
+    threshold: 资源股价格弹性下行
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.NONFE.RISK.003
+    source: RISK.dollar_strength
+    target: SIGNAL.gold_silver_price
+    relation: dampens_price
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 0.95
+    threshold: 美元走强 / 实际利率上行
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.NONFE.MEMBER.001
+    source: COMPANY.002460_SZ
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.002
+    source: COMPANY.002466_SZ
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.003
+    source: COMPANY.00358_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.004
+    source: COMPANY.01208_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.005
+    source: COMPANY.01772_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.006
+    source: COMPANY.01787_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.007
+    source: COMPANY.01818_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.008
+    source: COMPANY.02259_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.009
+    source: COMPANY.02600_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.010
+    source: COMPANY.02899_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.011
+    source: COMPANY.03993_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.012
+    source: COMPANY.09696_HK
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.013
+    source: COMPANY.600111_SH
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.014
+    source: COMPANY.600362_SH
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.015
+    source: COMPANY.600489_SH
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.016
+    source: COMPANY.600547_SH
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.017
+    source: COMPANY.601600_SH
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.018
+    source: COMPANY.601899_SH
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.019
+    source: COMPANY.603799_SH
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.020
+    source: COMPANY.603993_SH
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.021
+    source: COMPANY.AA_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.022
+    source: COMPANY.AEM_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.023
+    source: COMPANY.ALB_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.024
+    source: COMPANY.B_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.025
+    source: COMPANY.FCX_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.026
+    source: COMPANY.MP_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.027
+    source: COMPANY.NEM_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.028
+    source: COMPANY.RIO_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.029
+    source: COMPANY.SCCO_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.NONFE.MEMBER.030
+    source: COMPANY.TECK_US
+    target: COMPANY.NONFERROUS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 价格 / 库存 / 政策 / 成本 → 矿企盈利与估值
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 商品价格 / 库存 / 吨毛利 / 估值 高中心度
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 矿山供给与下游需求传导
+    include_node_types: [company, supply_event, demand_signal, inventory_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 商品反转 / 美元走强 / 利率风险
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

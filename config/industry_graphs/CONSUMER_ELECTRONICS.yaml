@@ -1,0 +1,985 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: CONSUMER_ELECTRONICS
+industry_name_cn: 消费电子AI终端PCB元件
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - AI 手机
+      - AI PC
+      - AI 眼镜
+      - 可穿戴
+      - AR / VR
+      - 声学
+      - 光学
+      - 连接器
+      - 摄像头模组
+      - 被动元件
+      - PCB
+      - 散热
+      - 结构件
+      - 终端供应链
+    core_judgment: >-
+      该板块的核心是终端换机周期、AI 功能带来的 BOM 价值量提升、客户新品节奏、
+      库存周期和供应链份额变化。需要区分概念发布和真实拉货。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注换机、价值量、客户新品、库存、份额、砍单等路径。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.10}
+    - {name: 温和多头, probability: 0.20}
+    - {name: 结构分化, probability: 0.25}
+    - {name: 等待验证, probability: 0.25}
+    - {name: 杀估值, probability: 0.20}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、产业链}
+      - {name: price_implied_expectation, description: 股价隐含, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 新品、社媒}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 出货 / 拉货数据}
+      - {name: tail_risk_prob, description: 尾部风险, source: 砍单 / 价格}
+
+  path_dedup_groups: [需求组, 价格组, 库存组, 竞争组, 风险组]
+
+  exposure:
+    factors:
+      - 终端品牌客户绑定
+      - AI 功能 BOM 价值量
+      - 新品周期与拉货节奏
+      - 渠道库存与稼动率
+      - 供应链份额
+      - 现金流与扩产
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 进入大客户量产 BOM
+      "4": 间接受益但拉货可见
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 出货 × ASP
+      GrossMargin: 客户结构 / 价格战
+      OpexRatio: 研发 / 客户服务
+      EBIT_EPS: 经营杠杆
+      FCF: 库存与备货影响
+      Leverage: 重资产环节较高
+
+  valuation_mix:
+    weights:
+      PE: 0.35
+      EV_EBITDA: 0.20
+      PS: 0.15
+      DCF: 0.15
+      SOTP: 0.15
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 终端需求弱 / 砍单
+      - 客户降价或份额丢失
+      - 库存高企 / 价格继续下跌
+      - 技术替代
+      - 海外贸易限制
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 终端出货 / 预售 / 拉货
+    - BOM 变化与规格升级
+    - 客户认证与新品发布
+    - 渠道库存 / 稼动率
+    - 元件价格 / 份额变化
+    - 海外政策
+
+  falsification:
+    bullish_triggers:
+      - AI 终端拉货持续
+      - 新品 BOM 价值量提升
+      - 渠道库存连续去化
+      - 进入大客户量产 BOM
+    bearish_triggers:
+      - 砍单传闻 + 份额丢失
+      - 渠道库存高企
+      - 价格继续下跌
+      - 技术替代或贸易限制
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    消费电子的图谱重点是看新品和 AI 功能是否真实拉货，避免在概念发布期与高价
+    格期被砍单/降价吞掉收益。
+
+nodes:
+  - id: EVENT.ai_terminal_launch
+    layer: event
+    type: customer_capex_event
+    label_cn: AI 手机 / AI PC / AI 眼镜新品
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: EVENT.bom_value_uplift
+    layer: event
+    type: technology_event
+    label_cn: AI 功能提升 BOM 价值量
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: EVENT.flagship_pull_in
+    layer: event
+    type: customer_capex_event
+    label_cn: 旗舰客户新品周期 / 拉货
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: EVENT.channel_destocking
+    layer: event
+    type: cost_event
+    label_cn: 渠道库存去化
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: EVENT.tech_certification_win
+    layer: event
+    type: technology_event
+    label_cn: 技术认证 / 份额提升
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: EVENT.demand_weakness
+    layer: event
+    type: risk_event
+    label_cn: 终端需求弱 / 砍单
+    industry_tags: [CONSUMER_ELECTRONICS]
+
+  - id: SIGNAL.terminal_shipments
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 终端出货量
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: SIGNAL.bom_asp
+    layer: industry_signal
+    type: price_signal
+    label_cn: BOM 价值量 / ASP
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: SIGNAL.flagship_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: 旗舰客户拉货节奏
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: SIGNAL.channel_inventory
+    layer: industry_signal
+    type: inventory_signal
+    label_cn: 渠道库存 / 稼动率
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: SIGNAL.share_change
+    layer: industry_signal
+    type: competitive_signal
+    label_cn: 供应链份额变化
+    industry_tags: [CONSUMER_ELECTRONICS]
+
+  - id: FIN.electronics_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 行业收入
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {field: Revenue}
+  - id: FIN.electronics_gross_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 行业毛利率
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {field: GrossMargin}
+
+  - id: VAL.electronics_growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 消费电子估值
+    industry_tags: [CONSUMER_ELECTRONICS]
+
+  - id: RISK.order_cut
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 砍单 / 份额丢失
+    industry_tags: [CONSUMER_ELECTRONICS]
+  - id: RISK.price_pressure
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 价格继续下跌
+    industry_tags: [CONSUMER_ELECTRONICS]
+
+  - id: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 消费电子板块代表 ETF
+    industry_tags: [CONSUMER_ELECTRONICS]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.000725_SZ
+    layer: stock
+    type: company
+    label_cn: 京东方A
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 000725.SZ, role: target}
+  - id: COMPANY.002241_SZ
+    layer: stock
+    type: company
+    label_cn: 歌尔股份
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 002241.SZ, role: target}
+  - id: COMPANY.002384_SZ
+    layer: stock
+    type: company
+    label_cn: 东山精密
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 002384.SZ, role: target}
+  - id: COMPANY.002463_SZ
+    layer: stock
+    type: company
+    label_cn: 沪电股份
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 002463.SZ, role: target}
+  - id: COMPANY.002475_SZ
+    layer: stock
+    type: company
+    label_cn: 立讯精密
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 002475.SZ, role: target}
+  - id: COMPANY.00285_HK
+    layer: stock
+    type: company
+    label_cn: 比亚迪电子
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 00285.HK, role: target}
+  - id: COMPANY.002916_SZ
+    layer: stock
+    type: company
+    label_cn: 深南电路
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 002916.SZ, role: target}
+  - id: COMPANY.002938_SZ
+    layer: stock
+    type: company
+    label_cn: 鹏鼎控股
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 002938.SZ, role: target}
+  - id: COMPANY.00522_HK
+    layer: stock
+    type: company
+    label_cn: ASMPT
+    industry_tags: [SEMI_EQUIPMENT, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 00522.HK, role: target}
+  - id: COMPANY.00992_HK
+    layer: stock
+    type: company
+    label_cn: 联想集团
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 00992.HK, role: target}
+  - id: COMPANY.01415_HK
+    layer: stock
+    type: company
+    label_cn: 高伟电子
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 01415.HK, role: target}
+  - id: COMPANY.01478_HK
+    layer: stock
+    type: company
+    label_cn: 丘钛科技
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 01478.HK, role: target}
+  - id: COMPANY.01810_HK
+    layer: stock
+    type: company
+    label_cn: 小米集团-W
+    industry_tags: [HK_CN_INTERNET, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 01810.HK, role: target}
+  - id: COMPANY.02018_HK
+    layer: stock
+    type: company
+    label_cn: 瑞声科技
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 02018.HK, role: target}
+  - id: COMPANY.02382_HK
+    layer: stock
+    type: company
+    label_cn: 舜宇光学科技
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 02382.HK, role: target}
+  - id: COMPANY.02476_HK
+    layer: stock
+    type: company
+    label_cn: 胜宏科技-H
+    industry_tags: [AI_COMPUTE, SEMI_EQUIPMENT, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 02476.HK, role: target}
+  - id: COMPANY.06088_HK
+    layer: stock
+    type: company
+    label_cn: 鸿腾精密
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 06088.HK, role: target}
+  - id: COMPANY.300433_SZ
+    layer: stock
+    type: company
+    label_cn: 蓝思科技
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 300433.SZ, role: target}
+  - id: COMPANY.300476_SZ
+    layer: stock
+    type: company
+    label_cn: 胜宏科技
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 300476.SZ, role: target}
+  - id: COMPANY.600183_SH
+    layer: stock
+    type: company
+    label_cn: 生益科技
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 600183.SH, role: target}
+  - id: COMPANY.603501_SH
+    layer: stock
+    type: company
+    label_cn: 韦尔股份
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 603501.SH, role: target}
+  - id: COMPANY.603986_SH
+    layer: stock
+    type: company
+    label_cn: 兆易创新
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: 603986.SH, role: target}
+  - id: COMPANY.AAPL_US
+    layer: stock
+    type: company
+    label_cn: Apple
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: AAPL.US, role: both}
+  - id: COMPANY.AMD_US
+    layer: stock
+    type: company
+    label_cn: AMD
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: AMD.US, role: target}
+  - id: COMPANY.ARM_US
+    layer: stock
+    type: company
+    label_cn: Arm
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: ARM.US, role: target}
+  - id: COMPANY.DELL_US
+    layer: stock
+    type: company
+    label_cn: Dell
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: DELL.US, role: target}
+  - id: COMPANY.GLW_US
+    layer: stock
+    type: company
+    label_cn: Corning
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: GLW.US, role: target}
+  - id: COMPANY.HPQ_US
+    layer: stock
+    type: company
+    label_cn: HP
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: HPQ.US, role: target}
+  - id: COMPANY.INTC_US
+    layer: stock
+    type: company
+    label_cn: Intel
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: INTC.US, role: target}
+  - id: COMPANY.JBL_US
+    layer: stock
+    type: company
+    label_cn: Jabil
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: JBL.US, role: target}
+  - id: COMPANY.MU_US
+    layer: stock
+    type: company
+    label_cn: Micron
+    industry_tags: [AI_COMPUTE, CONSUMER_ELECTRONICS]
+    properties: {ts_code: MU.US, role: target}
+  - id: COMPANY.QCOM_US
+    layer: stock
+    type: company
+    label_cn: Qualcomm
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: QCOM.US, role: target}
+  - id: COMPANY.TTMI_US
+    layer: stock
+    type: company
+    label_cn: TTM Technologies
+    industry_tags: [CONSUMER_ELECTRONICS]
+    properties: {ts_code: TTMI.US, role: target}
+
+edges:
+  - id: EDGE.CE.001
+    source: EVENT.ai_terminal_launch
+    target: SIGNAL.terminal_shipments
+    relation: drives_demand
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.80
+    threshold: 终端销量需验证
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.CE.002
+    source: SIGNAL.terminal_shipments
+    target: FIN.electronics_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.60
+    threshold: 出货转收入
+    lag: 1-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.003
+    source: EVENT.bom_value_uplift
+    target: SIGNAL.bom_asp
+    relation: drives_asp
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.65
+    threshold: 进入量产 BOM
+    lag: 1-4 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.004
+    source: SIGNAL.bom_asp
+    target: FIN.electronics_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 毛利率改善
+    lag: 1-3 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.005
+    source: EVENT.flagship_pull_in
+    target: SIGNAL.flagship_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.85
+    threshold: 客户集中公司更敏感
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.CE.006
+    source: SIGNAL.flagship_orders
+    target: FIN.electronics_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.60
+    threshold: 拉货转收入
+    lag: 1-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.007
+    source: EVENT.channel_destocking
+    target: SIGNAL.channel_inventory
+    relation: improves_inventory
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.70
+    threshold: 库存下降是前提
+    lag: 1-3 quarters
+    dedup_group: 库存组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.008
+    source: SIGNAL.channel_inventory
+    target: FIN.electronics_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 稼动率与毛利率上行
+    lag: 1-3 quarters
+    dedup_group: 库存组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.009
+    source: EVENT.tech_certification_win
+    target: SIGNAL.share_change
+    relation: improves_share
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.75
+    threshold: 份额提升可量化
+    lag: 2-6 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.010
+    source: SIGNAL.share_change
+    target: VAL.electronics_growth_multiple
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.60
+    threshold: 估值切换
+    lag: 即时-4 quarters
+    dedup_group: 竞争组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.011
+    source: FIN.electronics_revenue
+    target: VAL.electronics_growth_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 估值修复
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.CE.012
+    source: VAL.electronics_growth_multiple
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.65
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.CE.RISK.001
+    source: EVENT.demand_weakness
+    target: RISK.order_cut
+    relation: triggers_tail_risk
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 1.15
+    threshold: 客户集中时放大
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.CE.RISK.002
+    source: RISK.order_cut
+    target: SIGNAL.flagship_orders
+    relation: dampens_orders
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.10
+    threshold: 砍单兑现
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.CE.RISK.003
+    source: RISK.price_pressure
+    target: FIN.electronics_gross_margin
+    relation: dampens_margin
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.05
+    threshold: 价格继续下跌
+    lag: 1-3 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.CE.MEMBER.001
+    source: COMPANY.000725_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.002
+    source: COMPANY.002241_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.003
+    source: COMPANY.002384_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.004
+    source: COMPANY.002463_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.005
+    source: COMPANY.002475_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.006
+    source: COMPANY.00285_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.007
+    source: COMPANY.002916_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.008
+    source: COMPANY.002938_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.009
+    source: COMPANY.00522_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.010
+    source: COMPANY.00992_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.011
+    source: COMPANY.01415_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.012
+    source: COMPANY.01478_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.013
+    source: COMPANY.01810_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.014
+    source: COMPANY.02018_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.015
+    source: COMPANY.02382_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.016
+    source: COMPANY.02476_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.017
+    source: COMPANY.06088_HK
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.018
+    source: COMPANY.300433_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.019
+    source: COMPANY.300476_SZ
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.020
+    source: COMPANY.600183_SH
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.021
+    source: COMPANY.603501_SH
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.022
+    source: COMPANY.603986_SH
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.023
+    source: COMPANY.AAPL_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.024
+    source: COMPANY.AMD_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.025
+    source: COMPANY.ARM_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.026
+    source: COMPANY.DELL_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.027
+    source: COMPANY.GLW_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.028
+    source: COMPANY.HPQ_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.029
+    source: COMPANY.INTC_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.030
+    source: COMPANY.JBL_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.031
+    source: COMPANY.MU_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.032
+    source: COMPANY.QCOM_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.CE.MEMBER.033
+    source: COMPANY.TTMI_US
+    target: COMPANY.CONSUMER_ELECTRONICS_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 终端 / BOM / 拉货 / 库存 / 份额 → 消费电子 alpha
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 出货 / BOM / 拉货 / 库存 / 份额 高中心度
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 终端品牌客户 / 渠道 / 元件供应链
+    include_node_types: [company, customer_capex_event, demand_signal, order_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 砍单 / 价格压力 / 份额丢失
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

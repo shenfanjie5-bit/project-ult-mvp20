@@ -1,0 +1,176 @@
+{
+  "$defs": {
+    "EntityReference": {
+      "additionalProperties": false,
+      "description": "Portable reference to a canonical entity across downstream schemas.",
+      "properties": {
+        "canonical_id_rule_version": {
+          "minLength": 1,
+          "title": "Canonical Id Rule Version",
+          "type": "string"
+        },
+        "display_name": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Name"
+        },
+        "entity_id": {
+          "minLength": 1,
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "entity_type": {
+          "minLength": 1,
+          "title": "Entity Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "entity_type",
+        "canonical_id_rule_version"
+      ],
+      "title": "EntityReference",
+      "type": "object"
+    },
+    "EntityResolutionDecision": {
+      "description": "Stable resolution outcomes for entity-registry contracts.",
+      "enum": [
+        "matched",
+        "ambiguous",
+        "unresolved"
+      ],
+      "title": "EntityResolutionDecision",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "matched"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolved_entity": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "resolved_entity"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "ambiguous",
+              "unresolved"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolved_entity": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
+  "description": "Entity resolution decision record shared at the module boundary.",
+  "properties": {
+    "candidate_entities": {
+      "items": {
+        "$ref": "#/$defs/EntityReference"
+      },
+      "minItems": 1,
+      "title": "Candidate Entities",
+      "type": "array"
+    },
+    "canonical_id_rule_version": {
+      "minLength": 1,
+      "title": "Canonical Id Rule Version",
+      "type": "string"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number",
+      "x-contract-runtime-validation": {
+        "allow_inf_nan": false,
+        "strict": true
+      }
+    },
+    "decision": {
+      "$ref": "#/$defs/EntityResolutionDecision"
+    },
+    "evidence_refs": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Evidence Refs",
+      "type": "array"
+    },
+    "input_alias": {
+      "minLength": 1,
+      "title": "Input Alias",
+      "type": "string"
+    },
+    "resolution_case_id": {
+      "minLength": 1,
+      "title": "Resolution Case Id",
+      "type": "string"
+    },
+    "resolved_at": {
+      "format": "date-time",
+      "title": "Resolved At",
+      "type": "string"
+    },
+    "resolved_entity": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntityReference"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "resolution_case_id",
+    "input_alias",
+    "decision",
+    "confidence",
+    "candidate_entities",
+    "evidence_refs",
+    "resolved_at",
+    "canonical_id_rule_version"
+  ],
+  "title": "ResolutionCase",
+  "type": "object",
+  "x-contract-version": "0.1.0",
+  "x-source-model": "contracts.schemas.entities.ResolutionCase"
+}

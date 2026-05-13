@@ -1,0 +1,292 @@
+version: 2
+
+# Canonical V2 marts — provider-neutral business rows. Each entry mirrors the
+# matching CANONICAL_V2_*_SPEC in
+# data-platform/src/data_platform/ddl/iceberg_tables.py and the matching
+# CanonicalLoadSpec in data-platform/src/data_platform/serving/canonical_writer.py.
+# M1.3 batch covers dim_security, stock_basic, dim_index, fact_price_bar,
+# fact_financial_indicator, fact_market_daily_feature, fact_index_price_bar,
+# and fact_forecast_event. canonical_v2.fact_event covers 16 source interfaces
+# currently in int_event_timeline.sql (anns, suspend_d, dividend, share_float,
+# stk_holdernumber, disclosure_date, namechange, block_trade plus 8 added in
+# M1.13: pledge_stat, pledge_detail, repurchase, stk_holdertrade, stk_surv,
+# limit_list_ths, limit_list_d, hm_detail). M1.6 added namechange
+# / event_type='name_change'; M1.8 added block_trade / event_type='block_trade'
+# (with the int_event_timeline uniqueness contract widened to include
+# `summary`); M1.13 added pledge_summary, pledge_event, share_repurchase,
+# shareholder_trade, institutional_survey, price_limit_status,
+# price_limit_event, and hot_money_trade. Full event_timeline coverage is now
+# achieved (precondition 9 closed).
+
+models:
+  - name: mart_dim_security_v2
+    description: Provider-neutral canonical_v2 security dimension. Renames provider-shaped identifier columns to canonical names per the provider catalog field_mapping; raw-zone lineage is intentionally not selected here (it lives on mart_lineage_dim_security).
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              to: ref('int_security_master')
+              field: ts_code
+              config:
+                severity: error
+      - name: list_date
+        tests:
+          - not_null
+      - name: is_active
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+              quote: false
+
+  - name: mart_stock_basic_v2
+    description: Provider-neutral canonical_v2 stock_basic projection. Thin canonical view of int_security_master that mirrors mart_dim_security_v2 without the dim_security enrichment columns.
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+          - unique
+          - relationships:
+              to: ref('int_security_master')
+              field: ts_code
+              config:
+                severity: error
+      - name: is_active
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+              quote: false
+
+  - name: mart_dim_index_v2
+    description: Provider-neutral canonical_v2 index dimension. Renames index_code -> index_id per the provider catalog field_mapping.
+    columns:
+      - name: index_id
+        tests:
+          - not_null
+          - unique
+      - name: first_effective_date
+        tests:
+          - not_null
+      - name: latest_effective_date
+        tests:
+          - not_null
+
+  - name: mart_fact_price_bar_v2
+    description: Provider-neutral canonical_v2 price bar fact. Renames ts_code -> security_id; partitioned by trade_date in the Iceberg target spec.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["security_id", "trade_date", "freq"]
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: freq
+        tests:
+          - not_null
+
+  - name: mart_fact_financial_indicator_v2
+    description: Provider-neutral canonical_v2 financial indicator fact (latest report rows only). Renames ts_code -> security_id.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["security_id", "end_date", "report_type"]
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: end_date
+        tests:
+          - not_null
+      - name: report_type
+        tests:
+          - not_null
+
+  - name: mart_fact_market_daily_feature_v2
+    description: Provider-neutral canonical_v2 market daily feature fact. Renames ts_code -> security_id; partitioned by trade_date in the Iceberg target spec.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["security_id", "trade_date"]
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+
+  - name: mart_fact_index_price_bar_v2
+    description: Provider-neutral canonical_v2 index price bar fact. Renames index_code -> index_id; partitioned by trade_date in the Iceberg target spec.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["index_id", "trade_date"]
+    columns:
+      - name: index_id
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+
+  - name: mart_fact_forecast_event_v2
+    description: Provider-neutral canonical_v2 forecast event fact. Renames ts_code -> security_id, ann_date -> announcement_date, end_date -> report_period per the provider catalog field_mapping. Identity includes update_flag.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - security_id
+            - announcement_date
+            - report_period
+            - update_flag
+            - forecast_type
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: announcement_date
+        tests:
+          - not_null
+      - name: report_period
+        tests:
+          - not_null
+      - name: update_flag
+        tests:
+          - not_null
+      - name: forecast_type
+        tests:
+          - not_null
+
+  - name: mart_fact_event_v2
+    description: >-
+      Provider-neutral canonical_v2 event fact. Covers 16 source interfaces in
+      int_event_timeline.sql (anns, suspend_d, dividend, share_float,
+      stk_holdernumber, disclosure_date, namechange, block_trade plus 8 added
+      in M1.13: pledge_stat, pledge_detail, repurchase, stk_holdertrade,
+      stk_surv, limit_list_ths, limit_list_d, hm_detail). M1.6 added
+      `namechange` / event_type='name_change'; M1.8 added `block_trade` /
+      event_type='block_trade' (intermediate uniqueness contract widened to
+      include `summary` so intra-day multi-row block trades flow through —
+      row identity is enforced here at the mart-level event_key + canonical
+      PK parity, and at writer-side validation). M1.13 added 8 new event_type
+      values (pledge_summary, pledge_event, share_repurchase,
+      shareholder_trade, institutional_survey, price_limit_status,
+      price_limit_event, hot_money_trade), closing the M1 legacy retirement
+      precondition 9. Renames ts_code -> entity_id; event_key derived as
+      md5(concat_ws(source_interface_id, event_type, title, summary,
+      event_subtype, related_date, reference_url, rec_time)).
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["event_type", "entity_id", "event_date", "event_key"]
+    columns:
+      - name: event_type
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'announcement'
+                - 'suspend'
+                - 'dividend'
+                - 'share_float'
+                - 'holder_number'
+                - 'disclosure_date'
+                - 'name_change'
+                - 'block_trade'
+                # M1.13 expansion (precondition 9 closure).
+                - 'pledge_summary'
+                - 'pledge_event'
+                - 'share_repurchase'
+                - 'shareholder_trade'
+                - 'institutional_survey'
+                - 'price_limit_status'
+                - 'price_limit_event'
+                - 'hot_money_trade'
+              quote: true
+      - name: entity_id
+        tests:
+          - not_null
+      - name: event_date
+        tests:
+          - not_null
+      - name: event_key
+        tests:
+          - not_null
+
+  - name: mart_fact_holding_position_v2
+    description: >
+      Provider-neutral holdings fact for top shareholders, top free-float
+      shareholders, fund portfolio holdings, and northbound holdings.
+      Provider-shaped identifiers are renamed to holder_id and security_id.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - position_id
+      - unique_combination_of_columns:
+          combination_of_columns:
+            - holding_source
+            - holder_id
+            - security_id
+            - report_date
+            - announced_date
+    columns:
+      - name: position_id
+        tests:
+          - not_null
+      - name: holding_source
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'top_holder'
+                - 'top_float_holder'
+                - 'fund_portfolio'
+                - 'northbound_hold'
+              quote: true
+      - name: holder_id
+        tests:
+          - not_null
+      - name: security_id
+        tests:
+          - not_null
+      - name: report_date
+        tests:
+          - not_null
+      - name: announced_date
+        tests:
+          - not_null
+      - name: holding_ratio
+        tests:
+          - not_null
+      - name: dataset
+        tests:
+          - not_null
+      - name: snapshot_id
+        tests:
+          - not_null
+      - name: as_of_date
+        tests:
+          - not_null
+
+  - name: mart_fact_northbound_turnover_v2
+    description: >
+      Provider-neutral northbound top-turnover fact sourced from hsgt_top10.
+      It is separate from holding positions because the source reports daily
+      traded amounts, not ownership.
+    tests:
+      - unique_combination_of_columns:
+          combination_of_columns: ["security_id", "trade_date", "market_type", "rank"]
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+      - name: trade_date
+        tests:
+          - not_null
+      - name: market_type
+        tests:
+          - not_null
+      - name: rank
+        tests:
+          - not_null

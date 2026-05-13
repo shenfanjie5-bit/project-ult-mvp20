@@ -1,0 +1,893 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: STORAGE_GRID
+industry_name_cn: 储能电网AI电力与固态电池
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 储能电池
+      - PCS
+      - BMS
+      - 温控
+      - 逆变器
+      - 变压器
+      - 特高压
+      - 配网
+      - 电力自动化
+      - 数据中心电力
+      - 固态电池
+      - 电池材料与设备
+    core_judgment: >-
+      该板块的关键是从新能源产能过剩中筛选真实受益于电网投资、储能招标、AI 电
+      力瓶颈和技术升级的环节。价格战与产能出清是主要分水岭。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注 AI 电力、新能源消纳、电网投资、固态电池、产能出清、海外风险。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.15}
+    - {name: 温和多头, probability: 0.25}
+    - {name: 结构分化, probability: 0.30}
+    - {name: 等待验证, probability: 0.20}
+    - {name: 杀估值, probability: 0.10}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、产业链}
+      - {name: price_implied_expectation, description: 股价隐含, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 新闻、社媒}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 招标 / 价格}
+      - {name: tail_risk_prob, description: 尾部风险, source: 海外贸易 / 价格战}
+
+  path_dedup_groups: [需求组, 价格组, 政策组, 技术组, 风险组]
+
+  exposure:
+    factors:
+      - 数据中心电力相关收入占比
+      - 储能招标份额与海外占比
+      - 电网设备产品力与中标
+      - 固态电池技术储备
+      - 海外销售与本地化能力
+      - 产能利用率与现金流
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 直接受益高电力订单 / 储能 / 固态电池
+      "4": 间接受益但订单可见
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 招标 / 出货 / ASP
+      GrossMargin: 价格战与原料成本
+      OpexRatio: 研发 + 海外渠道
+      EBIT_EPS: 经营杠杆显著
+      FCF: 扩产与备货承压
+      Leverage: 重资产环节高
+
+  valuation_mix:
+    weights:
+      PE: 0.35
+      EV_EBITDA: 0.20
+      PS: 0.15
+      DCF: 0.15
+      SOTP: 0.15
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 海外贸易壁垒 / 关税
+      - 价格战使盈利无法兑现
+      - 新能源消纳不及预期
+      - 固态电池技术不成熟
+      - 数据中心建设延期
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 数据中心建设和电力接入
+    - 储能招标价 / 中标量
+    - 电网投资计划与中标
+    - 固态电池样品 / 量产
+    - 价格、开工率、库存
+    - 海外贸易政策
+
+  falsification:
+    bullish_triggers:
+      - AI 电力订单连续兑现
+      - 储能招标价格止跌
+      - 特高压 / 配网中标加速
+      - 固态电池量产时间临近
+    bearish_triggers:
+      - 电力建设延期
+      - 价格战延续 + 产能继续扩张
+      - 利用小时与招标价低
+      - 海外关税或本地化阻力上升
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    储能电网与固态电池的图谱重点是从产能过剩里筛选真实受益于电力 / 招标 / 技术
+    切换的公司，避免在价格战阶段错追估值。
+
+nodes:
+  - id: EVENT.ai_power_demand
+    layer: event
+    type: demand_event
+    label_cn: AI 数据中心用电增长
+    industry_tags: [STORAGE_GRID, AI_COMPUTE]
+  - id: EVENT.renewable_consumption_pressure
+    layer: event
+    type: policy_event
+    label_cn: 新能源消纳压力 / 储能政策
+    industry_tags: [STORAGE_GRID]
+  - id: EVENT.uhv_capex_upgrade
+    layer: event
+    type: customer_capex_event
+    label_cn: 特高压 / 配网投资上修
+    industry_tags: [STORAGE_GRID]
+  - id: EVENT.solid_state_battery_breakthrough
+    layer: event
+    type: technology_event
+    label_cn: 固态电池技术突破
+    industry_tags: [STORAGE_GRID]
+  - id: EVENT.capacity_clearance
+    layer: event
+    type: cost_event
+    label_cn: 低端产能出清
+    industry_tags: [STORAGE_GRID]
+
+  - id: SIGNAL.power_equipment_demand
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 变压器 / 配网 / 储能需求
+    industry_tags: [STORAGE_GRID]
+  - id: SIGNAL.storage_tender_price
+    layer: industry_signal
+    type: price_signal
+    label_cn: 储能招标价格与中标量
+    industry_tags: [STORAGE_GRID]
+  - id: SIGNAL.grid_orders
+    layer: industry_signal
+    type: order_signal
+    label_cn: 电网设备订单
+    industry_tags: [STORAGE_GRID]
+  - id: SIGNAL.solid_state_supply_chain
+    layer: industry_signal
+    type: tech_signal
+    label_cn: 固态电池产业链验证
+    industry_tags: [STORAGE_GRID]
+  - id: SIGNAL.industry_utilization
+    layer: industry_signal
+    type: cost_signal
+    label_cn: 行业开工率与价格止跌
+    industry_tags: [STORAGE_GRID]
+
+  - id: FIN.storage_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 行业收入
+    industry_tags: [STORAGE_GRID]
+    properties: {field: Revenue}
+  - id: FIN.storage_gross_margin
+    layer: financial
+    type: financial_vector
+    label_cn: 行业毛利率
+    industry_tags: [STORAGE_GRID]
+    properties: {field: GrossMargin}
+
+  - id: VAL.storage_growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 储能成长估值
+    industry_tags: [STORAGE_GRID]
+  - id: VAL.solid_state_repricing
+    layer: valuation
+    type: tech_repricing
+    label_cn: 固态电池产业链重估
+    industry_tags: [STORAGE_GRID]
+
+  - id: RISK.overseas_trade_barrier
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 海外贸易壁垒 / 关税
+    industry_tags: [STORAGE_GRID]
+  - id: RISK.price_war_persistence
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 价格战持续
+    industry_tags: [STORAGE_GRID]
+
+  - id: COMPANY.STORAGE_GRID_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 储能电网板块代表 ETF
+    industry_tags: [STORAGE_GRID]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.000400_SZ
+    layer: stock
+    type: company
+    label_cn: 许继电气
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 000400.SZ, role: target}
+  - id: COMPANY.002074_SZ
+    layer: stock
+    type: company
+    label_cn: 国轩高科
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 002074.SZ, role: target}
+  - id: COMPANY.002594_SZ
+    layer: stock
+    type: company
+    label_cn: 比亚迪
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 002594.SZ, role: target}
+  - id: COMPANY.00819_HK
+    layer: stock
+    type: company
+    label_cn: 天能动力
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 00819.HK, role: target}
+  - id: COMPANY.00836_HK
+    layer: stock
+    type: company
+    label_cn: 华润电力
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 00836.HK, role: target}
+  - id: COMPANY.00916_HK
+    layer: stock
+    type: company
+    label_cn: 龙源电力
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 00916.HK, role: target}
+  - id: COMPANY.01211_HK
+    layer: stock
+    type: company
+    label_cn: 比亚迪股份
+    industry_tags: [STORAGE_GRID, EXPORT_MFG]
+    properties: {ts_code: 01211.HK, role: target}
+  - id: COMPANY.02208_HK
+    layer: stock
+    type: company
+    label_cn: 金风科技
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 02208.HK, role: target}
+  - id: COMPANY.02380_HK
+    layer: stock
+    type: company
+    label_cn: 中国电力
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 02380.HK, role: target}
+  - id: COMPANY.03750_HK
+    layer: stock
+    type: company
+    label_cn: 宁德时代-H
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 03750.HK, role: target}
+  - id: COMPANY.03800_HK
+    layer: stock
+    type: company
+    label_cn: 协鑫科技
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 03800.HK, role: target}
+  - id: COMPANY.03931_HK
+    layer: stock
+    type: company
+    label_cn: 中创新航
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 03931.HK, role: target}
+  - id: COMPANY.300014_SZ
+    layer: stock
+    type: company
+    label_cn: 亿纬锂能
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 300014.SZ, role: target}
+  - id: COMPANY.300073_SZ
+    layer: stock
+    type: company
+    label_cn: 当升科技
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 300073.SZ, role: target}
+  - id: COMPANY.300274_SZ
+    layer: stock
+    type: company
+    label_cn: 阳光电源
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 300274.SZ, role: target}
+  - id: COMPANY.300750_SZ
+    layer: stock
+    type: company
+    label_cn: 宁德时代
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 300750.SZ, role: target}
+  - id: COMPANY.600312_SH
+    layer: stock
+    type: company
+    label_cn: 平高电气
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 600312.SH, role: target}
+  - id: COMPANY.600406_SH
+    layer: stock
+    type: company
+    label_cn: 国电南瑞
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 600406.SH, role: target}
+  - id: COMPANY.688248_SH
+    layer: stock
+    type: company
+    label_cn: 南网科技
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: 688248.SH, role: target}
+  - id: COMPANY.ENPH_US
+    layer: stock
+    type: company
+    label_cn: Enphase
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: ENPH.US, role: target}
+  - id: COMPANY.ETN_US
+    layer: stock
+    type: company
+    label_cn: Eaton
+    industry_tags: [STORAGE_GRID, EXPORT_MFG]
+    properties: {ts_code: ETN.US, role: target}
+  - id: COMPANY.FLNC_US
+    layer: stock
+    type: company
+    label_cn: Fluence
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: FLNC.US, role: target}
+  - id: COMPANY.FSLR_US
+    layer: stock
+    type: company
+    label_cn: First Solar
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: FSLR.US, role: target}
+  - id: COMPANY.GEV_US
+    layer: stock
+    type: company
+    label_cn: GE Vernova
+    industry_tags: [STORAGE_GRID, EXPORT_MFG]
+    properties: {ts_code: GEV.US, role: target}
+  - id: COMPANY.NEE_US
+    layer: stock
+    type: company
+    label_cn: NextEra Energy
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: NEE.US, role: target}
+  - id: COMPANY.PWR_US
+    layer: stock
+    type: company
+    label_cn: Quanta Services
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: PWR.US, role: target}
+  - id: COMPANY.QS_US
+    layer: stock
+    type: company
+    label_cn: QuantumScape
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: QS.US, role: target}
+  - id: COMPANY.SLDP_US
+    layer: stock
+    type: company
+    label_cn: Solid Power
+    industry_tags: [STORAGE_GRID]
+    properties: {ts_code: SLDP.US, role: target}
+  - id: COMPANY.TSLA_US
+    layer: stock
+    type: company
+    label_cn: Tesla
+    industry_tags: [ROBOTICS, STORAGE_GRID]
+    properties: {ts_code: TSLA.US, role: both}
+
+edges:
+  - id: EDGE.GRID.001
+    source: EVENT.ai_power_demand
+    target: SIGNAL.power_equipment_demand
+    relation: drives_demand
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.60
+    threshold: 项目招标和交付
+    lag: 2-6 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.GRID.002
+    source: SIGNAL.power_equipment_demand
+    target: FIN.storage_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 订单转收入
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.GRID.003
+    source: EVENT.renewable_consumption_pressure
+    target: SIGNAL.storage_tender_price
+    relation: drives_price
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 量价同步改善
+    lag: 1-4 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.GRID.004
+    source: EVENT.uhv_capex_upgrade
+    target: SIGNAL.grid_orders
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.55
+    threshold: 中标金额关键
+    lag: 2-6 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.GRID.005
+    source: SIGNAL.grid_orders
+    target: FIN.storage_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.55
+    threshold: 订单确认收入
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.GRID.006
+    source: EVENT.solid_state_battery_breakthrough
+    target: SIGNAL.solid_state_supply_chain
+    relation: rerates_chain
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.95
+    threshold: 区分实验室和量产
+    lag: 4-12 quarters
+    dedup_group: 技术组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.GRID.007
+    source: SIGNAL.solid_state_supply_chain
+    target: VAL.solid_state_repricing
+    relation: drives_multiple
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.70
+    threshold: 估值切换
+    lag: 2-6 quarters
+    dedup_group: 技术组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.GRID.008
+    source: EVENT.capacity_clearance
+    target: SIGNAL.industry_utilization
+    relation: improves_utilization
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.80
+    threshold: 价格和稼动率同步
+    lag: 1-4 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.GRID.009
+    source: SIGNAL.industry_utilization
+    target: FIN.storage_gross_margin
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 毛利率修复
+    lag: 1-3 quarters
+    dedup_group: 价格组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.GRID.010
+    source: VAL.storage_growth_multiple
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.60
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.GRID.RISK.001
+    source: RISK.overseas_trade_barrier
+    target: FIN.storage_revenue
+    relation: dampens_revenue
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.10
+    threshold: 海外占比高时敏感
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.GRID.RISK.002
+    source: RISK.price_war_persistence
+    target: FIN.storage_gross_margin
+    relation: dampens_margin
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.05
+    threshold: 价格战吞噬毛利
+    lag: 1-3 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.GRID.RISK.003
+    source: RISK.price_war_persistence
+    target: VAL.storage_growth_multiple
+    relation: compresses_valuation
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 0.95
+    threshold: 价格战延续 + 估值兑现
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.GRID.MEMBER.001
+    source: COMPANY.000400_SZ
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.002
+    source: COMPANY.002074_SZ
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.003
+    source: COMPANY.002594_SZ
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.004
+    source: COMPANY.00819_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.005
+    source: COMPANY.00836_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.006
+    source: COMPANY.00916_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.007
+    source: COMPANY.01211_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.008
+    source: COMPANY.02208_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.009
+    source: COMPANY.02380_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.010
+    source: COMPANY.03750_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.011
+    source: COMPANY.03800_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.012
+    source: COMPANY.03931_HK
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.013
+    source: COMPANY.300014_SZ
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.014
+    source: COMPANY.300073_SZ
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.015
+    source: COMPANY.300274_SZ
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.016
+    source: COMPANY.300750_SZ
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.017
+    source: COMPANY.600312_SH
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.018
+    source: COMPANY.600406_SH
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.019
+    source: COMPANY.688248_SH
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.020
+    source: COMPANY.ENPH_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.021
+    source: COMPANY.ETN_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.022
+    source: COMPANY.FLNC_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.023
+    source: COMPANY.FSLR_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.024
+    source: COMPANY.GEV_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.025
+    source: COMPANY.NEE_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.026
+    source: COMPANY.PWR_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.027
+    source: COMPANY.QS_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.028
+    source: COMPANY.SLDP_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.GRID.MEMBER.029
+    source: COMPANY.TSLA_US
+    target: COMPANY.STORAGE_GRID_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: AI 电力 / 招标 / 电网 / 固态电池 / 出清 → alpha
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: AI 电力 / 招标价 / 电网订单 / 固态产业链 / 利用率 高中心度
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 数据中心 / 电网客户 / 固态电池产业链
+    include_node_types: [company, customer_capex_event, demand_signal, order_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 海外贸易 / 价格战 / 消纳不及预期
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

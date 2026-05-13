@@ -1,0 +1,1230 @@
+schema_version: 1
+description: >
+  Governance metadata for LLM-derived dp_ids — drives codex_prompt_gen
+  filtering, verify_overlay_closed_loop evidence-kind enforcement, and
+  merge_preserve refresh rules.
+
+  Z3 version: covers the full 111 LLM-candidate dp_ids in the overlay
+  schema (X5: 58; Z3 added 53). A/B/E bucket fields outside the schema
+  are intentionally absent — verifier defaults them to closed-loop, and
+  codex_prompt_gen will allowlist only fields present here with
+  route ∈ {llm_close, llm_web}.
+
+  Eight bucket-D fields are now declared with model_tier=web_analysis
+  (L2.newbiz.tam, L3.product.lifecycle, L3.delivery.csat,
+  L3.delivery.lead_time, L4.eff.conversion_retention,
+  L4.share.customer_channel, L4.volume.foot_traffic, L4.volume.frequency)
+  and carry an ``allowed_evidence_kinds`` whitelist so the verifier knows
+  to accept annual_report / research_report / investor_relations /
+  external_url / industry_panel.
+
+  source_dependencies are filled in where a reasonable upstream
+  SQLite/overlay dp_id exists. Empty deps are explicitly marked so the
+  prompt fingerprint column shows "-" instead of breaking the refresh
+  trigger.
+
+data_points:
+
+  # ===========================================================
+  # L0 industry-level macro / supply / demand / price / cost
+  # ===========================================================
+
+  L0.compete.new_entrant:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.compete_risk
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "新进入者/替代品事件归类，按行业新闻触发"
+
+  L0.compete.price_war:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.compete_risk
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "价格战事件归类，按公告/媒体触发"
+
+  L0.cost.cac:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.sga_rd
+      - L5.is.revenue
+    write_policy: preserve_known_unless_triggered
+    notes: "行业获客成本；龙头 SGA / revenue 趋势 + 行业框架 prior"
+
+  L0.cost.rent:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.bs.goodwill_ppe
+      - L5.cf.capex
+    write_policy: preserve_known_unless_triggered
+    notes: "行业租金成本；龙头 PPE / capex proxy"
+
+  L0.demand.frequency:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L5.is.revenue_growth
+    write_policy: preserve_known_unless_triggered
+    notes: "消费频次变化；龙头 revenue 趋势 + 行业框架 prior"
+
+  L0.demand.penetration:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L5.is.revenue_growth
+    write_policy: preserve_known_unless_triggered
+    notes: "渗透率变化；龙头 revenue 增长 + 行业框架 prior"
+
+  L0.demand.replacement:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+    write_policy: preserve_known_unless_triggered
+    notes: "替换周期变化；龙头 revenue cyclicality + 行业框架 prior"
+
+  L0.demand.terminal:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L5.is.revenue_growth
+    write_policy: preserve_known_unless_triggered
+    notes: "终端需求变化；用龙头 revenue 趋势 + 行业框架 prior"
+
+  L0.demand.user_count:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "用户/订单数量变化；龙头 IR 披露 + revenue 推算"
+
+  L0.price.contract_spot:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L0.cost.raw_material
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "合同价/现货价价差；raw_material price + 龙头毛利率 proxy"
+
+  L0.price.discount:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.gross_margin
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "行业折扣力度；龙头毛利率 + IR/业绩会问答"
+
+  L0.price.pricing_power:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "行业提价能力；用龙头毛利率 trend proxy"
+
+  L0.price.product_asp:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "行业产品价格/ASP；revenue/出货量 derive + 龙头毛利率 trend"
+
+  L0.sentiment.social:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.social_buzz
+    write_policy: preserve_known_unless_triggered
+    notes: "社媒/主题热度（虽 spec 为 A bucket，但 overlay 内仍走 LLM 槽）"
+
+  L0.supply.capacity:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.cf.capex
+      - L5.bs.goodwill_ppe
+    write_policy: preserve_known_unless_triggered
+    notes: "行业产能变化；龙头 capex / PPE trend proxy"
+
+  L0.supply.chain_eff:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L4.eff.turnover
+      - L4.eff.cycle
+    write_policy: preserve_known_unless_triggered
+    notes: "供应链效率/人力供给；龙头库存/AR周转 + 现金转换周期 proxy"
+
+  L0.supply.channel_service:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.sga_rd
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "行业渠道/服务供给；龙头 SGA + IR 渠道章节"
+
+  L0.supply.inventory:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.bs.inventory
+    write_policy: preserve_known_unless_triggered
+    notes: "行业库存变化；用龙头 BS inventory 趋势 proxy"
+
+  # ===========================================================
+  # L1 company position / picture
+  # ===========================================================
+
+  L1.position.brand:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L1.position.market_share
+    write_policy: preserve_known_unless_triggered
+    notes: "品牌影响力；年报 + IR 长期叙事"
+
+  L1.position.channel_edge:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L3.channel.mix
+    write_policy: preserve_known_unless_triggered
+    notes: "渠道优势；IR 问答 + 年报渠道章节 + 同业对比"
+
+  L1.position.cost_edge:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L5.is.gross_margin
+      - L4.cost.cac_production
+    write_policy: preserve_known_unless_triggered
+    notes: "成本优势；同业毛利率对比 + IR"
+
+  L1.position.market_share:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L4.share.market
+    write_policy: preserve_known_unless_triggered
+    notes: "市占率定量难闭环；行业内 revenue 排名 proxy + 投关问答"
+
+  L1.position.pricing_power:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L5.is.gross_margin
+      - L4.price.pricing_power
+    write_policy: preserve_known_unless_triggered
+    notes: "定价权；年报 + IR + 毛利率持续性"
+
+  L1.position.stickiness:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L3.customer.segment_mix
+      - L4.eff.conversion_retention
+    write_policy: preserve_known_unless_triggered
+    notes: "客户粘性；IR 问答 + 年报渠道章节 + 同业对比"
+
+  L1.position.tech_barrier:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L5.cf.capex
+    write_policy: preserve_known_unless_triggered
+    notes: "技术壁垒；年报 R&D / capex + IR"
+
+  # ===========================================================
+  # L2 business segments / new business
+  # ===========================================================
+
+  L2.newbiz.commercialization:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L9.company.product_order
+      - L5.is.revenue_growth
+    write_policy: preserve_known_unless_triggered
+    notes: "新业务商业化进度；IR + roadmap 公告 + 行业框架"
+
+  L2.newbiz.revenue_contrib:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L2.segment.revenue_share
+    write_policy: preserve_known_unless_triggered
+    notes: "新业务收入/利润贡献；年报分部章节"
+
+  L2.newbiz.tam:
+    route: llm_web
+    model_tier: web_analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L1.company.main_business
+      - L9.media.report
+    allowed_evidence_kinds:
+      - annual_report
+      - research_report
+      - investor_relations
+      - external_url
+      - industry_panel
+    write_policy: preserve_known_unless_triggered
+    notes: "新业务市场空间；D bucket — 允许 web 引证 (IDC/Gartner/Counterpoint 等)"
+
+  L2.newbiz.uncertainty:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L9.company.product_order
+    write_policy: preserve_known_unless_triggered
+    notes: "新业务不确定性；IR + roadmap 公告 + 行业框架"
+
+  L2.newbiz.valuation_contrib:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L2.newbiz.revenue_contrib
+      - L2.newbiz.tam
+    write_policy: preserve_known_unless_triggered
+    notes: "新业务估值贡献；年报分部章节 + 行业可比公司"
+
+  L2.segment.business_risk:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L2.segment.revenue_share
+      - L9.industry.compete_risk
+    write_policy: preserve_known_unless_triggered
+    notes: "业务线业务风险；年报分部章节 + 同业对比"
+
+  L2.segment.cash_contrib:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.cf.ocf
+      - L2.segment.revenue_share
+    write_policy: preserve_known_unless_triggered
+    notes: "业务线现金流贡献；年报分部章节"
+
+  L2.segment.compete_landscape:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L9.industry.compete_risk
+    write_policy: preserve_known_unless_triggered
+    notes: "业务线竞争格局；年报分部章节 + 行业框架"
+
+  L2.segment.industry_exposure:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L2.segment.revenue_share
+    write_policy: preserve_known_unless_triggered
+    notes: "业务线行业暴露度；年报分部章节"
+
+  # ===========================================================
+  # L3 product / customer / channel / region / delivery
+  # ===========================================================
+
+  L3.channel.mix:
+    route: llm_close
+    model_tier: cheap_extract
+    refresh_trigger: source_fingerprint_changed
+    source_dependencies:
+      - L9.disclosure.qa_recent
+      - L1.company.main_business
+    write_policy: preserve_known_unless_triggered
+    notes: "渠道结构占比；年报销售渠道章节直接摘取"
+
+  L3.channel.overseas:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L3.region.domestic_overseas
+    write_policy: preserve_known_unless_triggered
+    notes: "海外渠道；年报区域 + 渠道分项"
+
+  L3.customer.segment_mix:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L9.disclosure.qa_recent
+      - L1.company.main_business
+    write_policy: preserve_known_unless_triggered
+    notes: "客户类型结构；年报客户/segment 占比披露"
+
+  L3.customer.solvency:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L5.bs.ar_ap
+    write_policy: preserve_known_unless_triggered
+    notes: "客户支付能力；AR 账龄 + 年报披露"
+
+  L3.delivery.capacity_supply:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L5.cf.capex
+      - L4.eff.capacity_utilization
+    write_policy: preserve_known_unless_triggered
+    notes: "产能/供应链；年报 + capex + IR"
+
+  L3.delivery.csat:
+    route: llm_web
+    model_tier: web_analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L1.company.main_business
+      - L9.media.report
+    allowed_evidence_kinds:
+      - annual_report
+      - research_report
+      - investor_relations
+      - external_url
+      - industry_panel
+    write_policy: preserve_known_unless_triggered
+    notes: "客户满意度；D bucket — 允许 web 引证 (Trustpilot / App Store / 黑猫等)"
+
+  L3.delivery.lead_time:
+    route: llm_web
+    model_tier: web_analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L1.company.main_business
+      - L5.cf.capex
+    allowed_evidence_kinds:
+      - annual_report
+      - research_report
+      - investor_relations
+      - external_url
+      - industry_panel
+    write_policy: preserve_known_unless_triggered
+    notes: "交付周期/服务能力；D bucket — 允许 web 引证 (渠道调研 / 雪球聚合等)"
+
+  L3.product.lifecycle:
+    route: llm_web
+    model_tier: web_analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L1.company.main_business
+      - L9.media.report
+    allowed_evidence_kinds:
+      - annual_report
+      - research_report
+      - investor_relations
+      - external_url
+      - industry_panel
+    write_policy: preserve_known_unless_triggered
+    notes: "产品生命周期/竞争力；D bucket — 允许 web 引证 (券商行业研报)"
+
+  L3.region.key_risk:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L3.region.fx_geo
+      - L9.macro.geo
+    write_policy: preserve_known_unless_triggered
+    notes: "重点/高风险区域；年报区域 + 宏观地缘"
+
+  L3.region.tier_mix:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L9.disclosure.qa_recent
+      - L1.company.main_business
+    write_policy: preserve_known_unless_triggered
+    notes: "城市层级结构；年报区域分项披露"
+
+  # ===========================================================
+  # L4 operational efficiency / price / cost / share / volume
+  # ===========================================================
+
+  L4.cost.cac_production:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.sga_rd
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "获客/单位生产成本；混合硬数据 + IR 叙事"
+
+  L4.cost.rent_energy_logistics:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "租金/能源/物流成本；混合硬数据 + IR 叙事"
+
+  L4.eff.capacity_utilization:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.cf.capex
+      - L5.bs.goodwill_ppe
+    write_policy: preserve_known_unless_triggered
+    notes: "产能利用率；年报 + 业绩会披露 + capex"
+
+  L4.eff.conversion_retention:
+    route: llm_web
+    model_tier: web_analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.media.report
+    allowed_evidence_kinds:
+      - annual_report
+      - research_report
+      - investor_relations
+      - external_url
+      - industry_panel
+    write_policy: preserve_known_unless_triggered
+    notes: "转化率/留存/复购；D bucket — 允许 web 引证 (用户调研 / 三方 app 数据)"
+
+  L4.eff.store_labor:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.sga_rd
+    write_policy: preserve_known_unless_triggered
+    notes: "门店坪效/人效；运营软指标，混合硬数据 + IR 叙事"
+
+  L4.price.asp_aov_arpu:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+    write_policy: preserve_known_unless_triggered
+    notes: "ASP/客单价/ARPU；revenue / 出货量 derive + IR"
+
+  L4.price.discount:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "折扣率；IR + 电商/渠道调研 + 毛利率 proxy"
+
+  L4.price.elasticity:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L4.price.pricing_power
+      - L4.price.asp_aov_arpu
+    write_policy: preserve_known_unless_triggered
+    notes: "价格弹性；运营软指标，混合硬数据 + IR 叙事"
+
+  L4.price.pricing_power:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.gross_margin
+      - L1.position.pricing_power
+    write_policy: preserve_known_unless_triggered
+    notes: "提价能力；毛利率持续性 + IR"
+
+  L4.price.subscription:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "订阅价格；公司公告 + 定价页 + IR + revenue trend"
+
+  L4.share.customer_channel:
+    route: llm_web
+    model_tier: web_analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.media.report
+    allowed_evidence_kinds:
+      - annual_report
+      - research_report
+      - investor_relations
+      - external_url
+      - industry_panel
+    write_policy: preserve_known_unless_triggered
+    notes: "客户/渠道/区域份额；D bucket — 允许 web 引证 (IDC/Counterpoint/IHS 等)"
+
+  L4.volume.foot_traffic:
+    route: llm_web
+    model_tier: web_analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.media.report
+    allowed_evidence_kinds:
+      - annual_report
+      - research_report
+      - investor_relations
+      - external_url
+      - industry_panel
+    write_policy: preserve_known_unless_triggered
+    notes: "门店客流；D bucket — 允许 web 引证 (Sensormatic / Placer.ai 等)"
+
+  L4.volume.frequency:
+    route: llm_web
+    model_tier: web_analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.media.report
+    allowed_evidence_kinds:
+      - annual_report
+      - research_report
+      - investor_relations
+      - external_url
+      - industry_panel
+    write_policy: preserve_known_unless_triggered
+    notes: "使用频次；D bucket — 允许 web 引证 (QuestMobile / Sensor Tower 等)"
+
+  # ===========================================================
+  # L5 forecast / surprise (premium-or-skip in spec but in overlay schema)
+  # ===========================================================
+
+  L5.surprise.buy_whisper:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.fcst.revisions
+      - L9.media.analyst_action
+    write_policy: preserve_known_unless_triggered
+    notes: "买方/whisper 预期；spec 为 E bucket（付费 alt-data），minimal 版用 LLM 估"
+
+  # ===========================================================
+  # Z3 additions — 53 new bucket-C/D LLM-candidate dp_ids
+  # ===========================================================
+
+  # -- L0 policy (event-driven regulatory shocks) -------------
+
+  L0.policy.access_license:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.policy_change
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "准入与牌照；政策文本 + 行业新闻分类"
+
+  L0.policy.regulation:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.policy_change
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "监管/反垄断；政策文本 + 行业新闻分类"
+
+  L0.policy.subsidy:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.policy_change
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "行业补贴政策；政策文本 + 行业新闻分类"
+
+  L0.policy.tax_trade:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.policy_change
+      - L9.macro.fx
+    write_policy: preserve_known_unless_triggered
+    notes: "税收/出口限制；政策 + 汇率/宏观新闻"
+
+  # -- L0 tech (event-driven technology shocks) ---------------
+
+  L0.tech.ai_automation:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.industry.compete_risk
+    write_policy: preserve_known_unless_triggered
+    notes: "AI/自动化/降本；行业新闻 + 龙头资本开支信号"
+
+  L0.tech.breakthrough:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.industry.compete_risk
+    write_policy: preserve_known_unless_triggered
+    notes: "技术突破/产品迭代；行业新闻 + 龙头新产品发布"
+
+  L0.tech.substitute_tech:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.industry.compete_risk
+    write_policy: preserve_known_unless_triggered
+    notes: "替代技术；行业新闻 + 竞争分析"
+
+  # -- L0 cost (industry-level cost components) ---------------
+
+  L0.cost.energy_logistics:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L0.cost.raw_material
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "行业能源/物流成本；raw_material price + 龙头毛利率 proxy"
+
+  L0.cost.labor:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.sga_rd
+      - L4.cost.labor
+    write_policy: preserve_known_unless_triggered
+    notes: "行业人工成本；龙头 SGA / 人工成本 proxy"
+
+  L0.cost.raw_material:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L0.cost.raw_material
+      - L4.cost.raw_material
+    write_policy: preserve_known_unless_triggered
+    notes: "原材料价格；A bucket partial 已落库，LLM 槽用于行业级解读"
+
+  # -- L0 competition (single concentration field) ------------
+
+  L0.compete.share_concentration:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.compete_risk
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "市占率/集中度变化；行业新闻 + 龙头排名"
+
+  # -- L9 industry / macro (industry-level catalysts) --------
+
+  L9.industry.data_price:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.macro.cpi_employment
+    write_policy: preserve_known_unless_triggered
+    notes: "行业数据/价格发布；事件归类 (CPI/PMI/价格指数发布)"
+
+  L9.macro.geo:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.macro.fx
+    write_policy: preserve_known_unless_triggered
+    notes: "地缘事件；新闻分类 + 汇率信号"
+
+  # -- L1 tags / ranks (cheap_extract label slots) -----------
+
+  L1.role.tag:
+    route: llm_close
+    model_tier: cheap_extract
+    refresh_trigger: source_fingerprint_changed
+    source_dependencies:
+      - L1.company.main_business
+    write_policy: preserve_known_unless_triggered
+    notes: "行业角色标签；分类 — 龙头 / 跟随 / 创新者 etc."
+
+  L1.model.tag:
+    route: llm_close
+    model_tier: cheap_extract
+    refresh_trigger: source_fingerprint_changed
+    source_dependencies:
+      - L1.company.main_business
+    write_policy: preserve_known_unless_triggered
+    notes: "商业模式标签；分类 — B2B / B2C / 订阅 / 一次性 etc."
+
+  L1.moat.tags:
+    route: llm_close
+    model_tier: cheap_extract
+    refresh_trigger: source_fingerprint_changed
+    source_dependencies:
+      - L1.company.main_business
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "护城河标签；分类 — 技术 / 品牌 / 渠道 / 规模 / 网络效应"
+
+  L1.stock_attr.tags:
+    route: llm_close
+    model_tier: cheap_extract
+    refresh_trigger: source_fingerprint_changed
+    source_dependencies:
+      - L1.company.main_business
+      - L6.path.tag
+    write_policy: preserve_known_unless_triggered
+    notes: "股价属性标签；分类 — 周期 / 成长 / 主题 / 价值 etc."
+
+  L1.position.growth_rank:
+    route: llm_close
+    model_tier: cheap_extract
+    refresh_trigger: source_fingerprint_changed
+    source_dependencies:
+      - L5.is.revenue_growth
+      - L5.fina.revenue_yoy
+    write_policy: preserve_known_unless_triggered
+    notes: "增速排名；用 revenue_growth percentile vs 行业"
+
+  # -- L2 segment quantitative (per-segment metrics) ---------
+
+  L2.segment.opex_ratio:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.sga_rd
+      - L5.is.revenue
+    write_policy: preserve_known_unless_triggered
+    notes: "业务线费用率；年报分部 + SGA / revenue"
+
+  L2.segment.profit_share:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.operating_profit
+      - L5.is.net_profit
+    write_policy: preserve_known_unless_triggered
+    notes: "业务线利润占比；年报分部章节"
+
+  # -- L3 product / customer / channel / region --------------
+
+  L3.product.portfolio:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L1.company.main_business
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "产品组合结构；年报产品分项 + IR"
+
+  L3.product.margin_mix:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.gross_margin
+      - L1.company.main_business
+    write_policy: preserve_known_unless_triggered
+    notes: "产品毛利/价格结构；年报分部 + 毛利率"
+
+  L3.customer.concentration:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L9.disclosure.qa_recent
+      - L5.bs.ar_ap
+    write_policy: preserve_known_unless_triggered
+    notes: "客户集中度/流失风险；年报客户披露 + AR 集中度"
+
+  L3.channel.cost:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.sga_rd
+      - L3.channel.mix
+    write_policy: preserve_known_unless_triggered
+    notes: "渠道费用；SGA + 年报渠道章节"
+
+  L3.channel.efficiency:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L3.channel.mix
+    write_policy: preserve_known_unless_triggered
+    notes: "渠道效率；revenue / SGA + 年报渠道章节"
+
+  L3.region.domestic_overseas:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: annual_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L1.company.main_business
+    write_policy: preserve_known_unless_triggered
+    notes: "国内/海外收入结构；年报区域分项"
+
+  L3.region.fx_geo:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L9.macro.fx
+      - L3.region.domestic_overseas
+    write_policy: preserve_known_unless_triggered
+    notes: "汇率/地缘影响；汇率 + 海外业务占比"
+
+  L3.delivery.fulfillment_cost:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.sga_rd
+      - L5.is.gross_margin
+    write_policy: preserve_known_unless_triggered
+    notes: "履约/售后成本；SGA + 毛利率"
+
+  # -- L4 share / volume soft KPIs ---------------------------
+
+  L4.share.market:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "公司市占率；revenue 排名 + IR 披露"
+
+  L4.share.substitution:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L9.industry.compete_risk
+      - L5.is.revenue_growth
+    write_policy: preserve_known_unless_triggered
+    notes: "竞品替代；竞争风险 + revenue 增速"
+
+  L4.volume.sales:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "销量；运营软指标；revenue + IR"
+
+  L4.volume.orders:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "订单量；运营软指标；revenue + IR"
+
+  L4.volume.shipments:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "出货量/交付量；运营软指标；revenue + IR"
+
+  L4.volume.users:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.is.revenue
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "客户/用户数；运营软指标；revenue + IR"
+
+  # -- L5 forecast --------------------------------------------
+
+  L5.fcst.beat_probability:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: quarterly_filing
+    source_dependencies:
+      - L5.fcst.revisions
+      - L5.fcst.eps_cf
+      - L5.surprise.sell_side
+    write_policy: preserve_known_unless_triggered
+    notes: "业绩兑现概率；分析师上修 + sell-side 一致预期 + 历史 beat-rate"
+
+  # -- L8 risk offsets (governance) --------------------------
+
+  L8.gov.fraud_control:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L8.gov.management_change
+      - L9.event.recent_filings
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "财务造假/内控；治理事件 + 公告 + 法律新闻"
+
+  L8.gov.litigation:
+    route: llm_close
+    model_tier: analysis
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.company.mgmt_litigation
+      - L9.event.recent_filings
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "法律诉讼；管理层诉讼 + 公告 + 法律新闻"
+
+  # -- L8 risk offsets (industry-level) ----------------------
+
+  L8.industry.demand_supply:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.compete_risk
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "行业需求/供给恶化；事件分类 + 行业新闻"
+
+  L8.industry.price_war:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L0.compete.price_war
+      - L9.industry.compete_risk
+    write_policy: preserve_known_unless_triggered
+    notes: "行业价格战 (个股层);事件分类 + 行业新闻"
+
+  L8.industry.substitute:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L0.tech.substitute_tech
+      - L9.industry.compete_risk
+    write_policy: preserve_known_unless_triggered
+    notes: "替代品出现；事件分类 + 行业新闻"
+
+  # -- L8 risk offsets (operation) ---------------------------
+
+  L8.op.customer_channel:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.disclosure.qa_recent
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "客户流失/渠道失效；事件分类 + 业绩会 + 新闻"
+
+  L8.op.order_miss:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.company.earnings_guidance
+      - L9.disclosure.qa_recent
+    write_policy: preserve_known_unless_triggered
+    notes: "订单不兑现；指引公告 + 业绩会"
+
+  L8.op.product_fail:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.company.product_order
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "产品失败；产品事件 + 新闻"
+
+  # -- L8 risk offsets (regulation) --------------------------
+
+  L8.reg.license_risk:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.industry.policy_change
+      - L0.policy.access_license
+    write_policy: preserve_known_unless_triggered
+    notes: "牌照/准入风险；监管事件 + 行业政策"
+
+  L8.reg.subsidy_off:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L0.policy.subsidy
+      - L9.industry.policy_change
+    write_policy: preserve_known_unless_triggered
+    notes: "补贴退坡；监管事件 + 行业政策"
+
+  L8.reg.tax_trade:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L0.policy.tax_trade
+      - L9.macro.fx
+    write_policy: preserve_known_unless_triggered
+    notes: "税收/出口限制 (个股);政策 + 汇率"
+
+  L8.reg.tighten:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L0.policy.regulation
+      - L9.industry.policy_change
+    write_policy: preserve_known_unless_triggered
+    notes: "监管收紧/反垄断 (个股);监管事件 + 行业政策"
+
+  # -- L8 risk offsets (shock) -------------------------------
+
+  L8.shock.black_swan:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.macro.geo
+    write_policy: preserve_known_unless_triggered
+    notes: "黑天鹅事件；事件分类 + 全局新闻"
+
+  L8.shock.crisis:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.media.social_buzz
+    write_policy: preserve_known_unless_triggered
+    notes: "安全/舆情危机；事件分类 + 媒体/社媒"
+
+  L8.shock.supply_break:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.industry.compete_risk
+    write_policy: preserve_known_unless_triggered
+    notes: "供应中断/客户违约/自然灾害；事件分类 + 新闻"
+
+  # -- L9 catalysts (per-stock) ------------------------------
+
+  L9.company.ma:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.event.recent_filings
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "并购事件；公告 + 新闻分类"
+
+  L9.company.product_order:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.event.intraday_announcement
+      - L9.media.report
+    write_policy: preserve_known_unless_triggered
+    notes: "新产品发布/大订单；公告 + 新闻分类"
+
+  L9.media.short_report:
+    route: llm_close
+    model_tier: cheap_classify
+    refresh_trigger: event_driven
+    source_dependencies:
+      - L9.media.report
+      - L9.media.social_buzz
+    write_policy: preserve_known_unless_triggered
+    notes: "做空报告；媒体 + 社媒分类"

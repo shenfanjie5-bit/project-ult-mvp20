@@ -1,0 +1,126 @@
+{
+  "bundle_id": "bundle-cycle_20260410-retro",
+  "manifest_cycle_id": "cycle_20260410",
+  "audit_records": [
+    {
+      "record_id": "audit-cycle_20260410-L4-world_state",
+      "cycle_id": "cycle_20260410",
+      "layer": "L4",
+      "object_ref": "world_state",
+      "params_snapshot": {
+        "market": "US",
+        "as_of": "2026-04-10"
+      },
+      "llm_lineage": {
+        "called": true,
+        "provider": "fixture",
+        "model": "offline-spike-model",
+        "fallback_path": null,
+        "retry_count": 0
+      },
+      "llm_cost": {
+        "input_tokens": 120,
+        "output_tokens": 80,
+        "cost_usd": 0.0,
+        "latency_ms": 15
+      },
+      "sanitized_input": "Summarize the 2026-04-10 market state without PII.",
+      "input_hash": "5db1093527f74e2362df686c626e3ee2bfb0344451e5289f93f17c532101b6ea",
+      "raw_output": "{\"trend\":\"risk_off\",\"risk_level\":\"medium\"}",
+      "parsed_result": {
+        "trend": "risk_off",
+        "risk_level": "medium"
+      },
+      "output_hash": "b9ec157c1f07a0313de87664f5b5abb50ba0285df1c4002036813a63c6b646fe",
+      "degradation_flags": {
+        "degraded": false
+      },
+      "created_at": "2026-04-10T16:05:00Z"
+    },
+    {
+      "record_id": "audit-cycle_20260410-L7-recommendation",
+      "cycle_id": "cycle_20260410",
+      "layer": "L7",
+      "object_ref": "recommendation",
+      "params_snapshot": {
+        "portfolio_id": "sample_portfolio",
+        "as_of": "2026-04-10"
+      },
+      "llm_lineage": {
+        "called": true,
+        "provider": "fixture",
+        "model": "offline-spike-model",
+        "fallback_path": null,
+        "retry_count": 0
+      },
+      "llm_cost": {
+        "input_tokens": 180,
+        "output_tokens": 90,
+        "cost_usd": 0.0,
+        "latency_ms": 18
+      },
+      "sanitized_input": "Use the published world_state snapshot for allocation guidance.",
+      "input_hash": "b442dd14d29e50918c02226ffe3e06c59ee6ddab4bb80adc19912bbae43a506c",
+      "raw_output": "{\"action\":\"reduce_beta\",\"confidence\":0.72}",
+      "parsed_result": {
+        "action": "reduce_beta",
+        "confidence": 0.72,
+        "retrospective_seed": {
+          "trend_score": 1.0,
+          "risk_score": 2.0,
+          "baseline_vs_llm_breakdown": {
+            "baseline_trend_score": 0.5,
+            "llm_trend_adjustment": 0.5,
+            "baseline_risk_score": 1.5,
+            "llm_risk_adjustment": 0.5
+          }
+        }
+      },
+      "output_hash": "a11fcb411879b870473e7cc431db2fc7c5bbfffa9d91d92062ab8095cb6d15e1",
+      "degradation_flags": {
+        "degraded": false
+      },
+      "created_at": "2026-04-10T16:08:00Z"
+    }
+  ],
+  "replay_records": [
+    {
+      "replay_id": "replay-cycle_20260410-world_state",
+      "cycle_id": "cycle_20260410",
+      "object_ref": "world_state",
+      "audit_record_ids": [
+        "audit-cycle_20260410-L4-world_state"
+      ],
+      "manifest_cycle_id": "cycle_20260410",
+      "formal_snapshot_refs": {
+        "world_state": "snapshot://cycle_20260410/world_state"
+      },
+      "graph_snapshot_ref": "graph://cycle_20260410/portfolio_graph",
+      "dagster_run_id": "dagster-fixture-run-20260410",
+      "replay_mode": "read_history",
+      "created_at": "2026-04-10T16:06:00Z"
+    },
+    {
+      "replay_id": "replay-cycle_20260410-recommendation",
+      "cycle_id": "cycle_20260410",
+      "object_ref": "recommendation",
+      "audit_record_ids": [
+        "audit-cycle_20260410-L4-world_state",
+        "audit-cycle_20260410-L7-recommendation"
+      ],
+      "manifest_cycle_id": "cycle_20260410",
+      "formal_snapshot_refs": {
+        "world_state": "snapshot://cycle_20260410/world_state",
+        "recommendation": "snapshot://cycle_20260410/recommendation"
+      },
+      "graph_snapshot_ref": "graph://cycle_20260410/portfolio_graph",
+      "dagster_run_id": "dagster-fixture-run-20260410",
+      "replay_mode": "read_history",
+      "created_at": "2026-04-10T16:09:00Z"
+    }
+  ],
+  "submitted_at": "2026-04-10T16:11:00Z",
+  "metadata": {
+    "source": "retro-t-plus-1-fixture"
+  }
+}

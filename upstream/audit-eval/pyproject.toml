@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-ult-audit-eval"
+version = "0.2.5"
+description = "Audit, replay, retrospective, drift and backtest module for project-ult; ships shared fixtures for cross-module regression."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=1.0,<2",
+    "evidently>=0.4",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+backtest = [
+    "alphalens-reloaded>=0.4",
+]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+# Both ``audit_eval`` and ``audit_eval_fixtures`` live under src/ and are
+# discovered automatically. ``audit_eval_fixtures`` ships shared regression
+# fixture data (see ``src/audit_eval_fixtures/data/``) consumed by other
+# project-ult modules' regression tests via ``pip install
+# "git+https://github.com/<owner>/project-ult-audit-eval.git@<tag>"``.
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Bundle the shared fixture corpus inside the wheel so consumers don't need
+# git submodules or source checkout. ``**/*`` is a setuptools 69+ glob.
+audit_eval_fixtures = ["data/**/*", "data/**/*.json", "data/**/.gitkeep"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

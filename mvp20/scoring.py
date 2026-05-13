@@ -1,0 +1,1431 @@
+"""Top-level scoring module for MVP20 graph engine.
+
+This module implements **path / company / final score** computations
+plus the **7-mode classifier** described in ``图谱设计.md`` §27 and §30.
+
+The module is intentionally side-effect free: each scoring function
+accepts plain dicts / scalars and returns a dict, so callers in
+``cli.py`` / ``server.py`` can wire it on top of:
+
+  * ``mvp20.aggregator`` — aggregates the company graph (A1)
+  * ``mvp20.coverage``   — computes data-coverage / confidence (A2)
+  * ``mvp20.storage.read_hot_snapshot`` — current realtime values
+
+…without scoring needing to know how those upstreams compute things.
+
+Spec references (file: ``图谱设计.md``):
+
+  §27.1 ``路径分``   ─ ``compute_path_score``
+  §27.3 ``公司分``   ─ ``compute_company_score``
+  §27.4 ``股价结果分`` ─ ``compute_final_score``
+  §28   ``时间周期`` ─ ``HORIZON_DEFAULT_WEIGHTS``
+  §30   ``当前模式`` ─ ``classify_mode``
+
+The orchestrator function ``score_company()`` ties everything together
+into the contract documented in the task brief.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterable, Mapping, Sequence
+
+from mvp20.field_governance import NON_SCORING_ROLES
+from mvp20.market_adapter import apply_market_adapter
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+#: Spec §30 mode identifiers (English keys, Chinese display names).
+MODE_STRONG_BULL = "strong_bull"
+MODE_MODERATE_BULL = "moderate_bull"
+MODE_DIGESTION = "digestion"
+MODE_STRUCTURAL_DIVERGENCE = "structural_divergence"
+MODE_DE_RATING = "de_rating"
+MODE_TREND_REVERSAL = "trend_reversal"
+MODE_WAIT_FOR_CONFIRMATION = "wait_for_confirmation"
+
+MODE_DISPLAY = {
+    MODE_STRONG_BULL: "强多头",
+    MODE_MODERATE_BULL: "温和多头",
+    MODE_DIGESTION: "震荡消化",
+    MODE_STRUCTURAL_DIVERGENCE: "结构分化",
+    MODE_DE_RATING: "杀估值",
+    MODE_TREND_REVERSAL: "趋势反转",
+    MODE_WAIT_FOR_CONFIRMATION: "等待验证",
+}
+
+#: Spec §28 default horizon weight mix.
+#: Short window emphasizes events + capital flow; long window emphasizes
+#: industry space + moat. The default below assumes a balanced mid-cycle
+#: view; callers may override via the ``horizons`` parameter.
+HORIZON_DEFAULT_WEIGHTS = {
+    "short": 0.30,
+    "medium": 0.45,
+    "long": 0.25,
+}
+
+#: Trading signal thresholds applied to the **mix-weighted final score**.
+#: Values are picked so a healthy multi-driver bull (path/company scores
+#: in the 0.4–0.8 range each) clears BUY while a flat/mixed picture lands
+#: on HOLD. WATCH is the "interesting but not enough conviction" bucket;
+#: AVOID is reserved for net-negative final scores.
+SIGNAL_BUY_THRESHOLD = 0.50
+SIGNAL_HOLD_THRESHOLD = 0.15
+SIGNAL_WATCH_THRESHOLD = -0.10
+# anything strictly below WATCH threshold => AVOID
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _clip(value: float, lo: float, hi: float) -> float:
+    """Clamp ``value`` into ``[lo, hi]`` (safe for None via caller)."""
+
+    if value is None:
+        return lo
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    """Best-effort cast to float; falls back to ``default`` for None/garbage."""
+
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_direction(value: Any) -> float:
+    """Normalize a direction signal to ``-1 / 0 / +1``.
+
+    Accepts numeric (clipped to sign) or the literal strings
+    ``positive``/``negative``/``neutral`` used in the overlay YAMLs.
+    """
+
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v == "positive":
+            return 1.0
+        if v == "negative":
+            return -1.0
+        if v in ("neutral", "", "none"):
+            return 0.0
+        try:
+            value = float(v)
+        except ValueError:
+            return 0.0
+    f = _coerce_float(value, 0.0)
+    if f > 0:
+        return 1.0
+    if f < 0:
+        return -1.0
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Spec §27.1 — Path score
+# ---------------------------------------------------------------------------
+
+
+def compute_path_score(
+    direction: float,
+    event_strength: float,
+    transmission_strength: float,
+    company_exposure: float,
+    revenue_share: float,
+    profit_elasticity: float,
+    confidence: float,
+    time_factor: float,
+    expectation_gap: float,
+    capital_amplification: float,
+    priced_in_discount: float,
+    risk_discount: float,
+) -> float:
+    """Compute one causal path's contribution to the stock score.
+
+    Implements spec §27.1 verbatim:
+
+    ``Path Score = direction × event_strength × transmission_strength
+                 × company_exposure × revenue_share × profit_elasticity
+                 × confidence × time_factor × expectation_gap
+                 × capital_amplification
+                 - priced_in_discount - risk_discount``
+
+    All multiplicative inputs are coerced to floats (None ⇒ 0). The
+    direction is normalised to ``-1/0/+1`` so a single negative leg
+    flips the whole product, as the spec intends.
+
+    Parameter ranges (per task brief):
+
+      direction              : -1 / 0 / +1
+      event_strength         : 0..1
+      transmission_strength  : 0..1
+      company_exposure       : 0..1
+      revenue_share          : 0..1
+      profit_elasticity      : 0..2 (1 = neutral)
+      confidence             : 0..1
+      time_factor            : 0..1 (1 = short-term salient)
+      expectation_gap        : -1..+1
+      capital_amplification  : 0..2
+      priced_in_discount     : 0..1
+      risk_discount          : 0..1
+    """
+
+    d = _coerce_direction(direction)
+    es = _coerce_float(event_strength)
+    ts = _coerce_float(transmission_strength)
+    ce = _coerce_float(company_exposure)
+    rs = _coerce_float(revenue_share)
+    pe = _coerce_float(profit_elasticity)
+    cf = _coerce_float(confidence)
+    tf = _coerce_float(time_factor)
+    eg = _coerce_float(expectation_gap)
+    ca = _coerce_float(capital_amplification)
+    pid = _coerce_float(priced_in_discount)
+    rd = _coerce_float(risk_discount)
+
+    multiplicative = d * es * ts * ce * rs * pe * cf * tf * eg * ca
+    return multiplicative - pid - rd
+
+
+# ---------------------------------------------------------------------------
+# Spec §27.2 — Node score (helper, used by aggregator + final)
+# ---------------------------------------------------------------------------
+
+
+def compute_node_score(
+    direction: float | None = None,
+    strength: float | None = None,
+    confidence: float | None = None,
+    children: Sequence[Mapping[str, Any]] | None = None,
+) -> float:
+    """Spec §27.2 node score.
+
+    With children:  ``Σ child.score × child.weight × child.confidence``
+    Leaf node:      ``direction × strength × confidence``
+
+    Each child mapping should expose ``score``, ``weight``, ``confidence``;
+    missing fields fall back to neutral defaults (1.0 for weight/confidence,
+    0.0 for score).
+    """
+
+    if children:
+        total = 0.0
+        for c in children:
+            s = _coerce_float(c.get("score"))
+            w = _coerce_float(c.get("weight"), 1.0)
+            cf = _coerce_float(c.get("confidence"), 1.0)
+            total += s * w * cf
+        return total
+
+    d = _coerce_direction(direction)
+    st = _coerce_float(strength)
+    cf = _coerce_float(confidence, 1.0)
+    return d * st * cf
+
+
+# ---------------------------------------------------------------------------
+# Spec §27.3 — Company score
+# ---------------------------------------------------------------------------
+
+
+def compute_company_score(
+    industry_variables: Iterable[Mapping[str, Any]],
+    company_event_score: float,
+    capital_sentiment_score: float,
+    risk_discount: float,
+    valuation_pressure: float,
+    priced_in_discount: float,
+) -> dict[str, Any]:
+    """Spec §27.3 company score.
+
+    ``Company Score = Σ [industry_var.score × exposure × revenue_share
+                        × profit_elasticity × financial_sensitivity
+                        × valuation_sensitivity]
+                     + company_event_score + capital_sentiment_score
+                     - risk_discount - valuation_pressure
+                     - priced_in_discount``
+
+    ``industry_variables`` items expose:
+
+        {
+          "score": <industry-variable score, output of node aggregation>,
+          "exposure": 0..1,
+          "revenue_share": 0..1,
+          "profit_elasticity": 0..2,
+          "financial_sensitivity": 0..2,
+          "valuation_sensitivity": 0..2,
+          # optional metadata used downstream by classify_mode / top_paths:
+          "name": str, "direction": -1/0/+1, "confidence": 0..1
+        }
+
+    Returns:
+        {
+          "score": float,                       # full company score
+          "components": {
+              "industry_contrib": float,        # the Σ industry block
+              "event": float,
+              "capital": float,
+              "risk": float,
+              "valuation_pressure": float,
+              "priced_in": float,
+          },
+          "industry_contributions": [           # per-variable contribution
+              {"name": str, "value": float, "direction": -1/0/+1}
+          ],
+        }
+    """
+
+    industry_total = 0.0
+    contribs: list[dict[str, Any]] = []
+    for v in industry_variables or []:
+        score = _coerce_float(v.get("score"))
+        exposure = _coerce_float(v.get("exposure"), 1.0)
+        rev_share = _coerce_float(v.get("revenue_share"), 1.0)
+        prof_e = _coerce_float(v.get("profit_elasticity"), 1.0)
+        fin_s = _coerce_float(v.get("financial_sensitivity"), 1.0)
+        val_s = _coerce_float(v.get("valuation_sensitivity"), 1.0)
+
+        contrib = score * exposure * rev_share * prof_e * fin_s * val_s
+        industry_total += contrib
+
+        contribs.append({
+            "name": v.get("name") or v.get("node_id") or "",
+            "value": contrib,
+            "direction": _coerce_direction(v.get("direction") or contrib),
+            "confidence": _coerce_float(v.get("confidence"), 1.0),
+        })
+
+    event = _coerce_float(company_event_score)
+    capital = _coerce_float(capital_sentiment_score)
+    risk = _coerce_float(risk_discount)
+    val_pressure = _coerce_float(valuation_pressure)
+    priced_in = _coerce_float(priced_in_discount)
+
+    total = industry_total + event + capital - risk - val_pressure - priced_in
+
+    return {
+        "score": total,
+        "components": {
+            "industry_contrib": industry_total,
+            "event": event,
+            "capital": capital,
+            "risk": risk,
+            "valuation_pressure": val_pressure,
+            "priced_in": priced_in,
+        },
+        "industry_contributions": contribs,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Spec §27.4 — Stock final score (with horizon mix)
+# ---------------------------------------------------------------------------
+
+
+def compute_final_score(
+    fundamental_score: float,
+    expectation_gap_score: float,
+    valuation_rerating_score: float,
+    capital_sentiment_score: float,
+    risk_discount: float,
+    priced_in_discount: float,
+    horizons: Mapping[str, Mapping[str, float]] | None = None,
+    primary_positive_path: Sequence[Mapping[str, Any]] | None = None,
+    primary_negative_path: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Spec §27.4 stock final score.
+
+    Base formula:
+
+      ``Stock Final = fundamental + expectation_gap + valuation_rerating
+                     + capital_sentiment - risk - priced_in``
+
+    The ``horizons`` argument lets callers re-weight the inputs per
+    spec §28. It expects a mapping of horizon → component weights, e.g.::
+
+        {
+          "short":  {"fundamental": 0.2, "expectation_gap": 0.3,
+                     "valuation_rerating": 0.1, "capital_sentiment": 0.4},
+          "medium": {"fundamental": 0.5, "expectation_gap": 0.3,
+                     "valuation_rerating": 0.1, "capital_sentiment": 0.1},
+          "long":   {"fundamental": 0.6, "expectation_gap": 0.05,
+                     "valuation_rerating": 0.30, "capital_sentiment": 0.05},
+        }
+
+    When omitted, each horizon evaluates the unweighted base formula
+    (i.e. short = medium = long until callers customise the mix).
+
+    Returns:
+        {
+          "short_total":   float,
+          "medium_total":  float,
+          "long_total":    float,
+          "base_score":    float,                # unweighted sum
+          "components":    {...},                # input echo for audit
+          "primary_positive_path": [...],
+          "primary_negative_path": [...],
+          "trading_meaning": str,
+        }
+    """
+
+    f = _coerce_float(fundamental_score)
+    e = _coerce_float(expectation_gap_score)
+    vr = _coerce_float(valuation_rerating_score)
+    cs = _coerce_float(capital_sentiment_score)
+    r = _coerce_float(risk_discount)
+    p = _coerce_float(priced_in_discount)
+
+    base = f + e + vr + cs - r - p
+
+    def horizon_total(weights: Mapping[str, float] | None) -> float:
+        if not weights:
+            return base
+        wf = _coerce_float(weights.get("fundamental"), 1.0)
+        we = _coerce_float(weights.get("expectation_gap"), 1.0)
+        wv = _coerce_float(weights.get("valuation_rerating"), 1.0)
+        wc = _coerce_float(weights.get("capital_sentiment"), 1.0)
+        # risk + priced_in are full subtractions at every horizon — they
+        # do not become more or less relevant with time.
+        return f * wf + e * we + vr * wv + cs * wc - r - p
+
+    horizons = horizons or {}
+    short_total = horizon_total(horizons.get("short"))
+    medium_total = horizon_total(horizons.get("medium"))
+    long_total = horizon_total(horizons.get("long"))
+
+    pos = list(primary_positive_path or [])
+    neg = list(primary_negative_path or [])
+
+    return {
+        "short_total": short_total,
+        "medium_total": medium_total,
+        "long_total": long_total,
+        "base_score": base,
+        "components": {
+            "fundamental": f,
+            "expectation_gap": e,
+            "valuation_rerating": vr,
+            "capital_sentiment": cs,
+            "risk": r,
+            "priced_in": p,
+        },
+        "primary_positive_path": pos,
+        "primary_negative_path": neg,
+        "trading_meaning": _describe_trading_meaning(short_total, medium_total, long_total),
+    }
+
+
+def _describe_trading_meaning(short_t: float, medium_t: float, long_t: float) -> str:
+    """One-line trading-narrative string derived from the three horizons.
+
+    Format: ``短:<short>/中:<medium>/长:<long> => <verb>``. The verb is the
+    plain-Chinese version of the trading-signal bucket and is intentionally
+    keep short — UI may use this directly in a tooltip.
+    """
+
+    avg = (short_t + medium_t + long_t) / 3.0
+    if avg >= SIGNAL_BUY_THRESHOLD:
+        verb = "积极介入"
+    elif avg >= SIGNAL_HOLD_THRESHOLD:
+        verb = "维持仓位"
+    elif avg >= SIGNAL_WATCH_THRESHOLD:
+        verb = "观察等待"
+    else:
+        verb = "回避"
+    return f"短:{short_t:.3f}/中:{medium_t:.3f}/长:{long_t:.3f} => {verb}"
+
+
+# ---------------------------------------------------------------------------
+# Spec §30 — Mode classifier (7 modes)
+# ---------------------------------------------------------------------------
+
+
+def classify_mode(
+    final_score: Mapping[str, Any],
+    signals: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Classify the current "mode" of the stock per spec §30.
+
+    Spec §30 ranks **7 modes** by their qualitative cause-pattern. We translate
+    the prose pattern table into thresholds that operate on the signal pack:
+
+        signals = {
+          "industry_trend":      float in [-1, 1],   # 行业变量增强/恶化
+          "exposure":            float in [0,  1],   # 公司暴露度
+          "financial_revision":  float in [-1, 1],   # 财务预期上修/下修
+          "valuation_pressure":  float in [0,  1],   # 估值过度定价
+          "capital_flow":        float in [-1, 1],   # 资金流入/流出
+          "expectation_gap":     float in [-1, 1],   # 预期差
+          "priced_in":           float in [0,  1],   # 已定价折扣
+          "new_catalyst":        float in [0,  1],   # 新催化力度
+          "competition":         float in [-1, 1],   # 竞争格局变化 (+ better, - worse)
+          "event_present":       float in [0,  1],   # 事件出现 0=无, 1=有
+          "operating_confirmed": float in [0,  1],   # 经营数据已确认
+        }
+
+    Threshold derivation (cross-reference spec §30):
+
+      * 强多头   (strong_bull):
+            industry_trend >= 0.4  AND exposure >= 0.5
+            AND financial_revision >= 0.2 AND valuation_pressure < 0.6
+            AND capital_flow >= 0.2
+            Reason: "行业↑ + 暴露度高 + 财务预期↑ + 估值未过度 + 资金↑"
+      * 温和多头 (moderate_bull):
+            industry_trend >= 0.2 AND financial_revision >= 0.0
+            AND valuation_pressure < 0.8 AND capital_flow >= 0.0
+            AND expectation_gap < 0.4   # gap has narrowed
+            Reason: "基本面强 但预期差缩 估值合理 资金稳"
+      * 震荡消化 (digestion):
+            priced_in >= 0.5 AND new_catalyst < 0.3
+            AND abs(financial_revision) < 0.2   # earnings stable
+            AND abs(capital_flow) < 0.3         # rotational, not directional
+            Reason: "利好部分定价 新催化不足 财务稳 资金轮动"
+      * 结构分化 (structural_divergence):
+            industry_trend >= 0.2 AND exposure < 0.5
+            Reason: "行业利好 但暴露不同 龙头强"
+      * 杀估值   (de_rating):
+            valuation_pressure >= 0.6 AND capital_flow < -0.2
+            AND financial_revision < 0.2  # but slowing growth, not crashing
+            Reason: "业绩稳但增速降 估值高 资金撤"
+      * 趋势反转 (trend_reversal):
+            industry_trend <= -0.3 AND financial_revision <= -0.2
+            AND capital_flow <= -0.2
+            (competition is allowed to amplify but isn't gating)
+            Reason: "行业↓ 财务↓ 竞争↓ 资金↓"
+      * 等待验证 (wait_for_confirmation):
+            event_present >= 0.5 AND operating_confirmed < 0.4
+            AND abs(expectation_gap) < 0.4
+            Reason: "事件出现 但经营未确认"
+
+    Evaluation order: most-specific / most-negative first. A net-negative
+    `final_score` short-circuits to trend_reversal if no other negative
+    rule fires — this protects the API consumer from "mode says
+    strong_bull but score is -0.5".
+    """
+
+    s = dict(signals or {})
+    industry_trend = _coerce_float(s.get("industry_trend"))
+    exposure = _coerce_float(s.get("exposure"))
+    financial_revision = _coerce_float(s.get("financial_revision"))
+    valuation_pressure = _coerce_float(s.get("valuation_pressure"))
+    capital_flow = _coerce_float(s.get("capital_flow"))
+    expectation_gap = _coerce_float(s.get("expectation_gap"))
+    priced_in = _coerce_float(s.get("priced_in"))
+    new_catalyst = _coerce_float(s.get("new_catalyst"))
+    event_present = _coerce_float(s.get("event_present"))
+    operating_confirmed = _coerce_float(s.get("operating_confirmed"))
+
+    # Use the medium horizon as the "central" score for confidence weighting.
+    medium = _coerce_float(final_score.get("medium_total") if final_score else None)
+    short = _coerce_float(final_score.get("short_total") if final_score else None)
+    long_ = _coerce_float(final_score.get("long_total") if final_score else None)
+    central = (short + medium + long_) / 3.0
+
+    # ---- evaluate negative-leaning modes first (safety) -------------------
+    if (
+        industry_trend <= -0.3
+        and financial_revision <= -0.2
+        and capital_flow <= -0.2
+    ):
+        return _mode_result(
+            MODE_TREND_REVERSAL,
+            confidence=_mode_confidence([
+                -industry_trend, -financial_revision, -capital_flow,
+            ], magnitude=central),
+            drivers=["industry_trend↓", "financial_revision↓", "capital_flow↓"],
+            rationale="行业变量恶化、财务预期下修、资金持续流出 (spec §30 趋势反转)",
+        )
+
+    if (
+        valuation_pressure >= 0.6
+        and capital_flow <= -0.2
+        and financial_revision < 0.2
+    ):
+        return _mode_result(
+            MODE_DE_RATING,
+            confidence=_mode_confidence([
+                valuation_pressure, -capital_flow,
+            ], magnitude=abs(central)),
+            drivers=["valuation_pressure↑", "capital_flow↓"],
+            rationale="估值偏高 + 资金撤出 + 增速放缓 (spec §30 杀估值)",
+        )
+
+    if (
+        event_present >= 0.5
+        and operating_confirmed < 0.4
+        and abs(expectation_gap) < 0.4
+    ):
+        # Wait-for-confirmation: event signal present but operating data not
+        # yet confirmed. Catch this before bull modes so an unverified rumour
+        # doesn't masquerade as strong_bull.
+        return _mode_result(
+            MODE_WAIT_FOR_CONFIRMATION,
+            confidence=_mode_confidence([
+                event_present, 1.0 - operating_confirmed,
+            ], magnitude=abs(central)),
+            drivers=["event_present", "operating_data_pending"],
+            rationale="事件出现但经营数据未确认 (spec §30 等待验证)",
+        )
+
+    # ---- bull / divergent modes ------------------------------------------
+    if (
+        industry_trend >= 0.4
+        and exposure >= 0.5
+        and financial_revision >= 0.2
+        and valuation_pressure < 0.6
+        and capital_flow >= 0.2
+    ):
+        return _mode_result(
+            MODE_STRONG_BULL,
+            confidence=_mode_confidence([
+                industry_trend, exposure, financial_revision, capital_flow,
+                1.0 - valuation_pressure,
+            ], magnitude=central),
+            drivers=[
+                "industry_trend↑", "exposure↑", "financial_revision↑",
+                "capital_flow↑",
+            ],
+            rationale="行业↑ 暴露↑ 财务↑ 估值未过度 资金↑ (spec §30 强多头)",
+        )
+
+    if (
+        industry_trend >= 0.2
+        and exposure < 0.5
+    ):
+        # Industry-wide tailwind but this name has limited exposure → the
+        # spec calls this "structural_divergence" (龙头 vs 二线 dispersion).
+        return _mode_result(
+            MODE_STRUCTURAL_DIVERGENCE,
+            confidence=_mode_confidence([
+                industry_trend, 1.0 - exposure,
+            ], magnitude=abs(central)),
+            drivers=["industry_trend↑", "exposure_low"],
+            rationale="行业利好但公司暴露度不足，龙头>二线 (spec §30 结构分化)",
+        )
+
+    if (
+        priced_in >= 0.5
+        and new_catalyst < 0.3
+        and abs(financial_revision) < 0.2
+        and abs(capital_flow) < 0.3
+    ):
+        return _mode_result(
+            MODE_DIGESTION,
+            confidence=_mode_confidence([
+                priced_in, 1.0 - new_catalyst,
+            ], magnitude=abs(central)),
+            drivers=["priced_in↑", "new_catalyst_low"],
+            rationale="利好部分定价 + 新催化不足 + 财务稳 + 资金轮动 (spec §30 震荡消化)",
+        )
+
+    if (
+        industry_trend >= 0.2
+        and financial_revision >= 0.0
+        and valuation_pressure < 0.8
+        and capital_flow >= 0.0
+        and expectation_gap < 0.4
+    ):
+        return _mode_result(
+            MODE_MODERATE_BULL,
+            confidence=_mode_confidence([
+                industry_trend, max(0.0, financial_revision),
+                max(0.0, capital_flow), 1.0 - valuation_pressure,
+            ], magnitude=central),
+            drivers=["industry_trend↑", "valuation_acceptable"],
+            rationale="基本面强 但预期差缩 估值合理 资金稳 (spec §30 温和多头)",
+        )
+
+    # ---- catch-all: fall back to wait_for_confirmation, but if the central
+    # score is meaningfully negative, default to trend_reversal so the
+    # caller never sees a contradictory (strong_bull, score=-0.5) result.
+    if central <= -0.20:
+        return _mode_result(
+            MODE_TREND_REVERSAL,
+            confidence=min(1.0, abs(central)),
+            drivers=["score_net_negative"],
+            rationale="多个负向因素叠加 (fallback, score<-0.2)",
+        )
+
+    return _mode_result(
+        MODE_WAIT_FOR_CONFIRMATION,
+        confidence=0.3,
+        drivers=["signals_insufficient"],
+        rationale="信号不足以触发任何 spec §30 明确模式，等待数据补充",
+    )
+
+
+def _mode_confidence(positives: Iterable[float], magnitude: float = 0.0) -> float:
+    """Combine the rule's gating signals into a confidence in ``[0, 1]``.
+
+    The average of the positive gating signals is multiplied by a mild
+    magnitude factor so a barely-passing rule on a near-zero score
+    doesn't claim 1.0 confidence.
+    """
+
+    vals = [_clip(_coerce_float(v), 0.0, 1.5) for v in positives]
+    if not vals:
+        return 0.5
+    base = sum(vals) / len(vals)
+    base = _clip(base, 0.0, 1.0)
+    # Magnitude penalty: if |central| < 0.05, scale the confidence by 0.5.
+    if abs(magnitude) < 0.05:
+        base *= 0.5
+    return _clip(base, 0.0, 1.0)
+
+
+def _mode_result(
+    mode: str,
+    *,
+    confidence: float,
+    drivers: list[str],
+    rationale: str,
+) -> dict[str, Any]:
+    return {
+        "mode": mode,
+        "mode_display": MODE_DISPLAY.get(mode, mode),
+        "confidence": _clip(confidence, 0.0, 1.0),
+        "primary_drivers": list(drivers),
+        "rationale": rationale,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Trading signal
+# ---------------------------------------------------------------------------
+
+
+def _trading_signal_from_mix(short_t: float, medium_t: float, long_t: float,
+                             horizon_weights: Mapping[str, float] | None = None) -> str:
+    """Translate the weighted final-score mix into a BUY/HOLD/WATCH/AVOID label.
+
+    Default horizon weighting is per ``HORIZON_DEFAULT_WEIGHTS``. The
+    thresholds are spec-derived (§27.4 maps the final score to the
+    trading-meaning column): a clean bull (multi-driver positive) crosses
+    BUY at ~0.5; a flat picture sits in HOLD/WATCH; net-negative goes
+    to AVOID.
+    """
+
+    w = horizon_weights or HORIZON_DEFAULT_WEIGHTS
+    ws = _coerce_float(w.get("short"), 0.0)
+    wm = _coerce_float(w.get("medium"), 0.0)
+    wl = _coerce_float(w.get("long"), 0.0)
+    if ws + wm + wl <= 0:
+        ws, wm, wl = 1.0, 1.0, 1.0
+    total = ws + wm + wl
+    mix = (short_t * ws + medium_t * wm + long_t * wl) / total
+
+    if mix >= SIGNAL_BUY_THRESHOLD:
+        return "BUY"
+    if mix >= SIGNAL_HOLD_THRESHOLD:
+        return "HOLD"
+    if mix >= SIGNAL_WATCH_THRESHOLD:
+        return "WATCH"
+    return "AVOID"
+
+
+# ---------------------------------------------------------------------------
+# Top-level orchestrator
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _PathInfo:
+    """Lightweight handle to a path's score + metadata, for ranking."""
+
+    node_id: str
+    score: float
+    direction: float
+    rationale: str
+
+
+def _is_flat_aggregator_output(payload: Mapping[str, Any]) -> bool:
+    """Heuristic: A1's ``aggregate_company_graph`` returns a flat
+    ``{node_id: {score, short_score, medium_score, long_score, ...}}``
+    dict. Detect that shape so we can read both the flat form and the
+    "envelope" form ``{"nodes": {...}, "industry_variables": [...], ...}``
+    that callers can use to inject signals directly."""
+
+    if not isinstance(payload, Mapping) or not payload:
+        return False
+    for k, v in payload.items():
+        if not isinstance(v, Mapping):
+            continue
+        if {"score", "short_score", "medium_score", "long_score"} <= set(v.keys()) or "score" in v:
+            # Avoid mis-classifying an envelope where one key happens to be
+            # called e.g. "nodes" → its value is dict-of-list not dict-of-dict.
+            if isinstance(k, str) and k not in {"nodes", "industry_variables"}:
+                return True
+    return False
+
+
+def _collect_path_infos(
+    aggregated_nodes: Mapping[str, Any],
+) -> list[_PathInfo]:
+    """Pull per-node path scores out of the aggregator output.
+
+    Supports two shapes:
+
+      * **Envelope form** (used by ``score_company`` mock tests and by
+        callers that want to pre-compute paths): the aggregator output is
+        ``{"nodes": {node_id: {path_score, direction, name}}, ...}``.
+
+      * **Flat form** (the real ``aggregate_company_graph`` output):
+        ``{node_id: {score, short_score, ..., confidence}}``. We treat
+        ``score`` as the path score, ``direction`` derived from sign.
+
+    We tolerate missing fields by skipping them so a partially-populated
+    aggregator output never crashes scoring.
+    """
+
+    paths: list[_PathInfo] = []
+    flat = _is_flat_aggregator_output(aggregated_nodes)
+
+    if flat:
+        items: Iterable[tuple[str, Mapping[str, Any]]] = (
+            (k, v) for k, v in aggregated_nodes.items() if isinstance(v, Mapping)
+            and {"score", "short_score", "medium_score", "long_score"} <= set(v.keys())
+        )
+    else:
+        nodes = (aggregated_nodes or {}).get("nodes") or {}
+        if isinstance(nodes, list):
+            items = (
+                (str(n.get("node_id") or ""), n)
+                for n in nodes if isinstance(n, Mapping)
+            )
+        elif isinstance(nodes, dict):
+            items = ((k, v) for k, v in nodes.items() if isinstance(v, Mapping))
+        else:
+            items = ()
+
+    for node_id, node in items:
+        if not isinstance(node, Mapping):
+            continue
+        score = _coerce_float(node.get("path_score") or node.get("score"))
+        if score == 0.0 and not node.get("direction"):
+            continue
+        direction = _coerce_direction(node.get("direction") or score)
+        rationale = str(
+            node.get("rationale") or node.get("name") or node_id or ""
+        )
+        paths.append(_PathInfo(
+            node_id=str(node_id),
+            score=score,
+            direction=direction,
+            rationale=rationale,
+        ))
+    return paths
+
+
+def _top_paths(paths: Sequence[_PathInfo], n: int = 3) -> dict[str, list[dict[str, Any]]]:
+    """Pick top ``n`` positive paths (highest score) and top ``n`` negative
+    paths (lowest score). Returns lists of plain dicts (JSON-friendly)."""
+
+    positive = sorted(
+        (p for p in paths if p.score > 0), key=lambda p: -p.score
+    )[:n]
+    negative = sorted(
+        (p for p in paths if p.score < 0), key=lambda p: p.score
+    )[:n]
+    return {
+        "positive": [
+            {"node_id": p.node_id, "score": p.score, "rationale": p.rationale}
+            for p in positive
+        ],
+        "negative": [
+            {"node_id": p.node_id, "score": p.score, "rationale": p.rationale}
+            for p in negative
+        ],
+    }
+
+
+def _signals_from_inputs(
+    company_score: Mapping[str, Any],
+    aggregated_nodes: Mapping[str, Any] | None,
+    coverage_report: Mapping[str, Any] | None,
+    realtime_data: Mapping[str, Any] | None,
+) -> dict[str, float]:
+    """Build the spec §30 signal pack from the upstream inputs.
+
+    Aggregator / coverage / realtime payloads are all dict-shaped contracts;
+    we fall back to neutral values if a field is missing so scoring stays
+    robust to partial data."""
+
+    aggregated_nodes = aggregated_nodes or {}
+    coverage_report = coverage_report or {}
+    realtime_data = realtime_data or {}
+
+    # Industry trend: aggregator may surface this on the company-level node
+    # (the L0 industry block). Fall back to the sign of industry_contrib.
+    industry_trend = _coerce_float(
+        aggregated_nodes.get("industry_trend"),
+        default=_clip_to_unit_signed(
+            company_score.get("components", {}).get("industry_contrib", 0.0)
+        ),
+    )
+
+    # Coverage report may be either the legacy ``{data_coverage: ...}``
+    # shape or A2's nested ``{overall: {data_coverage: ...}}``.
+    cov_overall: Mapping[str, Any] = {}
+    if isinstance(coverage_report.get("overall"), Mapping):
+        cov_overall = coverage_report["overall"]
+    cov_data = _coerce_float(
+        cov_overall.get("data_coverage")
+        if cov_overall else coverage_report.get("data_coverage"),
+        0.5,
+    )
+
+    exposure = _coerce_float(
+        aggregated_nodes.get("company_exposure_overall"),
+        default=cov_data,
+    )
+
+    # Pull additional signals from aggregator if available; otherwise
+    # synthesise from company-score components.
+    components = company_score.get("components") or {}
+    capital_flow = _coerce_float(
+        aggregated_nodes.get("capital_flow"),
+        default=_clip_to_unit_signed(_coerce_float(components.get("capital"))),
+    )
+    expectation_gap = _coerce_float(
+        aggregated_nodes.get("expectation_gap"),
+        default=0.0,
+    )
+    valuation_pressure = _coerce_float(
+        aggregated_nodes.get("valuation_pressure"),
+        default=_clip(_coerce_float(components.get("valuation_pressure")), 0.0, 1.0),
+    )
+    priced_in = _coerce_float(
+        aggregated_nodes.get("priced_in"),
+        default=_clip(_coerce_float(components.get("priced_in")), 0.0, 1.0),
+    )
+    financial_revision = _coerce_float(
+        aggregated_nodes.get("financial_revision"),
+        default=0.0,
+    )
+    event_present = _coerce_float(
+        aggregated_nodes.get("event_present"),
+        default=1.0 if _coerce_float(components.get("event")) != 0.0 else 0.0,
+    )
+    new_catalyst = _coerce_float(
+        aggregated_nodes.get("new_catalyst"),
+        default=event_present,
+    )
+    operating_confirmed = _coerce_float(
+        aggregated_nodes.get("operating_confirmed"),
+        default=cov_data,
+    )
+
+    return {
+        "industry_trend": industry_trend,
+        "exposure": _clip(exposure, 0.0, 1.0),
+        "financial_revision": _clip(financial_revision, -1.0, 1.0),
+        "valuation_pressure": _clip(valuation_pressure, 0.0, 1.0),
+        "capital_flow": _clip(capital_flow, -1.0, 1.0),
+        "expectation_gap": _clip(expectation_gap, -1.0, 1.0),
+        "priced_in": _clip(priced_in, 0.0, 1.0),
+        "new_catalyst": _clip(new_catalyst, 0.0, 1.0),
+        "competition": _clip(
+            _coerce_float(aggregated_nodes.get("competition")), -1.0, 1.0,
+        ),
+        "event_present": _clip(event_present, 0.0, 1.0),
+        "operating_confirmed": _clip(operating_confirmed, 0.0, 1.0),
+    }
+
+
+def _clip_to_unit_signed(value: Any) -> float:
+    """Squash an arbitrary float to ``[-1, 1]`` via simple tanh-like clip."""
+
+    f = _coerce_float(value)
+    if f > 1.0:
+        return 1.0
+    if f < -1.0:
+        return -1.0
+    return f
+
+
+def _company_aggregate_from_flat(
+    aggregated_nodes: Mapping[str, Any], ts_code: str,
+) -> Mapping[str, Any] | None:
+    """Return the company-level node's aggregate from the flat shape.
+
+    A1's overlays use ``<ts_code>:company`` for the root node. Fall back
+    to the first node whose id ends in ``:company`` if the exact match
+    isn't found.
+    """
+
+    if not isinstance(aggregated_nodes, Mapping):
+        return None
+    if ts_code:
+        cid = f"{ts_code}:company"
+        node = aggregated_nodes.get(cid)
+        if isinstance(node, Mapping):
+            return node
+    for k, v in aggregated_nodes.items():
+        if isinstance(k, str) and k.endswith(":company") and isinstance(v, Mapping):
+            return v
+    return None
+
+
+def _has_role_governance(
+    aggregated_nodes: Mapping[str, Any],
+    stock_overlay: Mapping[str, Any],
+) -> bool:
+    for node in stock_overlay.get("nodes") or []:
+        if isinstance(node, Mapping) and (node.get("field_role") or node.get("score_target")):
+            return True
+    for value in aggregated_nodes.values():
+        if isinstance(value, Mapping) and (value.get("field_role") or value.get("score_target")):
+            return True
+    return False
+
+
+def _role_participates(node: Mapping[str, Any]) -> bool:
+    participates = node.get("participates_in_score")
+    if participates is not None and not bool(participates):
+        return False
+    if node.get("score_enabled") is not None and not bool(node.get("score_enabled")):
+        return False
+    role = node.get("field_role")
+    if role and str(role) in NON_SCORING_ROLES:
+        return False
+    return True
+
+
+def _sum_role_target(
+    aggregated_nodes: Mapping[str, Any],
+    target: str,
+    *,
+    absolute: bool = False,
+) -> float:
+    total = 0.0
+    for value in aggregated_nodes.values():
+        if not isinstance(value, Mapping):
+            continue
+        if value.get("score_target") != target:
+            continue
+        if not _role_participates(value):
+            continue
+        score = _coerce_float(value.get("score"), 0.0)
+        if absolute:
+            score = abs(score)
+        confidence = _coerce_float(value.get("confidence"), 1.0)
+        total += score * confidence
+    return total
+
+
+def _sum_role_targets(
+    aggregated_nodes: Mapping[str, Any],
+    targets: set[str],
+    *,
+    absolute: bool = False,
+) -> float:
+    return sum(
+        _sum_role_target(aggregated_nodes, target, absolute=absolute)
+        for target in targets
+    )
+
+
+def _multiplier_factor_from_targets(
+    aggregated_nodes: Mapping[str, Any],
+    targets: set[str],
+) -> float:
+    signal = _sum_role_targets(aggregated_nodes, targets)
+    return 1.0 + _clip(signal, -0.5, 1.0)
+
+
+def _confidence_multiplier_from_flat(aggregated_nodes: Mapping[str, Any]) -> float:
+    factors: list[float] = []
+    for value in aggregated_nodes.values():
+        if not isinstance(value, Mapping):
+            continue
+        if value.get("score_target") != "confidence_multiplier":
+            continue
+        if not _role_participates(value):
+            continue
+        confidence = _clip(_coerce_float(value.get("confidence"), 1.0), 0.0, 1.0)
+        coverage = value.get("data_coverage")
+        if coverage is not None:
+            confidence *= _clip(_coerce_float(coverage, 1.0), 0.0, 1.0)
+        factors.append(confidence)
+    if not factors:
+        return 1.0
+    return sum(factors) / len(factors)
+
+
+def _role_components_from_flat(aggregated_nodes: Mapping[str, Any]) -> dict[str, float]:
+    multiplier_targets = {
+        "multiplier_stack",
+        "funding_multiplier",
+        "theme_multiplier",
+        "sentiment_multiplier",
+        "policy_sensitivity_multiplier",
+        "market_regime_multiplier",
+        "reflexivity_multiplier",
+        "liquidity_multiplier",
+        "options_momentum_multiplier",
+        "gamma_multiplier",
+        "valuation_sensitivity_multiplier",
+        "rate_sensitivity_multiplier",
+        "narrative_sensitivity_multiplier",
+    }
+    multiplier_stack = _multiplier_factor_from_targets(
+        aggregated_nodes, multiplier_targets,
+    )
+    return {
+        "expectation_gap": _sum_role_target(aggregated_nodes, "expectation_gap"),
+        "valuation_rerating": _sum_role_target(aggregated_nodes, "valuation_rerating"),
+        "funding_score": _sum_role_target(aggregated_nodes, "funding_score"),
+        "sentiment_score": _sum_role_target(aggregated_nodes, "sentiment_score"),
+        "capital_sentiment": _sum_role_targets(
+            aggregated_nodes,
+            {"capital_sentiment", "funding_score", "sentiment_score"},
+        ),
+        "risk_discount": _sum_role_targets(
+            aggregated_nodes,
+            {"risk_discount", "uncertainty_discount", "volatility_risk", "overheat_risk"},
+            absolute=True,
+        ),
+        "valuation_pressure": _sum_role_target(
+            aggregated_nodes, "valuation_pressure", absolute=True,
+        ),
+        "priced_in_discount": _sum_role_targets(
+            aggregated_nodes,
+            {"priced_in_discount", "option_priced_in", "time_decay"},
+            absolute=True,
+        ),
+        "funding_multiplier": _multiplier_factor_from_targets(
+            aggregated_nodes, {"funding_multiplier"},
+        ),
+        "theme_multiplier": _multiplier_factor_from_targets(
+            aggregated_nodes, {"theme_multiplier"},
+        ),
+        "policy_sensitivity_multiplier": _multiplier_factor_from_targets(
+            aggregated_nodes, {"policy_sensitivity_multiplier"},
+        ),
+        "market_regime_multiplier": _multiplier_factor_from_targets(
+            aggregated_nodes, {"market_regime_multiplier"},
+        ),
+        "reflexivity_multiplier": _multiplier_factor_from_targets(
+            aggregated_nodes, {"reflexivity_multiplier"},
+        ),
+        "valuation_sensitivity_multiplier": _multiplier_factor_from_targets(
+            aggregated_nodes,
+            {
+                "valuation_sensitivity_multiplier",
+                "rate_sensitivity_multiplier",
+                "narrative_sensitivity_multiplier",
+            },
+        ),
+        "multiplier_stack": multiplier_stack,
+        "confidence_multiplier": _confidence_multiplier_from_flat(aggregated_nodes),
+    }
+
+
+def _industry_variables_from_flat(
+    aggregated_nodes: Mapping[str, Any],
+    stock_overlay: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Synthesize an industry-variable list from the flat aggregator output.
+
+    For every node in the overlay whose layer is industry-*, look up the
+    aggregator's score for that node and produce the dict shape that
+    ``compute_company_score`` expects (score + exposure + share + …).
+
+    The overlay's ``materiality`` / ``exposure`` slots are used as the
+    multiplicative inputs; when a slot is null we fall back to 1.0 so
+    the variable still participates with its raw score.
+    """
+
+    nodes_yaml = stock_overlay.get("nodes") or []
+    out: list[dict[str, Any]] = []
+    use_governance = _has_role_governance(aggregated_nodes, stock_overlay)
+    for n in nodes_yaml:
+        if not isinstance(n, Mapping):
+            continue
+        node_id = n.get("node_id")
+        agg = aggregated_nodes.get(node_id) if isinstance(node_id, str) else None
+        if not isinstance(agg, Mapping):
+            continue
+        if use_governance:
+            merged_role = agg.get("field_role") or n.get("field_role")
+            merged_target = agg.get("score_target") or n.get("score_target")
+            role_node = {
+                "field_role": merged_role,
+                "score_target": merged_target,
+                "participates_in_score": (
+                    agg.get("participates_in_score")
+                    if agg.get("participates_in_score") is not None
+                    else n.get("participates_in_score")
+                ),
+                "score_enabled": agg.get("score_enabled"),
+            }
+            if not _role_participates(role_node):
+                continue
+            if merged_target not in {
+                "fundamental_score",
+                "base_score",
+                "node_score",
+                "parent_score",
+                "optionality_score",
+            }:
+                continue
+            if merged_role not in {"score_component", "derived_metric", "gate", "aggregation"}:
+                continue
+        else:
+            layer = str(n.get("layer") or "")
+            if not (layer.startswith("industry") or layer.startswith("company_position")):
+                continue
+        out.append({
+            "name": n.get("node_name") or n.get("dp_id") or node_id,
+            "node_id": node_id,
+            "score": _coerce_float(agg.get("score"), 0.0),
+            "exposure": _coerce_float(n.get("exposure"), 1.0),
+            "revenue_share": _coerce_float(
+                n.get("revenue_share") or n.get("materiality"), 1.0,
+            ),
+            "profit_elasticity": _coerce_float(
+                n.get("profit_elasticity"), 1.0,
+            ),
+            "financial_sensitivity": _coerce_float(
+                n.get("financial_sensitivity"), 1.0,
+            ),
+            "valuation_sensitivity": _coerce_float(
+                n.get("valuation_sensitivity"), 1.0,
+            ),
+            "direction": n.get("direction") or "neutral",
+            "confidence": _coerce_float(agg.get("confidence"), 0.0),
+            "materiality": _coerce_float(n.get("materiality"), 1.0),
+        })
+    return out
+
+
+def score_company(
+    stock_overlay: Mapping[str, Any],
+    aggregated_nodes: Mapping[str, Any] | None = None,
+    coverage_report: Mapping[str, Any] | None = None,
+    realtime_data: Mapping[str, Any] | None = None,
+    horizons: Mapping[str, Mapping[str, float]] | None = None,
+    horizon_weights: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
+    """Top-level scoring driver.
+
+    Combines:
+      1. ``compute_company_score`` from the aggregator's industry-variable
+         scores plus the company-level event/capital/risk slots.
+      2. ``compute_final_score`` from the company score + expectation_gap +
+         valuation_rerating + capital_sentiment, with per-horizon mixing.
+      3. ``classify_mode`` (spec §30) using a signal pack derived from
+         aggregator + coverage + realtime data.
+      4. Top-3 positive / negative paths surfaced by the aggregator.
+
+    All upstream payloads are **dict-shaped contracts** so this module
+    stays decoupled from A1/A2's implementation details.
+    """
+
+    aggregated_nodes = aggregated_nodes or {}
+    coverage_report = coverage_report or {}
+    realtime_data = realtime_data or {}
+
+    ts_code = str(stock_overlay.get("ts_code") or "")
+    industry_id = str(stock_overlay.get("industry_id") or "")
+
+    # Detect whether the caller passed the **flat** aggregator output
+    # (real ``aggregate_company_graph`` result) or the **envelope** form
+    # (used by tests that want to inject industry_variables directly).
+    flat = _is_flat_aggregator_output(aggregated_nodes)
+    role_components: dict[str, float] = {}
+
+    if flat:
+        # Re-shape: pull the company-level node's aggregate as the
+        # `fundamental` proxy, and surface industry-layer leaves/parents
+        # as the industry_variables block.
+        industry_variables = _industry_variables_from_flat(
+            aggregated_nodes, stock_overlay
+        )
+        # Look up company node aggregate so risk/priced-in/discount hooks
+        # populated by the aggregator are propagated.
+        company_aggregate = _company_aggregate_from_flat(
+            aggregated_nodes, ts_code
+        )
+        role_components = (
+            _role_components_from_flat(aggregated_nodes)
+            if _has_role_governance(aggregated_nodes, stock_overlay)
+            else {}
+        )
+        company_event_score = _coerce_float(
+            aggregated_nodes.get("company_event_score"), 0.0,
+        )  # not yet computed by A1; default to 0
+        capital_sentiment = _coerce_float(
+            aggregated_nodes.get("capital_sentiment_score"),
+            role_components.get("capital_sentiment", 0.0),
+        )
+        risk_discount = _coerce_float(
+            company_aggregate.get("risk_discount") if company_aggregate else None,
+            role_components.get("risk_discount", 0.0),
+        )
+        valuation_pressure = _coerce_float(
+            aggregated_nodes.get("valuation_pressure"),
+            role_components.get("valuation_pressure", 0.0),
+        )
+        priced_in_discount = _coerce_float(
+            company_aggregate.get("priced_in_discount") if company_aggregate else None,
+            role_components.get("priced_in_discount", 0.0),
+        )
+        if role_components:
+            if capital_sentiment == 0.0:
+                capital_sentiment = role_components.get("capital_sentiment", 0.0)
+            if risk_discount == 0.0:
+                risk_discount = role_components.get("risk_discount", 0.0)
+            if priced_in_discount == 0.0:
+                priced_in_discount = role_components.get("priced_in_discount", 0.0)
+            if valuation_pressure == 0.0:
+                valuation_pressure = role_components.get("valuation_pressure", 0.0)
+    else:
+        industry_variables = aggregated_nodes.get("industry_variables") or []
+        company_event_score = _coerce_float(
+            aggregated_nodes.get("company_event_score"), 0.0,
+        )
+        capital_sentiment = _coerce_float(
+            aggregated_nodes.get("capital_sentiment_score"), 0.0,
+        )
+        risk_discount = _coerce_float(aggregated_nodes.get("risk_discount"), 0.0)
+        valuation_pressure = _coerce_float(
+            aggregated_nodes.get("valuation_pressure"), 0.0,
+        )
+        priced_in_discount = _coerce_float(
+            aggregated_nodes.get("priced_in_discount"), 0.0,
+        )
+
+    company_score = compute_company_score(
+        industry_variables=industry_variables,
+        company_event_score=company_event_score,
+        capital_sentiment_score=capital_sentiment,
+        risk_discount=risk_discount,
+        valuation_pressure=valuation_pressure,
+        priced_in_discount=priced_in_discount,
+    )
+
+    # Spec §27.4 decomposes the stock final score as
+    # ``fundamental + expectation_gap + valuation_rerating + capital_sentiment
+    #  - risk - priced_in``. To avoid double-counting capital sentiment +
+    # risk + priced_in (which §27.3's company score also subtracts), we feed
+    # the **industry-driven business fundamentals** as the fundamental
+    # input, and the event signal as part of the fundamental too (since
+    # company-specific events are operational, not market-driven). Capital
+    # sentiment / risk / priced-in are then injected once at the §27.4 level.
+    industry_contrib = company_score["components"]["industry_contrib"]
+    fundamental = industry_contrib + company_event_score
+    if role_components:
+        fundamental *= role_components.get("multiplier_stack", 1.0)
+    expectation_gap_score = _coerce_float(
+        aggregated_nodes.get("expectation_gap_score"),
+        role_components.get("expectation_gap", 0.0),
+    )
+    valuation_rerating_score = _coerce_float(
+        aggregated_nodes.get("valuation_rerating_score"),
+        role_components.get("valuation_rerating", 0.0),
+    )
+    if role_components:
+        if expectation_gap_score == 0.0:
+            expectation_gap_score = role_components.get("expectation_gap", 0.0)
+        if valuation_rerating_score == 0.0:
+            valuation_rerating_score = role_components.get("valuation_rerating", 0.0)
+
+    path_infos = _collect_path_infos(aggregated_nodes)
+    top = _top_paths(path_infos, n=3)
+
+    final = compute_final_score(
+        fundamental_score=fundamental,
+        expectation_gap_score=expectation_gap_score,
+        valuation_rerating_score=valuation_rerating_score,
+        capital_sentiment_score=capital_sentiment,
+        risk_discount=risk_discount,
+        priced_in_discount=priced_in_discount,
+        horizons=horizons,
+        primary_positive_path=top["positive"],
+        primary_negative_path=top["negative"],
+    )
+    confidence_multiplier = role_components.get("confidence_multiplier", 1.0)
+    if role_components and confidence_multiplier < 1.0:
+        for key in ("short_total", "medium_total", "long_total", "base_score"):
+            final[key] *= confidence_multiplier
+        final["components"]["confidence_multiplier"] = confidence_multiplier
+        final["trading_meaning"] = _describe_trading_meaning(
+            final["short_total"], final["medium_total"], final["long_total"]
+        )
+    core_final = dict(final)
+    market_adapter = apply_market_adapter(
+        final_score=core_final,
+        role_components=role_components,
+        stock_overlay=stock_overlay,
+        ts_code=ts_code,
+    )
+    market_final = market_adapter["adjusted_final_score"]
+
+    signals = _signals_from_inputs(
+        company_score=company_score,
+        aggregated_nodes=aggregated_nodes,
+        coverage_report=coverage_report,
+        realtime_data=realtime_data,
+    )
+    mode = classify_mode(final_score=market_final, signals=signals)
+
+    signal = _trading_signal_from_mix(
+        market_final["short_total"], market_final["medium_total"], market_final["long_total"],
+        horizon_weights=horizon_weights,
+    )
+
+    return {
+        "ts_code": ts_code,
+        "industry_id": industry_id,
+        "short_total": market_final["short_total"],
+        "medium_total": market_final["medium_total"],
+        "long_total": market_final["long_total"],
+        "mode": mode["mode"],
+        "mode_display": mode["mode_display"],
+        "mode_confidence": mode["confidence"],
+        "mode_rationale": mode["rationale"],
+        "mode_drivers": mode["primary_drivers"],
+        "company_score": company_score,
+        "core_final_score": core_final,
+        "final_score": market_final,
+        "market_adjusted_final_score": market_final,
+        "market_adapter": market_adapter,
+        "top_paths": top,
+        "trading_signal": signal,
+        "signals": signals,
+        "role_components": role_components,
+    }
+
+
+__all__ = [
+    "HORIZON_DEFAULT_WEIGHTS",
+    "MODE_DE_RATING",
+    "MODE_DIGESTION",
+    "MODE_DISPLAY",
+    "MODE_MODERATE_BULL",
+    "MODE_STRONG_BULL",
+    "MODE_STRUCTURAL_DIVERGENCE",
+    "MODE_TREND_REVERSAL",
+    "MODE_WAIT_FOR_CONFIRMATION",
+    "SIGNAL_BUY_THRESHOLD",
+    "SIGNAL_HOLD_THRESHOLD",
+    "SIGNAL_WATCH_THRESHOLD",
+    "classify_mode",
+    "compute_company_score",
+    "compute_final_score",
+    "compute_node_score",
+    "compute_path_score",
+    "score_company",
+]

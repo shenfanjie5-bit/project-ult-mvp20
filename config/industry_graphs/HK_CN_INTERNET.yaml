@@ -1,0 +1,885 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: HK_CN_INTERNET
+industry_name_cn: 港股互联网中概科技与平台经济
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 港股互联网
+      - 中概科技
+      - 平台电商
+      - 本地生活
+      - 游戏
+      - 广告
+      - 云计算
+      - AI 应用
+      - 在线娱乐
+      - 恒生科技
+    core_judgment: >-
+      该板块的核心是平台经济政策稳定、消费和广告修复、AI 应用商业化、回购分
+      红、南向/外资资金流和估值折价修复。需要同时看收入增长与资本开支压力。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注政策估值、消费电商、AI 应用、股东回报、成本控制、竞争风险。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.10}
+    - {name: 温和多头, probability: 0.25}
+    - {name: 结构分化, probability: 0.25}
+    - {name: 等待验证, probability: 0.20}
+    - {name: 杀估值, probability: 0.20}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、季报}
+      - {name: price_implied_expectation, description: 股价隐含, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 政策 / 新闻}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 季报披露质量}
+      - {name: tail_risk_prob, description: 尾部风险, source: 监管 / 补贴战}
+
+  path_dedup_groups: [政策组, 需求组, 技术组, 资金组, 盈利组, 风险组]
+
+  exposure:
+    factors:
+      - 平台政策受益度
+      - 电商 / 广告 / 云收入占比
+      - AI 应用变现能力
+      - 回购 / 分红规模
+      - 现金流安全
+      - 海外业务占比
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 政策稳定 + AI 商业化领先 + 现金流强
+      "4": 政策稳定但增长一般
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: GMV / 广告 / 订阅
+      GrossMargin: 补贴 / 商品结构
+      OpexRatio: 营销与 AI Capex
+      EBIT_EPS: 利润弹性
+      FCF: 自由现金流是核心
+      Leverage: 大平台一般低
+
+  valuation_mix:
+    weights:
+      PE: 0.30
+      DCF_FCF: 0.25
+      PS: 0.20
+      SOTP: 0.20
+      Dividend_Buyback: 0.05
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 平台监管突发
+      - 补贴战 / 价格战
+      - AI Capex 高但收入慢
+      - 海外审查与制裁
+      - 消费疲弱
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 政策表述与监管事件
+    - GMV / take rate / 广告 / 云收入
+    - AI 功能使用率 / ARPU
+    - 回购规模 / 分红率 / FCF
+    - 补贴率 / Capex / 毛利率
+    - 南向 / 外资资金流
+
+  falsification:
+    bullish_triggers:
+      - 政策稳定 + 风险溢价下降
+      - GMV 与广告同向上修
+      - AI 商业化数据兑现
+      - 回购分红规模扩大
+    bearish_triggers:
+      - 监管趋严或突发事件
+      - 补贴战延续 + 利润率下行
+      - AI Capex 高 + 收入不可见
+      - FCF 下行 + 回购不可持续
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到财务向量与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    港股互联网中概的图谱重点是政策稳定 + 消费和 AI 商业化兑现 + 现金回报，避免
+    被监管尾部和补贴战吞掉估值修复。
+
+nodes:
+  - id: EVENT.platform_policy_stable
+    layer: event
+    type: policy_event
+    label_cn: 平台政策稳定
+    industry_tags: [HK_CN_INTERNET]
+  - id: EVENT.consumer_recovery
+    layer: event
+    type: demand_event
+    label_cn: 消费修复 (GMV / 广告)
+    industry_tags: [HK_CN_INTERNET]
+  - id: EVENT.ai_application_breakthrough
+    layer: event
+    type: technology_event
+    label_cn: AI 产品提升转化 / 效率
+    industry_tags: [HK_CN_INTERNET, AI_COMPUTE]
+  - id: EVENT.buyback_dividend_uplift
+    layer: event
+    type: capital_return_event
+    label_cn: 回购分红增加
+    industry_tags: [HK_CN_INTERNET]
+  - id: EVENT.cost_efficiency_initiative
+    layer: event
+    type: cost_event
+    label_cn: 降本增效
+    industry_tags: [HK_CN_INTERNET]
+  - id: EVENT.subsidy_war_escalation
+    layer: event
+    type: cost_event
+    label_cn: 补贴战 / AI Capex 上升
+    industry_tags: [HK_CN_INTERNET]
+
+  - id: SIGNAL.regulatory_premium
+    layer: industry_signal
+    type: policy_signal
+    label_cn: 风险溢价 / 估值折价修复
+    industry_tags: [HK_CN_INTERNET]
+  - id: SIGNAL.gmv_take_rate
+    layer: industry_signal
+    type: demand_signal
+    label_cn: GMV / take rate / 广告收入
+    industry_tags: [HK_CN_INTERNET]
+  - id: SIGNAL.ai_arpu
+    layer: industry_signal
+    type: tech_signal
+    label_cn: AI 功能使用率 / ARPU
+    industry_tags: [HK_CN_INTERNET]
+  - id: SIGNAL.buyback_pace
+    layer: industry_signal
+    type: capital_signal
+    label_cn: 回购 / 分红规模
+    industry_tags: [HK_CN_INTERNET]
+  - id: SIGNAL.opex_ratio
+    layer: industry_signal
+    type: cost_signal
+    label_cn: 费用率 / 利润率
+    industry_tags: [HK_CN_INTERNET]
+
+  - id: FIN.internet_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 行业收入
+    industry_tags: [HK_CN_INTERNET]
+    properties: {field: Revenue}
+  - id: FIN.internet_fcf
+    layer: financial
+    type: financial_vector
+    label_cn: 行业 FCF
+    industry_tags: [HK_CN_INTERNET]
+    properties: {field: FCF}
+
+  - id: VAL.internet_growth_multiple
+    layer: valuation
+    type: growth_multiple
+    label_cn: 互联网成长估值
+    industry_tags: [HK_CN_INTERNET]
+
+  - id: RISK.regulatory_shock
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 监管突发
+    industry_tags: [HK_CN_INTERNET]
+  - id: RISK.profit_squeeze
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 利润率压缩 (补贴 / Capex)
+    industry_tags: [HK_CN_INTERNET]
+
+  - id: COMPANY.HK_CN_INTERNET_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 港股互联网中概代表 ETF
+    industry_tags: [HK_CN_INTERNET]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.002230_SZ
+    layer: stock
+    type: company
+    label_cn: 科大讯飞
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 002230.SZ, role: target}
+  - id: COMPANY.002555_SZ
+    layer: stock
+    type: company
+    label_cn: 三七互娱
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 002555.SZ, role: target}
+  - id: COMPANY.002624_SZ
+    layer: stock
+    type: company
+    label_cn: 完美世界
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 002624.SZ, role: target}
+  - id: COMPANY.00700_HK
+    layer: stock
+    type: company
+    label_cn: 腾讯控股
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 00700.HK, role: target}
+  - id: COMPANY.01024_HK
+    layer: stock
+    type: company
+    label_cn: 快手-W
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 01024.HK, role: target}
+  - id: COMPANY.01810_HK
+    layer: stock
+    type: company
+    label_cn: 小米集团-W
+    industry_tags: [HK_CN_INTERNET, CONSUMER_ELECTRONICS]
+    properties: {ts_code: 01810.HK, role: target}
+  - id: COMPANY.03690_HK
+    layer: stock
+    type: company
+    label_cn: 美团-W
+    industry_tags: [DOMESTIC_CONSUMPTION, HK_CN_INTERNET]
+    properties: {ts_code: 03690.HK, role: target}
+  - id: COMPANY.09618_HK
+    layer: stock
+    type: company
+    label_cn: 京东集团-SW
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 09618.HK, role: target}
+  - id: COMPANY.09626_HK
+    layer: stock
+    type: company
+    label_cn: 哔哩哔哩-W
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 09626.HK, role: target}
+  - id: COMPANY.09888_HK
+    layer: stock
+    type: company
+    label_cn: 百度集团-SW
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 09888.HK, role: target}
+  - id: COMPANY.09961_HK
+    layer: stock
+    type: company
+    label_cn: 携程集团-S
+    industry_tags: [DOMESTIC_CONSUMPTION, HK_CN_INTERNET]
+    properties: {ts_code: 09961.HK, role: target}
+  - id: COMPANY.09988_HK
+    layer: stock
+    type: company
+    label_cn: 阿里巴巴-W
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 09988.HK, role: target}
+  - id: COMPANY.09999_HK
+    layer: stock
+    type: company
+    label_cn: 网易-S
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 09999.HK, role: target}
+  - id: COMPANY.300033_SZ
+    layer: stock
+    type: company
+    label_cn: 同花顺
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 300033.SZ, role: target}
+  - id: COMPANY.300059_SZ
+    layer: stock
+    type: company
+    label_cn: 东方财富
+    industry_tags: [FINANCIAL_HIGH_DIVIDEND, HK_CN_INTERNET]
+    properties: {ts_code: 300059.SZ, role: target}
+  - id: COMPANY.300413_SZ
+    layer: stock
+    type: company
+    label_cn: 芒果超媒
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 300413.SZ, role: target}
+  - id: COMPANY.300418_SZ
+    layer: stock
+    type: company
+    label_cn: 昆仑万维
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 300418.SZ, role: target}
+  - id: COMPANY.601360_SH
+    layer: stock
+    type: company
+    label_cn: 三六零
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: 601360.SH, role: target}
+  - id: COMPANY.BABA_US
+    layer: stock
+    type: company
+    label_cn: Alibaba (ADR)
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: BABA.US, role: target}
+  - id: COMPANY.BEKE_US
+    layer: stock
+    type: company
+    label_cn: KE Holdings
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: BEKE.US, role: target}
+  - id: COMPANY.BIDU_US
+    layer: stock
+    type: company
+    label_cn: Baidu
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: BIDU.US, role: target}
+  - id: COMPANY.BILI_US
+    layer: stock
+    type: company
+    label_cn: Bilibili
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: BILI.US, role: target}
+  - id: COMPANY.FUTU_US
+    layer: stock
+    type: company
+    label_cn: Futu
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: FUTU.US, role: target}
+  - id: COMPANY.JD_US
+    layer: stock
+    type: company
+    label_cn: JD.com
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: JD.US, role: target}
+  - id: COMPANY.NTES_US
+    layer: stock
+    type: company
+    label_cn: NetEase
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: NTES.US, role: target}
+  - id: COMPANY.PDD_US
+    layer: stock
+    type: company
+    label_cn: PDD
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: PDD.US, role: target}
+  - id: COMPANY.TCOM_US
+    layer: stock
+    type: company
+    label_cn: Trip.com
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: TCOM.US, role: target}
+  - id: COMPANY.TME_US
+    layer: stock
+    type: company
+    label_cn: Tencent Music
+    industry_tags: [HK_CN_INTERNET]
+    properties: {ts_code: TME.US, role: target}
+
+edges:
+  - id: EDGE.HK.001
+    source: EVENT.platform_policy_stable
+    target: SIGNAL.regulatory_premium
+    relation: rerates_multiple
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.80
+    threshold: 市场资金确认
+    lag: 即时-2 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.002
+    source: SIGNAL.regulatory_premium
+    target: VAL.internet_growth_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.70
+    threshold: 估值修复
+    lag: 即时-2 quarters
+    dedup_group: 政策组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.003
+    source: EVENT.consumer_recovery
+    target: SIGNAL.gmv_take_rate
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.75
+    threshold: 收入与利润率同步
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.HK.004
+    source: SIGNAL.gmv_take_rate
+    target: FIN.internet_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.55
+    threshold: 收入兑现
+    lag: 1-2 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.005
+    source: EVENT.ai_application_breakthrough
+    target: SIGNAL.ai_arpu
+    relation: drives_arpu
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.85
+    threshold: 必须证明商业化
+    lag: 2-6 quarters
+    dedup_group: 技术组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.006
+    source: SIGNAL.ai_arpu
+    target: FIN.internet_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: AI 收入贡献
+    lag: 2-4 quarters
+    dedup_group: 技术组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.007
+    source: EVENT.buyback_dividend_uplift
+    target: SIGNAL.buyback_pace
+    relation: drives_capital_return
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.50
+    threshold: 现金流支撑
+    lag: 即时-4 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.008
+    source: SIGNAL.buyback_pace
+    target: VAL.internet_growth_multiple
+    relation: supports_multiple
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.50
+    threshold: 长线资金配置
+    lag: 即时-2 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.009
+    source: EVENT.cost_efficiency_initiative
+    target: SIGNAL.opex_ratio
+    relation: improves_margin
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.65
+    threshold: 利润率改善
+    lag: 1-4 quarters
+    dedup_group: 盈利组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.010
+    source: SIGNAL.opex_ratio
+    target: FIN.internet_fcf
+    relation: improves_fcf
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 现金流释放
+    lag: 1-3 quarters
+    dedup_group: 盈利组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.HK.011
+    source: VAL.internet_growth_multiple
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.65
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.HK.RISK.001
+    source: EVENT.subsidy_war_escalation
+    target: RISK.profit_squeeze
+    relation: triggers_tail_risk
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 1.05
+    threshold: 利润率和现金流受压
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.HK.RISK.002
+    source: RISK.profit_squeeze
+    target: VAL.internet_growth_multiple
+    relation: compresses_valuation
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.05
+    threshold: 估值压缩
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.HK.RISK.003
+    source: RISK.regulatory_shock
+    target: SIGNAL.regulatory_premium
+    relation: triggers_tail_risk
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.20
+    threshold: 监管突发
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.HK.MEMBER.001
+    source: COMPANY.002230_SZ
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.002
+    source: COMPANY.002555_SZ
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.003
+    source: COMPANY.002624_SZ
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.004
+    source: COMPANY.00700_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.005
+    source: COMPANY.01024_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.006
+    source: COMPANY.01810_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.007
+    source: COMPANY.03690_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.008
+    source: COMPANY.09618_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.009
+    source: COMPANY.09626_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.010
+    source: COMPANY.09888_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.011
+    source: COMPANY.09961_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.012
+    source: COMPANY.09988_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.013
+    source: COMPANY.09999_HK
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.014
+    source: COMPANY.300033_SZ
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.015
+    source: COMPANY.300059_SZ
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.016
+    source: COMPANY.300413_SZ
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.017
+    source: COMPANY.300418_SZ
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.018
+    source: COMPANY.601360_SH
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.019
+    source: COMPANY.BABA_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.020
+    source: COMPANY.BEKE_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.021
+    source: COMPANY.BIDU_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.022
+    source: COMPANY.BILI_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.023
+    source: COMPANY.FUTU_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.024
+    source: COMPANY.JD_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.025
+    source: COMPANY.NTES_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.026
+    source: COMPANY.PDD_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.027
+    source: COMPANY.TCOM_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.HK.MEMBER.028
+    source: COMPANY.TME_US
+    target: COMPANY.HK_CN_INTERNET_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 政策 / 消费 / AI / 回购 / 成本 → 互联网 alpha
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: GMV / AI ARPU / 回购 / FCF / 估值 高中心度
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 用户 / 商家 / 广告主 / 云客户对平台的影响
+    include_node_types: [company, demand_event, demand_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 监管 / 补贴战 / AI Capex 风险
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)

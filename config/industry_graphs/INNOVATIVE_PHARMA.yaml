@@ -1,0 +1,913 @@
+schema_version: 1
+template_version: v3.1.1
+industry_id: INNOVATIVE_PHARMA
+industry_name_cn: 创新药生物医药与生物制造
+graph_status: present
+
+priors:
+  boundary:
+    scope_segments:
+      - 创新药
+      - Biotech
+      - 抗体 / ADC / 细胞治疗 / 基因治疗
+      - CXO
+      - 医疗器械
+      - 疫苗
+      - 生物制造
+      - 合成生物
+      - 医药出海与 BD 授权
+    core_judgment: >-
+      该板块的核心不是医药整体贝塔，而是临床数据、审批进度、海外授权、商业化
+      放量和现金流安全。亏损公司不能用 EPS 弹性，需要用管线价值、现金跑道和
+      亏损收窄。
+
+  prediction_target:
+    equation: r_i_h = market_beta_i × r_market_h + sector_beta_i × r_sector_h + alpha_i_h
+    notes: 关注临床、BD、商业化、CXO、生物制造、尾部风险等路径。
+
+  state_probabilities:
+    - {name: 强多头, probability: 0.10}
+    - {name: 温和多头, probability: 0.10}
+    - {name: 结构分化, probability: 0.30}
+    - {name: 等待验证, probability: 0.25}
+    - {name: 杀估值, probability: 0.25}
+
+  shock_model:
+    formula: Shock_eff = Surprise_norm × Strength/5 × Novelty × Reliability × DataQuality × LagKernel × D_pre × D_post
+    fields:
+      - {name: consensus_expectation, description: 一致预期, source: 研报、临床预期}
+      - {name: price_implied_expectation, description: 股价隐含预期, source: 涨跌、ETF}
+      - {name: narrative_expectation, description: 叙事热度, source: 学术会议、新闻}
+      - {name: pre_event_runup, description: 事前涨幅, source: 5/20/60 日}
+      - {name: post_event_reaction, description: 事后反应, source: 公告后}
+      - {name: remaining_impact, description: 剩余影响, source: 理论 - 已反应}
+      - {name: data_quality, description: 数据质量, source: 主要终点 / P 值}
+      - {name: tail_risk_prob, description: 尾部风险, source: 临床失败、监管}
+
+  path_dedup_groups: [事件组, 资金组, 需求组, 技术组, 风险组]
+
+  exposure:
+    factors:
+      - 管线临床阶段（II/III）与适应症
+      - 主要终点的可预测性
+      - 海外 BD 授权概率与条款质量
+      - 现金跑道与融资能力
+      - 商业化放量的可重复性
+      - 生物制造的 TAM 与单位成本
+    formula: Exposure = Sign × RevenueShare^a × Directness × PassThrough × CompetitivePosition × GeoProductOverlap × MonetizationAbility × BalanceSheetCapacity
+    scoring:
+      "5": 关键临床数据 / BD / 商业化大概率成功
+      "4": 二线管线或商业化加速
+      "3": 业务关联但贡献不确定
+      "2": 主题映射弱
+      "1": 间接关系
+
+  financial_vector:
+    fields: [Revenue, GrossMargin, OpexRatio, EBIT, EPS, FCF, ROE, Leverage]
+    notes:
+      Revenue: 商业化与 BD 里程碑
+      GrossMargin: 工艺成本与产能利用率
+      OpexRatio: 研发投入大
+      EBIT_EPS: 多数公司亏损 → 关注亏损收窄
+      FCF: 现金跑道关键
+      Leverage: 高研发期需融资
+
+  valuation_mix:
+    weights:
+      SOTP_Pipeline: 0.40
+      DCF: 0.25
+      PS: 0.15
+      PE: 0.10
+      EV_EBITDA: 0.10
+    note: v3.1.1 weight policy
+
+  tail_risk:
+    risk_factors:
+      - 临床失败或安全性问题
+      - 监管延迟 / FDA 反馈差
+      - 现金不足导致融资稀释
+      - 海外授权失败或条款收窄
+      - CXO 客户研发预算缩减
+    formula_note: alpha_i_h = R_max_i_h × tanh((mu_base - q_tail × LossSeverity - lambda_CVaR × CVaR) / tau_h)
+
+  validation_signals:
+    - 临床数据公告与主要终点
+    - BD / 授权金额与条款
+    - 商业化销售数据与渠道覆盖
+    - CXO 在手订单与新签
+    - 现金余额与融资计划
+    - 产业链 / 学术会议反馈
+
+  falsification:
+    bullish_triggers:
+      - 关键临床数据阳性
+      - 大额海外授权落地
+      - 重磅商业化产品放量
+      - CXO 订单连续上修
+    bearish_triggers:
+      - 临床失败 / 安全性问题
+      - 监管反馈差
+      - 现金不足或融资稀释
+      - CXO 客户预算缩减
+
+  tradability_panel:
+    - {name: mu, formula: 路径影响聚合 - 风险, interpretation: 预期超额收益}
+    - {name: sigma, formula: 路径方差 + 临床方差, interpretation: 不确定性}
+    - {name: prob_up, formula: Phi(mu/sigma), interpretation: 上涨概率}
+    - {name: tradability, formula: mu/sigma - 成本与拥挤, interpretation: 可交易性}
+    - {name: residual_impact, formula: 理论影响 × D_pre × D_post, interpretation: 剩余未定价影响}
+
+  workflow_steps:
+    - 识别事件
+    - 计算 Surprise
+    - 扣除 D_pre / D_post
+    - 通过主路径传导
+    - 按相关性分组去重
+    - 映射到管线价值与混合估值
+    - 扣除尾部风险
+    - 输出 alpha 与可交易性
+
+  one_line_summary: >-
+    创新药生物医药的图谱重点是判断临床/BD/商业化路径是否真实兑现，并避免被亏
+    损与稀释吞掉看似的利好。
+
+nodes:
+  - id: EVENT.clinical_readout
+    layer: event
+    type: clinical_event
+    label_cn: 关键临床数据公布
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: EVENT.overseas_bd_deal
+    layer: event
+    type: deal_event
+    label_cn: 海外 BD / 授权交易
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: EVENT.regulatory_approval
+    layer: event
+    type: regulatory_event
+    label_cn: 获批上市
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: EVENT.cxo_orders_recovery
+    layer: event
+    type: customer_capex_event
+    label_cn: 全球研发投入恢复 / CXO 订单
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: EVENT.bio_manufacture_breakthrough
+    layer: event
+    type: technology_event
+    label_cn: 合成生物 / 生物制造成本下降
+    industry_tags: [INNOVATIVE_PHARMA]
+
+  - id: SIGNAL.pipeline_value
+    layer: industry_signal
+    type: pipeline_signal
+    label_cn: 管线价值重估
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: SIGNAL.bd_milestone_payment
+    layer: industry_signal
+    type: deal_signal
+    label_cn: 预付款 / 里程碑现金
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: SIGNAL.commercial_ramp
+    layer: industry_signal
+    type: demand_signal
+    label_cn: 销售放量
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: SIGNAL.cxo_capacity_utilization
+    layer: industry_signal
+    type: order_signal
+    label_cn: CXO 产能利用率
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: SIGNAL.bio_manufacture_tam
+    layer: industry_signal
+    type: tech_signal
+    label_cn: 生物制造 TAM
+    industry_tags: [INNOVATIVE_PHARMA]
+
+  - id: FIN.pharma_revenue
+    layer: financial
+    type: financial_vector
+    label_cn: 创新药收入
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {field: Revenue}
+  - id: FIN.cash_runway
+    layer: financial
+    type: financial_vector
+    label_cn: 现金跑道
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {field: FCF}
+
+  - id: VAL.pipeline_multiple
+    layer: valuation
+    type: pipeline_multiple
+    label_cn: 管线估值
+    industry_tags: [INNOVATIVE_PHARMA]
+
+  - id: RISK.clinical_failure
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 临床失败 / 安全性
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: RISK.cash_dilution
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 现金不足导致稀释
+    industry_tags: [INNOVATIVE_PHARMA]
+  - id: RISK.regulatory_delay
+    layer: risk
+    type: tail_risk_signal
+    label_cn: 监管延迟 / 反馈差
+    industry_tags: [INNOVATIVE_PHARMA]
+
+  - id: COMPANY.PHARMA_SECTOR
+    layer: stock
+    type: sector_etf
+    label_cn: 创新药板块代表 ETF
+    industry_tags: [INNOVATIVE_PHARMA]
+
+
+  # === Constituent companies (auto-appended from universe.yaml) ===
+  - id: COMPANY.01093_HK
+    layer: stock
+    type: company
+    label_cn: 石药集团
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 01093.HK, role: target}
+  - id: COMPANY.01177_HK
+    layer: stock
+    type: company
+    label_cn: 中国生物制药
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 01177.HK, role: target}
+  - id: COMPANY.01530_HK
+    layer: stock
+    type: company
+    label_cn: 三生制药
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 01530.HK, role: target}
+  - id: COMPANY.01801_HK
+    layer: stock
+    type: company
+    label_cn: 信达生物
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 01801.HK, role: target}
+  - id: COMPANY.02269_HK
+    layer: stock
+    type: company
+    label_cn: 药明生物
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 02269.HK, role: target}
+  - id: COMPANY.02359_HK
+    layer: stock
+    type: company
+    label_cn: 药明康德
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 02359.HK, role: target}
+  - id: COMPANY.03692_HK
+    layer: stock
+    type: company
+    label_cn: 翰森制药
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 03692.HK, role: target}
+  - id: COMPANY.06160_HK
+    layer: stock
+    type: company
+    label_cn: 百济神州
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 06160.HK, role: target}
+  - id: COMPANY.09926_HK
+    layer: stock
+    type: company
+    label_cn: 康方生物
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 09926.HK, role: target}
+  - id: COMPANY.09995_HK
+    layer: stock
+    type: company
+    label_cn: 荣昌生物
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 09995.HK, role: target}
+  - id: COMPANY.300347_SZ
+    layer: stock
+    type: company
+    label_cn: 泰格医药
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 300347.SZ, role: target}
+  - id: COMPANY.300759_SZ
+    layer: stock
+    type: company
+    label_cn: 康龙化成
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 300759.SZ, role: target}
+  - id: COMPANY.300760_SZ
+    layer: stock
+    type: company
+    label_cn: 迈瑞医疗
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 300760.SZ, role: target}
+  - id: COMPANY.600196_SH
+    layer: stock
+    type: company
+    label_cn: 复星医药
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 600196.SH, role: target}
+  - id: COMPANY.600276_SH
+    layer: stock
+    type: company
+    label_cn: 恒瑞医药
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 600276.SH, role: target}
+  - id: COMPANY.603259_SH
+    layer: stock
+    type: company
+    label_cn: 药明康德
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 603259.SH, role: target}
+  - id: COMPANY.688180_SH
+    layer: stock
+    type: company
+    label_cn: 君实生物
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 688180.SH, role: target}
+  - id: COMPANY.688235_SH
+    layer: stock
+    type: company
+    label_cn: 百济神州
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 688235.SH, role: target}
+  - id: COMPANY.688578_SH
+    layer: stock
+    type: company
+    label_cn: 艾力斯
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: 688578.SH, role: target}
+  - id: COMPANY.AMGN_US
+    layer: stock
+    type: company
+    label_cn: Amgen
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: AMGN.US, role: target}
+  - id: COMPANY.DHR_US
+    layer: stock
+    type: company
+    label_cn: Danaher
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: DHR.US, role: target}
+  - id: COMPANY.GILD_US
+    layer: stock
+    type: company
+    label_cn: Gilead
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: GILD.US, role: target}
+  - id: COMPANY.LLY_US
+    layer: stock
+    type: company
+    label_cn: Eli Lilly
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: LLY.US, role: target}
+  - id: COMPANY.MRK_US
+    layer: stock
+    type: company
+    label_cn: Merck
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: MRK.US, role: target}
+  - id: COMPANY.MRNA_US
+    layer: stock
+    type: company
+    label_cn: Moderna
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: MRNA.US, role: target}
+  - id: COMPANY.NVO_US
+    layer: stock
+    type: company
+    label_cn: Novo Nordisk
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: NVO.US, role: target}
+  - id: COMPANY.REGN_US
+    layer: stock
+    type: company
+    label_cn: Regeneron
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: REGN.US, role: target}
+  - id: COMPANY.TMO_US
+    layer: stock
+    type: company
+    label_cn: Thermo Fisher
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: TMO.US, role: target}
+  - id: COMPANY.VRTX_US
+    layer: stock
+    type: company
+    label_cn: Vertex
+    industry_tags: [INNOVATIVE_PHARMA]
+    properties: {ts_code: VRTX.US, role: target}
+
+edges:
+  - id: EDGE.PHARMA.001
+    source: EVENT.clinical_readout
+    target: SIGNAL.pipeline_value
+    relation: rerates_pipeline
+    polarity: positive
+    beta_positive: 0.95
+    beta_negative: 1.30
+    threshold: 主要终点阳性 + 安全性
+    lag: 即时-4 quarters
+    dedup_group: 事件组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.PHARMA.002
+    source: SIGNAL.pipeline_value
+    target: VAL.pipeline_multiple
+    relation: drives_multiple
+    polarity: positive
+    beta_positive: 0.85
+    beta_negative: 1.20
+    threshold: 估值切换
+    lag: 即时-2 quarters
+    dedup_group: 事件组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.PHARMA.003
+    source: EVENT.overseas_bd_deal
+    target: SIGNAL.bd_milestone_payment
+    relation: drives_cash
+    polarity: positive
+    beta_positive: 0.85
+    beta_negative: 0.75
+    threshold: 预付款条款质量
+    lag: 即时-2 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.PHARMA.004
+    source: SIGNAL.bd_milestone_payment
+    target: FIN.cash_runway
+    relation: extends_runway
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.55
+    threshold: 现金跑道延长
+    lag: 即时-2 quarters
+    dedup_group: 资金组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.PHARMA.005
+    source: EVENT.regulatory_approval
+    target: SIGNAL.commercial_ramp
+    relation: enables_ramp
+    polarity: positive
+    beta_positive: 0.75
+    beta_negative: 0.80
+    threshold: 销售放量
+    lag: 2-8 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain, core_factor]
+  - id: EDGE.PHARMA.006
+    source: SIGNAL.commercial_ramp
+    target: FIN.pharma_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.70
+    beta_negative: 0.65
+    threshold: 真实销售与复购
+    lag: 1-4 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.PHARMA.007
+    source: EVENT.cxo_orders_recovery
+    target: SIGNAL.cxo_capacity_utilization
+    relation: drives_orders
+    polarity: positive
+    beta_positive: 0.60
+    beta_negative: 0.70
+    threshold: 在手订单回暖
+    lag: 2-6 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, supply_chain]
+  - id: EDGE.PHARMA.008
+    source: SIGNAL.cxo_capacity_utilization
+    target: FIN.pharma_revenue
+    relation: drives_revenue
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.55
+    threshold: 产能利用率上行
+    lag: 1-3 quarters
+    dedup_group: 需求组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.PHARMA.009
+    source: EVENT.bio_manufacture_breakthrough
+    target: SIGNAL.bio_manufacture_tam
+    relation: expands_tam
+    polarity: positive
+    beta_positive: 0.65
+    beta_negative: 0.85
+    threshold: 试验转商业订单
+    lag: 3-10 quarters
+    dedup_group: 技术组
+    views: [causal_propagation, core_factor]
+  - id: EDGE.PHARMA.010
+    source: VAL.pipeline_multiple
+    target: COMPANY.PHARMA_SECTOR
+    relation: drives_alpha
+    polarity: positive
+    beta_positive: 0.55
+    beta_negative: 0.70
+    threshold: 估值传导到 alpha
+    lag: 即时-2 quarters
+    dedup_group: 事件组
+    views: [causal_propagation, core_factor]
+
+  - id: EDGE.PHARMA.RISK.001
+    source: EVENT.clinical_readout
+    target: RISK.clinical_failure
+    relation: triggers_tail_risk
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.40
+    threshold: 主要终点阴性
+    lag: 即时-1 quarter
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.PHARMA.RISK.002
+    source: RISK.clinical_failure
+    target: VAL.pipeline_multiple
+    relation: compresses_valuation
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.40
+    threshold: 管线价值塌陷
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.PHARMA.RISK.003
+    source: FIN.cash_runway
+    target: RISK.cash_dilution
+    relation: triggers_tail_risk
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.20
+    threshold: 现金跑道不足 12 个月
+    lag: 即时-6 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.PHARMA.RISK.004
+    source: RISK.cash_dilution
+    target: COMPANY.PHARMA_SECTOR
+    relation: drags_alpha
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.10
+    threshold: 融资稀释
+    lag: 即时-2 quarters
+    dedup_group: 风险组
+    views: [risk]
+  - id: EDGE.PHARMA.RISK.005
+    source: RISK.regulatory_delay
+    target: VAL.pipeline_multiple
+    relation: dampens_multiple
+    polarity: negative
+    beta_positive: 0.30
+    beta_negative: 1.00
+    threshold: 监管延迟
+    lag: 即时-4 quarters
+    dedup_group: 风险组
+    views: [risk]
+
+
+  # === Constituent -> sector ETF edges (auto-appended) ===
+  - id: EDGE.PHARMA.MEMBER.001
+    source: COMPANY.01093_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.002
+    source: COMPANY.01177_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.003
+    source: COMPANY.01530_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.004
+    source: COMPANY.01801_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.005
+    source: COMPANY.02269_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.006
+    source: COMPANY.02359_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.007
+    source: COMPANY.03692_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.008
+    source: COMPANY.06160_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.009
+    source: COMPANY.09926_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.010
+    source: COMPANY.09995_HK
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.011
+    source: COMPANY.300347_SZ
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.012
+    source: COMPANY.300759_SZ
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.013
+    source: COMPANY.300760_SZ
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.014
+    source: COMPANY.600196_SH
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.015
+    source: COMPANY.600276_SH
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.016
+    source: COMPANY.603259_SH
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.017
+    source: COMPANY.688180_SH
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.018
+    source: COMPANY.688235_SH
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.019
+    source: COMPANY.688578_SH
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.020
+    source: COMPANY.AMGN_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.021
+    source: COMPANY.DHR_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.022
+    source: COMPANY.GILD_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.023
+    source: COMPANY.LLY_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.024
+    source: COMPANY.MRK_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.025
+    source: COMPANY.MRNA_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.026
+    source: COMPANY.NVO_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.027
+    source: COMPANY.REGN_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.028
+    source: COMPANY.TMO_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+  - id: EDGE.PHARMA.MEMBER.029
+    source: COMPANY.VRTX_US
+    target: COMPANY.PHARMA_SECTOR
+    relation: sector_member
+    polarity: positive
+    beta_positive: 0.50
+    beta_negative: 0.50
+    threshold: "对应行业 ETF / 板块代表"
+    lag: 即时
+    dedup_group: 资金组
+    views: [supply_chain, core_factor]
+
+views:
+  causal_propagation:
+    description: 临床 / BD / 商业化 / CXO / 生物制造 → alpha
+    include_layers: [event, industry_signal, financial, valuation, stock]
+    edge_filter: views_contains(causal_propagation)
+  core_factor:
+    description: 管线、现金、销售、CXO 利用率 高中心度
+    include_layers: [industry_signal, financial, valuation]
+    aggregation: top_n_by_centrality
+    top_n: 12
+    edge_filter: views_contains(core_factor)
+  supply_chain:
+    description: 海外大药企 / 全球研发预算 / 商业化渠道
+    include_node_types: [company, customer_capex_event, demand_signal, deal_signal, sector_etf]
+    edge_filter: views_contains(supply_chain)
+  risk:
+    description: 临床失败 / 现金稀释 / 监管延迟
+    include_layers: [event, risk, valuation, stock]
+    edge_filter: views_contains(risk)
