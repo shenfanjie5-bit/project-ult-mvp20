@@ -52,6 +52,7 @@ from mvp20.fingerprint import (  # noqa: E402
     compute_dependency_fingerprint,
     is_refresh_triggered,
 )
+from mvp20.storage import read_hot_snapshot  # noqa: E402
 
 
 GOVERNANCE_PATH = ROOT / "config" / "llm_field_governance.yaml"
@@ -524,6 +525,107 @@ def _format_fillable_table(
     return lines
 
 
+# ---------------------------------------------------------------------------
+# Fix B (B1) — inline source dp_id values into the prompt so the LLM
+# can quote them verbatim instead of paraphrasing. The A/B test showed
+# codex_low produced ``evidence_sources[kind=local_dp_id]`` with
+# excerpts that didn't appear anywhere in the source value, because the
+# model never actually saw the source value — only its dp_id reference.
+# Inlining the full SQLite value text fixes the citation provenance.
+# ---------------------------------------------------------------------------
+
+
+# Cap each inlined value at this many chars to keep prompt size bounded.
+# 600 is enough to show a JSON dict with ~5-10 keys; we already use the
+# same cap for X5 text disclosures.
+_INLINE_VALUE_MAXLEN = 600
+
+
+def _build_source_value_table(
+    fillable_nodes: list[dict],
+    governance: dict,
+    ts_code: str,
+    db_path: Path,
+) -> list[tuple[str, str, str]]:
+    """For each (fillable dp_id, source_dependency) pair, look up the
+    current SQLite value and format it for inlining into the prompt.
+
+    Uses ``storage.read_hot_snapshot`` so the sentinel fan-out
+    (``INDUSTRY:<id>`` / ``MARKET:<x>``) already in place naturally
+    resolves industry/macro-level dependencies for company dp_ids.
+
+    Returns a list of ``(dp_id, source_dp_id, value_text)`` rows. The
+    value text is a compact JSON dump truncated to ``_INLINE_VALUE_MAXLEN``
+    chars. Missing rows surface ``"(missing in SQLite)"`` so codex sees
+    explicitly that no local evidence exists for that dependency — better
+    than silently dropping the row, which would invite hallucination.
+    """
+
+    snapshot = read_hot_snapshot(db_path, ts_code) if db_path.exists() else {}
+    rows: list[tuple[str, str, str]] = []
+    for node in fillable_nodes:
+        dp_id = node.get("dp_id") or ""
+        gov_entry = (governance.get("data_points") or {}).get(dp_id) or {}
+        deps = gov_entry.get("source_dependencies") or []
+        for dep in deps:
+            entry = snapshot.get(dep)
+            if entry is None:
+                value_str = "(missing in SQLite)"
+            else:
+                v = entry.get("value")
+                try:
+                    value_str = json.dumps(v, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    value_str = str(v)
+                if len(value_str) > _INLINE_VALUE_MAXLEN:
+                    value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+            rows.append((dp_id, dep, value_str))
+    return rows
+
+
+def _format_source_value_section(
+    rows: list[tuple[str, str, str]],
+) -> list[str]:
+    """Render the inline-source-value table into the prompt's markdown.
+
+    The block sits between the "待填字段" table and the "任务" section so
+    codex sees the fillable list, then the verbatim source values it
+    must cite from, before reading the task description.
+
+    Empty input ⇒ empty output (no header), so prompts where no fillable
+    dp_id has source_dependencies don't get a useless empty section.
+    """
+
+    if not rows:
+        return []
+    parts: list[str] = []
+    parts.append(
+        "### 上游 source 完整 value 列表（B1 inline — 引用必须从这里抽）"
+    )
+    parts.append("")
+    parts.append(
+        "下表列出每个待填 dp_id 在 governance 声明的 source_dependencies，"
+        "以及对应字段当前在 SQLite 的完整 value 文本。"
+        "**强制规则**：你写 `evidence_sources` 时，"
+        "`kind=local_dp_id` 的 `excerpt` 字段必须从对应 source 的 value 文本里"
+        " **verbatim 复制片段**（保留数字格式 / 单位 / 引号等）。"
+        "禁止 paraphrase，禁止改数字格式。"
+    )
+    parts.append("")
+    parts.append(
+        "| dp_id | source_dependency | current SQLite value (verbatim) |"
+    )
+    parts.append("|---|---|---|")
+    for dp_id, dep, value_str in rows:
+        # Escape pipes so they don't break the markdown table.
+        safe_value = value_str.replace("|", "\\|")
+        # Wrap in backticks for monospace rendering; if value contains
+        # a backtick the formatting breaks but it's still readable.
+        parts.append(f"| `{dp_id}` | `{dep}` | `{safe_value}` |")
+    parts.append("")
+    return parts
+
+
 def _format_preserved_section(preserved: list[tuple[str, str]]) -> list[str]:
     """Render the explicit "do not touch" ban list."""
 
@@ -549,6 +651,7 @@ def build_industry_prompt(
     root: Path = ROOT,
     model_tier_filter: str = "all",
     governance: dict | None = None,
+    include_source_values: bool = True,
 ) -> str:
     """Build a prompt for filling L0 fields in an industry_overlay file."""
 
@@ -677,6 +780,14 @@ def build_industry_prompt(
         )
     parts.append("")
 
+    # Fix B (B1): inline upstream SQLite values so codex can quote them
+    # verbatim. Industry-level ts_code is the INDUSTRY:<id> sentinel.
+    if include_source_values:
+        source_rows = _build_source_value_table(
+            fillable_l0, governance, industry_ts_code, db_path,
+        )
+        parts.extend(_format_source_value_section(source_rows))
+
     parts.extend(_format_preserved_section(preserved_l0))
 
     parts.append("## 任务")
@@ -737,6 +848,7 @@ def build_company_prompt(
     root: Path = ROOT,
     model_tier_filter: str = "all",
     governance: dict | None = None,
+    include_source_values: bool = True,
 ) -> str:
     """Build a prompt for filling L1-L5 fields in a company stock_overlay."""
 
@@ -934,6 +1046,16 @@ def build_company_prompt(
             )
         parts.append("")
 
+    # Fix B (B1): inline upstream SQLite values so codex can quote them
+    # verbatim. Read against the company's ts_code so sentinel fan-out
+    # naturally pulls industry/macro deps too (read_hot_snapshot does
+    # that via overlay_manifest).
+    if include_source_values:
+        source_rows = _build_source_value_table(
+            fillable_company, governance, ts_code, db_path,
+        )
+        parts.extend(_format_source_value_section(source_rows))
+
     parts.extend(_format_preserved_section(preserved_company))
 
     parts.append("## 任务")
@@ -1095,6 +1217,29 @@ def main() -> int:
             "without writing the full prompt body. Useful as a dry-run."
         ),
     )
+    # Fix B (B1): inline source values default ON. Flag exists so the
+    # regression test suite can build prompts without DB-dependent
+    # value injection.
+    parser.add_argument(
+        "--include-source-values",
+        dest="include_source_values",
+        action="store_true",
+        default=True,
+        help=(
+            "Inline the SQLite value of every (fillable dp_id × "
+            "source_dependency) pair into the prompt so the LLM can "
+            "quote it verbatim. Default ON."
+        ),
+    )
+    parser.add_argument(
+        "--no-include-source-values",
+        dest="include_source_values",
+        action="store_false",
+        help=(
+            "Disable inline source value injection (regression-test / "
+            "legacy path; use only when comparing prompt sizes)."
+        ),
+    )
     args = parser.parse_args()
 
     if args.list_only:
@@ -1108,11 +1253,13 @@ def main() -> int:
             args.industry,
             args.ts_code,
             model_tier_filter=args.model_tier,
+            include_source_values=args.include_source_values,
         )
     else:
         prompt = build_industry_prompt(
             args.industry,
             model_tier_filter=args.model_tier,
+            include_source_values=args.include_source_values,
         )
 
     if args.out:

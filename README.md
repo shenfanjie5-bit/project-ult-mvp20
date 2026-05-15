@@ -96,14 +96,18 @@ coverage:
 | Permanently unhandled | 0 | No spec field is impossible to handle, but not every field is a structured hard-data feed. |
 
 Current local runtime snapshot
-(`runtime/hot.sqlite:realtime_current`) has **11565 rows**, **88 distinct
-dp_id**, and **328 stocks**, including **25 sentinel rows**
-(`MARKET:CN` × 10, `MARKET:US` × 7, `INDUSTRY:<id>` × 8) for market-level
-and industry-level macro/policy/sector fields. The current injection
-audit reports an average of **49.3 / 250 (19.7%)** effective dp_ids per
-company, with **35.2** realtime-injected dp_ids (the per-stock count
-includes sentinel rows merged via `read_hot_snapshot`'s
-`MARKET:<market>` and `INDUSTRY:<id>` fallback). Recheck with:
+(`runtime/hot.sqlite:realtime_current`) has **25 531 rows**,
+**166 distinct dp_id**, and **328 stocks**. **136 / 250 (54.4%)** of the
+spec data points are now present in SQLite (intersection of distinct
+dp_id with `config/data_point_roles.yaml`). **105 sentinel rows**
+(`MARKET:CN` × 14, `MARKET:US` × 7, `INDUSTRY:<id>` × 5–8) cover
+market-level and industry-level macro / policy / sector fields. The
+current injection audit reports an average of **83.5 / 250 (33.4%)**
+effective dp_ids per company and **77.5** realtime-injected dp_ids
+(the per-stock count includes sentinel rows merged via
+`read_hot_snapshot`'s `MARKET:<market>` and `INDUSTRY:<id>` fallback).
+**110 distinct `source` labels** are written by adapters (Tushare /
+FMP / Futu / AKShare / derive). Recheck with:
 
 ```bash
 sqlite3 runtime/hot.sqlite \
@@ -186,6 +190,92 @@ mvp20 validate-providers     # certifies catalog structure + market coverage
 
 Plus the per-CSV files in `docs/data_sources/` — re-read them when adding a
 provider or capability.
+
+## Phase Z: LLM-field governance schema
+
+mvp20 now treats every LLM-derived dp_id as a first-class governance
+object. The schema lives in
+[`config/llm_field_governance.yaml`](config/llm_field_governance.yaml)
+and currently registers **111 dp_ids** (the full LLM-candidate set in
+the overlay schema). Each entry declares:
+
+- `route` — `llm_close` (closed-loop, no web fetch),
+  `llm_web` (web-enabled tier; requires `url` + `checksum` +
+  `fetched_at`), `derive` (handled by `mvp20/derive.py`), or `skip`.
+- `model_tier` — `cheap_extract`, `cheap_classify`, `analysis`, or
+  `web_analysis`; consumed by both `codex_prompt_gen --model-tier` and
+  the verifier's evidence-kind whitelist.
+- `refresh_trigger` — `quarterly`, `event_driven`, or `on_demand`;
+  combined with `Z2 fingerprint` (`mvp20/fingerprint.py`) so the next
+  codex run knows when a field is stale.
+- `write_policy` — typically `preserve_known_unless_triggered`, so
+  `merge_preserve_existing_overlay` (Z1a, in `mvp20/overlays.py`) keeps
+  the codex-filled value unless the trigger fires.
+
+The accompanying pieces:
+
+- **Z1a** — `merge_preserve_existing_overlay()` in `mvp20/overlays.py`
+  preserves codex-filled Known / N/A / Optionality / Inactive values
+  across `mvp20 generate-overlays`. The default behavior is
+  preserve-merge; passing `--force` re-baselines every overlay from
+  `SLOT_DEFS` (destructive — overwrites filled values).
+- **Z1b** — minimal governance YAML (58 dp_ids) bootstrapping the
+  schema; later expanded.
+- **Z1c** — verifier (`scripts/verify_overlay_closed_loop.py`) splits
+  policy into closed-loop vs web-enabled tiers based on `model_tier`.
+- **Z1d** — `scripts/codex_prompt_gen.py` filters by governance
+  allowlist (`route ∈ {llm_close, llm_web}`) and accepts
+  `--model-tier` to scope a run to one tier.
+- **Z2** — `mvp20/fingerprint.py` snapshots `(dp_id, upstream
+  dp_id values, trigger event)` so a second codex run is cheap and
+  idempotent unless the fingerprint changes.
+- **Z3** — governance expanded from 58 → **111 dp_id** (full LLM
+  schema coverage).
+- **Z5** — four targeted fixes: status-induced fields no longer leak
+  into prompt body, web_analysis prompt now lists `allowed_evidence_kinds`,
+  event fingerprint trigger normalized, and `EVENT_DRIVEN_DP_IDS` set is
+  shared between `codex_prompt_gen` and `merge_preserve_existing_overlay`.
+
+## Bucket A: 31 hard-data dp_id extension
+
+Bucket A (data-driven hard fields outside Phase X's 4-source baseline)
+added **31 dp_ids** (SQLite ∩ spec 105 → 136, avg_realtime per stock
+66.7 → 77.5):
+
+- **Tushare A (14)** — financial-report derived: balance-sheet ratios
+  (asset-turnover, debt-to-equity, current ratio), cash-flow quality
+  (OCF/NI, FCF/Sales), profitability deltas (gross-margin YoY,
+  operating-margin QoQ), and working-capital indicators (DSO, DIO,
+  DPO, cash-conversion-cycle).
+- **Tushare B (12)** — valuation / sell-side / industry sentiment:
+  forward P/E percentile vs industry, EV/EBITDA cross-section,
+  sell-side rating distribution from `report_rc`, peer-relative
+  revenue / earnings growth rank, and L0 industry sentiment
+  aggregates.
+- **Futu (3)** — option-chain derived: `L6.priced.iv` (current
+  IV percentile), `L7.trade.iv` (IV change vs 30-day baseline),
+  `L7.trade.options_cp` (call/put open-interest ratio).
+- **AKShare (2)** — `L8.cap.outflow_cut` (large-cap outflow stress
+  flag) and `L9.capital.etf_block` (ETF block-trade signal).
+
+A/B test (Codex high / Codex low / minimax-M2 over 16 runs) — full
+report and routing recommendations in
+[`docs/audit/ab_test_codex_vs_minimax_v1.md`](docs/audit/ab_test_codex_vs_minimax_v1.md)
+and [`docs/audit/codex_high_vs_low_v1.md`](docs/audit/codex_high_vs_low_v1.md).
+See also
+[`docs/data_sources/field_strategy_v1.md`](docs/data_sources/field_strategy_v1.md).
+
+### Engine routing decisions
+
+Picked from the A/B reports (paired-cell coverage / agreement /
+token-economics):
+
+| Tier | Recommended engine | Why |
+|---|---|---|
+| `cheap_extract` | **codex low** (xhigh on ambiguous SMB / consumer names) | codex-low Known coverage matches xhigh within 1 (7 vs 6) at 58% token save and 67% time save; minimax wins on flat coverage (+5) but loses local_dp_id grounding on B2B names. |
+| `cheap_classify` | **codex high** | minimax leaves most slots `Unknown` (Known = 1 vs codex's 11); codex-low also drops to Known=2. Audit trail (`local_dp_id` evidence on `Inactive` slots) is required. |
+| `analysis` | **minimax-M2** for bulk, **codex high** for high-materiality slots | 89% avg agreement and ~10x cheaper tokens at minimax. Reserve codex for high-materiality + low-minimax-confidence cells. codex-low works but lower local_dp_id overlap. |
+| `web_analysis` | **codex high with real web** (else fall back to minimax-closed-loop) | When outbound network is sandboxed, codex emits `external_url` from training memory without checksum (soft verifier violation). minimax's industry-inference-only output is safer offline. |
 
 ## Scoring, Field Governance, and Market Adapter
 

@@ -883,6 +883,30 @@ def coverage_report_command(
         click.echo(f"  ... {len(alerts) - 50} more alerts")
 
 
+@main.command("check-spec-drift")
+def check_spec_drift_command() -> None:
+    """Run spec drift detector (scripts/check_spec_drift.py).
+
+    Reports drift between config/data_point_roles.yaml,
+    config/llm_field_governance.yaml, runtime/hot.sqlite, and
+    config/stock_overlays/**.yaml. Writes
+    docs/audit/spec_drift_report_v1.{md,json}.
+    """
+
+    import subprocess
+    import sys as _sys
+
+    repo_root = Path(__file__).resolve().parent.parent
+    script = repo_root / "scripts" / "check_spec_drift.py"
+    rc = subprocess.run(
+        [_sys.executable, str(script)], check=False
+    ).returncode
+    if rc != 0:
+        raise click.ClickException(
+            f"spec drift detector exited with code {rc} (see report)"
+        )
+
+
 @main.command("serve")
 @click.option("--host", default="127.0.0.1", show_default=True,
               help="Bind address; 127.0.0.1 keeps the server local-only.")

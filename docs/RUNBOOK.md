@@ -107,6 +107,165 @@ specific tickers.
     `python scripts/compact_history.py`
 12. Run fixture and live evidence only through explicit gates.
 
+## Phase Z: schema governance + LLM workflow
+
+Phase Z makes every LLM-derived dp_id immutable-by-default and routed
+through `config/llm_field_governance.yaml` (111 dp_ids). The three
+commands you will use most:
+
+### `mvp20 generate-overlays` — default merge-preserve vs `--force`
+
+```bash
+# Default: keep codex-filled Known / N/A / Optionality / Inactive,
+#         only fill in slots that are still empty / Unknown.
+.venv/bin/mvp20 generate-overlays --period 2026-Q1
+
+# Re-baseline EVERY overlay from SLOT_DEFS. DESTRUCTIVE — overwrites
+# codex-filled fields. Use only when re-cutting the schema.
+.venv/bin/mvp20 generate-overlays --period 2026-Q1 --force
+```
+
+The preserve logic lives in
+`merge_preserve_existing_overlay()` (`mvp20/overlays.py`). Rules:
+
+- Codex-filled `Known` / `N/A` / `Optionality` / `Inactive` is preserved
+  unless the field is in `EVENT_DRIVEN_DP_IDS` and the event
+  fingerprint changed.
+- Slots that are still `Unknown` (or `Optionality` with empty `value`)
+  are regenerated from `SLOT_DEFS`.
+- `--force` skips preserve entirely.
+
+### `scripts/codex_prompt_gen.py --model-tier` — scoped LLM prompts
+
+```bash
+# Industry-level prompt (L0 fields).
+.venv/bin/python scripts/codex_prompt_gen.py \
+    --industry AI_COMPUTE \
+    --out /tmp/codex_AI_COMPUTE.md
+
+# Company-level prompt — only cheap_extract tier slots.
+.venv/bin/python scripts/codex_prompt_gen.py \
+    --industry STORAGE_GRID --ts-code 300750.SZ \
+    --model-tier cheap_extract \
+    --out /tmp/codex_300750_SZ_cheap.md
+
+# List-only dry run (no prompt body).
+.venv/bin/python scripts/codex_prompt_gen.py \
+    --industry AI_COMPUTE --ts-code 000063.SZ \
+    --model-tier analysis --list-only
+```
+
+`--model-tier` reads `model_tier` from
+`config/llm_field_governance.yaml` and filters the output to one of
+`cheap_extract` / `cheap_classify` / `analysis` / `web_analysis`. This
+matters for cost routing — see README §Engine routing decisions.
+
+### `scripts/verify_overlay_closed_loop.py` — evidence policy enforcement
+
+```bash
+# Plain run: warn on violations.
+.venv/bin/python scripts/verify_overlay_closed_loop.py
+
+# Auto-demote closed-loop-tier violations back to data_status: Unknown.
+# Hard violations only — soft (missing checksum etc.) is never demoted.
+.venv/bin/python scripts/verify_overlay_closed_loop.py --auto-demote
+
+# Verify the excerpt_quote in evidence actually appears in the upstream
+# realtime_current row (semantic check; reads runtime/hot.sqlite).
+.venv/bin/python scripts/verify_overlay_closed_loop.py --check-excerpt
+
+# Combine: auto-demote AND check excerpt.
+.venv/bin/python scripts/verify_overlay_closed_loop.py \
+    --auto-demote --check-excerpt
+```
+
+Tier behavior:
+
+- **closed-loop** (`cheap_extract` / `cheap_classify` / `analysis`):
+  only `local_dp_id` / `local_overlay` / `industry_inference` are
+  allowed. Any URL or web kind is a HARD violation.
+- **web-enabled** (`web_analysis`): four web kinds allowed
+  (`annual_report` / `research_report` / `investor_relations` /
+  `external_url`). Each web entry MUST carry `url` + `checksum` +
+  `fetched_at`. Missing those is a SOFT violation (warn only).
+
+## Bucket A 31 hard-data dp_id verification steps
+
+After wiring a new Bucket A field (or as a periodic re-baseline), run:
+
+```bash
+# 1. Pull from all 4 sources (Tushare / FMP / Futu / AKShare) + derive.
+.venv/bin/python scripts/collector.py --source all --max-cycles 1
+
+# 2. Re-audit injection. Expect: avg_effective ≥ 80 / 250 and
+#    avg_realtime ≥ 75 with the 31-dp Bucket A wired.
+.venv/bin/python -m mvp20.cli audit-injection
+
+# 3. Verify governance / evidence policy is closed for LLM fields.
+.venv/bin/python scripts/verify_overlay_closed_loop.py --check-excerpt
+
+# Spot-check expected numbers:
+.venv/bin/python -c "
+import sqlite3, yaml
+conn = sqlite3.connect('runtime/hot.sqlite')
+print('distinct_dp:', conn.execute('SELECT COUNT(DISTINCT dp_id) FROM realtime_current').fetchone()[0])
+spec = set(yaml.safe_load(open('config/data_point_roles.yaml'))['data_points'].keys())
+sdps = set(r[0] for r in conn.execute('SELECT DISTINCT dp_id FROM realtime_current').fetchall())
+print('spec_intersect:', len(sdps & spec), '/ 250')
+"
+# Current baseline: 166 distinct_dp / 136 spec_intersect.
+```
+
+## Q4 — Z4 LLM run preparation
+
+Z4 is the operator-driven LLM fill pass (codex + minimax) that
+populates the 111-dp governance schema for an entire quarter.
+
+### codex CLI configuration
+
+```bash
+# Standard "high" run — xhigh thinking, single shot, no operator confirm.
+codex exec --full-auto -c model_reasoning_effort=xhigh < /tmp/codex_prompt.md
+
+# Low-effort variant — cheap_extract / cheap_classify only; ~60% token
+# / time save with ≥80% agreement on those two tiers.
+codex exec --full-auto -c model_reasoning_effort=low < /tmp/codex_prompt.md
+```
+
+Notes:
+
+- `--full-auto` means codex never pauses for operator confirmation;
+  combine with `--sandbox` if you don't trust the local filesystem ACL.
+- web_analysis on a sandboxed host (outbound DNS blocked) will emit
+  unverified URLs from training memory. The verifier flags these as
+  SOFT violations; review before merging.
+
+### minimax-M2 configuration
+
+```bash
+export MINIMAX_API_KEY=...   # provisioned per-operator, NOT in repo
+.venv/bin/python scripts/minimax_run_prompt.py \
+    --prompt /tmp/codex_prompt.md \
+    --out runtime/minimax_runs/<ts_code>_<tier>.yaml
+```
+
+Then merge through `scripts/apply_yaml_patch.py`, which has a salvage
+path for malformed entries.
+
+### Quota / cost control
+
+- Bulk-fill tier order: prefer **minimax for `analysis`** (~10x cheaper
+  tokens at 89% agreement), **codex for `cheap_classify`** (audit-trail
+  reliant), **codex-low for `cheap_extract`** (within 1 Known of
+  xhigh at half the cost), **codex-high (or minimax fallback) for
+  `web_analysis`**.
+- Rough per-stock budget for a full 4-tier pass: codex ~1 M tokens
+  total at xhigh, ~400 K at low; minimax ~50 K tokens. Budget for the
+  111-dp schema × 328 stocks accordingly.
+- Always run `verify_overlay_closed_loop --check-excerpt --auto-demote`
+  after each batch — it catches the most common cost-of-not-checking
+  failure (codex inventing a URL from memory).
+
 ## Evidence Hygiene
 
 Do not commit raw provider payloads, DSNs, tokens, local runtime paths, parquet

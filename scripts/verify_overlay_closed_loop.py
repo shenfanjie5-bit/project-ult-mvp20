@@ -50,6 +50,8 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from mvp20 import schema_validator  # noqa: E402
+
 GOVERNANCE_YAML = ROOT / "config" / "llm_field_governance.yaml"
 HOT_DB_PATH = ROOT / "runtime" / "hot.sqlite"
 
@@ -138,6 +140,9 @@ class Summary:
     demoted_nodes: int = 0
     excerpt_checked_nodes: int = 0
     excerpt_mis_cite_nodes: int = 0
+    # Fix B (B4) — schema-drift soft-warn counters.
+    schema_checked_nodes: int = 0
+    schema_violating_nodes: int = 0
 
     @property
     def hard_violations(self) -> int:
@@ -262,6 +267,210 @@ def _normalize_text(s: Any) -> str:
     return _PUNCT_RE.sub("", s.lower())
 
 
+# ---------------------------------------------------------------------------
+# numeric-tolerant match (Fix A2) — close the gap between LLM excerpts that
+# format numbers loosely (亿元 / 万元 / %, JSON wrappers stripped) and the
+# canonical SQLite/yaml stored values (raw floats, often with unit fields).
+# ---------------------------------------------------------------------------
+
+
+# Match number forms: 12345, 12345.67, 1.23e5, -1.5, 3,456.78. The first
+# alternative requires at least one thousands separator (digit groups of 3)
+# so it won't greedily eat plain integers like ``2026`` and miss them — the
+# second alternative handles plain integers / decimals.
+_NUMBER_RE = re.compile(
+    r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?:[eE][-+]?\d+)?"
+    r"|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
+)
+
+# CN financial scale suffixes — when a number in the excerpt is followed by
+# one of these, we also try its scaled value when matching against the
+# actual canonical value. e.g. "248.48541亿元" should match the raw
+# 24848541000.0 stored in SQLite.
+_CN_SCALE_SUFFIXES: tuple[tuple[str, float], ...] = (
+    ("万亿", 1e12),
+    ("亿元", 1e8),
+    ("亿", 1e8),
+    ("万元", 1e4),
+    ("万", 1e4),
+    ("千", 1e3),
+    ("百", 1e2),
+)
+
+
+def _extract_numbers(s: Any) -> list[float]:
+    """Pull all numeric tokens from a string. Normalises 1.5e5, 1,234, etc.
+
+    Returns a list of floats (already canonicalised — thousands separators
+    stripped, sci-notation parsed).
+    """
+
+    if not s:
+        return []
+    text = str(s)
+    out: list[float] = []
+    for m in _NUMBER_RE.findall(text):
+        try:
+            cleaned = m.replace(",", "")
+            out.append(float(cleaned))
+        except (ValueError, OverflowError):
+            continue
+    return out
+
+
+def _extract_numbers_with_scale(s: Any) -> list[float]:
+    """Like ``_extract_numbers`` but also emits CN-scaled variants.
+
+    For each number, if it is immediately followed by a CN scale suffix
+    (亿元 / 万 / 千 / etc), the scaled value is appended *in addition to*
+    the raw value. This makes "248.48541亿元" yield both 248.48541 and
+    24848541000.0 so the latter can match SQLite's raw float.
+    """
+
+    if not s:
+        return []
+    text = str(s)
+    out: list[float] = []
+    for m in _NUMBER_RE.finditer(text):
+        token = m.group(0)
+        try:
+            raw = float(token.replace(",", ""))
+        except (ValueError, OverflowError):
+            continue
+        out.append(raw)
+        # Look at what immediately follows the number for a scale suffix.
+        # Allow a single space between number and suffix (e.g. "248 亿元").
+        tail = text[m.end():m.end() + 6]
+        tail_stripped = tail.lstrip()
+        for suffix, factor in _CN_SCALE_SUFFIXES:
+            if tail_stripped.startswith(suffix):
+                out.append(raw * factor)
+                break
+    return out
+
+
+def _numbers_close(a: float, b: float, rel_tol: float, abs_tol: float) -> bool:
+    """True iff ``a`` and ``b`` are within ``abs_tol`` OR ``rel_tol`` (the
+    latter measured against the larger magnitude). Mirrors ``math.isclose``
+    but with explicit defaults that suit accounting numbers."""
+
+    if abs(a - b) <= abs_tol:
+        return True
+    denom = max(abs(a), abs(b))
+    if denom > 0 and abs(a - b) / denom <= rel_tol:
+        return True
+    return False
+
+
+def _digit_substring_match(token: str, actual_value: str) -> bool:
+    """True if the digit characters of ``token`` form a contiguous run
+    inside the digit characters of ``actual_value``.
+
+    This accepts period/date labels like "2026" matching "20260331" (a
+    common pattern where the excerpt writes "2026Q1" and the SQLite value
+    carries period "20260331"). The match is strictly on the digit-only
+    projection of both strings so non-digit punctuation doesn't fool it.
+    """
+
+    if not token:
+        return False
+    e_digits = "".join(ch for ch in token if ch.isdigit())
+    if not e_digits:
+        return False
+    a_digits = "".join(ch for ch in str(actual_value) if ch.isdigit())
+    return e_digits in a_digits
+
+
+def _numeric_tolerant_match(
+    excerpt: str,
+    actual_value: str,
+    rel_tol: float = 1e-6,
+    abs_tol: float = 1.0,
+) -> bool:
+    """True iff every number in ``excerpt`` has a near-equal counterpart in
+    ``actual_value`` (after stripping CN scale suffixes / thousands
+    separators / etc).
+
+    Strategy
+    --------
+    1. Pull numbers from the excerpt via ``_extract_numbers_with_scale``
+       (so "248.48541亿元" yields both 248.48541 and 24848541000.0).
+       Each token is paired with its original substring form so we can
+       fall back to digit-substring matching for period labels.
+    2. Pull numbers from the actual value via ``_extract_numbers`` (it's
+       already in canonical raw form in SQLite/yaml).
+    3. For each excerpt number, accept any actual number within ``abs_tol``
+       OR ``rel_tol``. Both tolerances default to tight values so we don't
+       smear over genuinely-different numbers — ``rel_tol=1e-6`` is
+       basically float-equality, ``abs_tol=1.0`` only absorbs rounding.
+    4. If a numeric match fails, fall back to digit-substring: a "2026"
+       token in the excerpt is accepted if "2026" appears as a digit
+       run inside the actual value's digit projection (so "20260331"
+       satisfies it). This handles period-label / quarter-marker tokens.
+    5. Return True only if EVERY excerpt number is covered by EITHER a
+       tolerance match OR a digit-substring match. If even one cannot be
+       traced back, the excerpt fabricates a number → real mis-cite.
+
+    Empty-number cases
+    ------------------
+    Excerpt without any numbers returns False — fall back to the substring
+    check (this helper only claims jurisdiction over numeric citations).
+    Actual without numbers also returns False — we can't tolerate-match
+    against text-only sources.
+    """
+
+    # (token_string, raw_float, *scaled_floats) — keep the original token
+    # string so we can do digit-substring fallback for period labels.
+    if not excerpt:
+        return False
+    excerpt_str = str(excerpt)
+    if not excerpt_str:
+        return False
+
+    excerpt_groups: list[tuple[str, list[float]]] = []
+    for m in _NUMBER_RE.finditer(excerpt_str):
+        token = m.group(0)
+        try:
+            raw = float(token.replace(",", ""))
+        except (ValueError, OverflowError):
+            continue
+        values = [raw]
+        tail = excerpt_str[m.end():m.end() + 6].lstrip()
+        for suffix, factor in _CN_SCALE_SUFFIXES:
+            if tail.startswith(suffix):
+                values.append(raw * factor)
+                break
+        excerpt_groups.append((token, values))
+
+    if not excerpt_groups:
+        return False
+
+    a_nums = _extract_numbers(actual_value)
+    if not a_nums:
+        # No numbers at all in actual → cannot tolerate-match. But still
+        # allow digit-substring fallback (rare; covers edge cases like
+        # excerpt "2026" vs actual "as_of=20260331" if the latter somehow
+        # didn't parse). Conservative: keep the original False return.
+        return False
+
+    for token, values in excerpt_groups:
+        matched = False
+        for ex in values:
+            for ac in a_nums:
+                if _numbers_close(ex, ac, rel_tol, abs_tol):
+                    matched = True
+                    break
+            if matched:
+                break
+        # Digit-substring fallback for period/year labels (e.g. "2026"
+        # matching "20260331"). Only applied when tolerance match failed.
+        if not matched and _digit_substring_match(token, actual_value):
+            matched = True
+        if not matched:
+            return False
+    return True
+
+
 def _lookup_sqlite_value(
     db_path: Path,
     ts_code: str,
@@ -381,10 +590,18 @@ def verify_excerpt_semantic_match(
                 )
                 continue
             if norm_excerpt not in _normalize_text(actual):
-                errors.append(
-                    f"ev[{idx}] mis-cite: excerpt {excerpt[:60]!r} not in "
-                    f"{src_dp}'s actual value {actual[:80]!r}"
-                )
+                # Substring failed — try numeric tolerant fallback (Fix A2).
+                # codex frequently re-formats values: "34988057000元" vs
+                # '{"scalar": 34988057000.0}', or "248.48541亿元" vs the
+                # raw 24848541000.0 stored in SQLite. If every number in
+                # the excerpt has a near-equal counterpart in the actual
+                # value, accept.
+                if not _numeric_tolerant_match(excerpt, actual):
+                    errors.append(
+                        f"ev[{idx}] mis-cite: excerpt {excerpt[:60]!r} not "
+                        f"in {src_dp}'s actual value {actual[:80]!r} "
+                        f"(substring + numeric-tolerant both failed)"
+                    )
 
         elif kind == "local_overlay":
             if overlays_root is None:
@@ -442,10 +659,14 @@ def verify_excerpt_semantic_match(
                 )
                 continue
             if norm_excerpt not in _normalize_text(actual):
-                errors.append(
-                    f"ev[{idx}] mis-cite: excerpt {excerpt[:60]!r} not in "
-                    f"overlay {target_dp}'s value {actual[:80]!r}"
-                )
+                # Substring failed — try numeric tolerant fallback (Fix A2),
+                # symmetric with the local_dp_id path above.
+                if not _numeric_tolerant_match(excerpt, actual):
+                    errors.append(
+                        f"ev[{idx}] mis-cite: excerpt {excerpt[:60]!r} not "
+                        f"in overlay {target_dp}'s value {actual[:80]!r} "
+                        f"(substring + numeric-tolerant both failed)"
+                    )
 
         # kind == "industry_inference" → reasoning-only, no source to check.
         # kind ∈ WEB_KINDS → url+checksum+fetched_at checked separately.
@@ -575,6 +796,7 @@ def audit_overlays(
     auto_demote: bool = False,
     strict_web_only: bool = False,
     check_excerpt: bool = False,
+    check_schema: bool = False,
     db_path: Path | None = None,
     overlays_root: Path | None = None,
 ) -> Summary:
@@ -667,6 +889,43 @@ def audit_overlays(
                         snippet=_stringify(ev_list),
                     ))
 
+            # Schema-drift check (Fix B / B4): soft-warn only, never
+            # demote. validate_overlay_node skips non-Known/non-filled-
+            # Optionality nodes itself, so this is cheap to run over
+            # every node. Mis-shaped values stay in the yaml — the
+            # warning just surfaces them for the operator.
+            if check_schema:
+                schema_errors = schema_validator.validate_overlay_node(
+                    node, strict=False,
+                )
+                # Only count it as "checked" when the dp_id has a schema
+                # registered AND the node was eligible (Known/filled).
+                # validate_overlay_node returns [] for both
+                # "no schema registered" and "non-eligible status" — we
+                # only want the former counted, so do a manual gate.
+                eligible_status = node.get("data_status") in (
+                    "Known", "Optionality",
+                )
+                if (
+                    dp_id in schema_validator.DP_SCHEMA
+                    and eligible_status
+                ):
+                    summary.schema_checked_nodes += 1
+                    if schema_errors:
+                        summary.schema_violating_nodes += 1
+                for msg in schema_errors:
+                    # Strip [warn] prefix for cleaner display.
+                    clean = msg.removeprefix("[warn] ")
+                    summary.violations.append(Violation(
+                        overlay_path=path,
+                        node_dp_id=dp_id,
+                        node_node_id=node_id,
+                        tier=tier,
+                        severity="warn",
+                        reason=f"schema_drift: {clean}",
+                        snippet=_stringify(node.get("value")),
+                    ))
+
             # web_analysis warnings are NOT auto-demoted (could be a small
             # LLM fill miss like missing checksum). Only hard errors on
             # closed-loop / unregistered tiers trigger demote.
@@ -721,6 +980,9 @@ def _print_summary(summary: Summary) -> None:
     if summary.excerpt_checked_nodes:
         print(f"- excerpt-checked nodes: {summary.excerpt_checked_nodes}")
         print(f"- excerpt mis-cite nodes: {summary.excerpt_mis_cite_nodes}")
+    if summary.schema_checked_nodes:
+        print(f"- schema-checked nodes: {summary.schema_checked_nodes}")
+        print(f"- schema-violating nodes: {summary.schema_violating_nodes}")
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +1027,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--check-schema", action="store_true",
+        help=(
+            "Opt-in schema-drift check: validate each node's value "
+            "against mvp20.schema_validator.DP_SCHEMA. Drift is "
+            "reported as soft violation and never auto-demoted "
+            "(operator-actionable only)."
+        ),
+    )
+    parser.add_argument(
         "--db-path", type=Path, default=HOT_DB_PATH,
         help="Path to runtime/hot.sqlite (only used with --check-excerpt).",
     )
@@ -786,6 +1057,7 @@ def main(argv: list[str] | None = None) -> int:
         auto_demote=args.auto_demote,
         strict_web_only=args.strict_web_only,
         check_excerpt=args.check_excerpt,
+        check_schema=args.check_schema,
         db_path=args.db_path,
     )
     if not args.quiet:
@@ -808,6 +1080,8 @@ def main(argv: list[str] | None = None) -> int:
                     "demoted_nodes": summary.demoted_nodes,
                     "excerpt_checked_nodes": summary.excerpt_checked_nodes,
                     "excerpt_mis_cite_nodes": summary.excerpt_mis_cite_nodes,
+                    "schema_checked_nodes": summary.schema_checked_nodes,
+                    "schema_violating_nodes": summary.schema_violating_nodes,
                     "violations": [v.as_row() for v in summary.violations],
                 },
                 ensure_ascii=False,

@@ -29,6 +29,11 @@ from pathlib import Path
 
 import yaml
 
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from mvp20 import schema_validator  # noqa: E402
+
 
 WHITELIST_KEYS = frozenset({
     "data_status",
@@ -125,8 +130,54 @@ def _salvage_apply(overlay: dict, overlay_path: Path,
     return updated, unmatched
 
 
-def apply_patch(overlay_path: Path, patch_path: Path) -> tuple[int, int]:
-    """Apply patch to overlay. Returns (n_updated, n_unmatched)."""
+def _validate_patch_node_schemas(
+    patch_nodes: list,
+    *,
+    strict: bool,
+) -> dict[str, list[str]]:
+    """Run schema_validator.validate_overlay_node over each patch entry.
+
+    Returns ``{dp_id: [errors]}`` for nodes with schema violations. In
+    strict mode, ``[warn]``-prefixed lines from the validator are
+    promoted into hard errors (callers reject the whole patch). In
+    non-strict mode, they remain in the output but are treated as
+    advisory warnings.
+    """
+
+    errors_by_dp: dict[str, list[str]] = {}
+    for patch_node in patch_nodes:
+        if not isinstance(patch_node, dict):
+            continue
+        dp = patch_node.get("dp_id")
+        if not dp:
+            continue
+        errs = schema_validator.validate_overlay_node(patch_node, strict=strict)
+        if errs:
+            errors_by_dp[dp] = errs
+    return errors_by_dp
+
+
+def apply_patch(
+    overlay_path: Path,
+    patch_path: Path,
+    *,
+    strict_schema: bool = False,
+    log_violations: bool = True,
+) -> tuple[int, int, dict[str, list[str]]]:
+    """Apply patch to overlay. Returns ``(n_updated, n_unmatched, schema_errors)``.
+
+    Fix B (B3): each patch node is validated against
+    ``mvp20.schema_validator.DP_SCHEMA``. When ``strict_schema=True``,
+    any node with schema errors is REJECTED — the overlay is not
+    rewritten, and the caller gets a non-empty ``schema_errors`` dict so
+    the upstream pipeline (codex_dispatch.sh / run_ab_test.sh) can
+    decide whether to retry or escalate.
+
+    With ``strict_schema=False`` (default for backward compat), schema
+    drift is logged but still applied — preserves the previous behaviour
+    so this can be enabled gradually without breaking existing pipelines.
+    """
+
     overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8"))
     patch_raw = patch_path.read_text(encoding="utf-8")
     try:
@@ -137,12 +188,13 @@ def apply_patch(overlay_path: Path, patch_path: Path) -> tuple[int, int]:
         # single malformed entry doesn't sink the whole patch.
         print(f"WARN: yaml parse failed ({e.__class__.__name__}); "
               f"attempting per-entry salvage", file=sys.stderr)
-        return _salvage_apply(overlay, overlay_path, patch_raw)
+        u, n = _salvage_apply(overlay, overlay_path, patch_raw)
+        return u, n, {}
 
     if not isinstance(patch, dict):
         print(f"ERROR: patch is not a dict (got {type(patch).__name__})",
               file=sys.stderr)
-        return 0, 0
+        return 0, 0, {}
 
     nodes_by_dp: dict[str, dict] = {}
     for n in overlay.get("nodes") or []:
@@ -150,12 +202,48 @@ def apply_patch(overlay_path: Path, patch_path: Path) -> tuple[int, int]:
         if dp:
             nodes_by_dp[dp] = n
 
-    updated, unmatched = 0, 0
     patch_nodes = patch.get("nodes") or []
     if not isinstance(patch_nodes, list):
         print(f"ERROR: patch.nodes is not a list", file=sys.stderr)
-        return 0, 0
+        return 0, 0, {}
 
+    # Fix B (B3): pre-flight schema validation. Run BEFORE mutating
+    # nodes_by_dp so a strict reject doesn't leave the overlay partly
+    # updated.
+    schema_errors = _validate_patch_node_schemas(
+        patch_nodes, strict=strict_schema,
+    )
+    # In non-strict mode, drop [warn]-prefixed lines from blocking. We
+    # only block on hard errors there.
+    if strict_schema and schema_errors:
+        print(
+            f"REJECTED {len(schema_errors)} nodes with schema errors "
+            f"(strict_schema=True):",
+            file=sys.stderr,
+        )
+        for dp, errs in schema_errors.items():
+            print(f"  {dp}: {errs}", file=sys.stderr)
+        return 0, 0, schema_errors
+
+    if log_violations and schema_errors:
+        # Strip [warn] prefix from advisory-only display to avoid double
+        # logging while still flagging the problem.
+        n_warn = sum(
+            1
+            for errs in schema_errors.values()
+            if all(e.startswith("[warn]") for e in errs)
+        )
+        n_err = len(schema_errors) - n_warn
+        print(
+            f"WARN: {len(schema_errors)} schema violation(s) "
+            f"({n_err} hard + {n_warn} warn); use --strict-schema to reject. "
+            f"Showing first 5:",
+            file=sys.stderr,
+        )
+        for dp, errs in list(schema_errors.items())[:5]:
+            print(f"  {dp}: {errs}", file=sys.stderr)
+
+    updated, unmatched = 0, 0
     for patch_node in patch_nodes:
         if not isinstance(patch_node, dict):
             continue
@@ -179,16 +267,43 @@ def apply_patch(overlay_path: Path, patch_path: Path) -> tuple[int, int]:
         yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
-    return updated, unmatched
+    return updated, unmatched, schema_errors
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("overlay")
     parser.add_argument("patch")
+    parser.add_argument(
+        "--strict-schema",
+        action="store_true",
+        help=(
+            "Reject the entire patch if any node fails schema validation "
+            "against mvp20.schema_validator.DP_SCHEMA. Default off — schema "
+            "drift is logged but applied (backward compat). Turn on once "
+            "the LLM is reliably emitting spec'd output."
+        ),
+    )
     args = parser.parse_args()
-    u, n = apply_patch(Path(args.overlay), Path(args.patch))
+    u, n, schema_errors = apply_patch(
+        Path(args.overlay),
+        Path(args.patch),
+        strict_schema=args.strict_schema,
+    )
     print(f"updated {u} nodes, unmatched {n}")
+    if schema_errors:
+        # Filter out pure-warn entries from the exit-code path.
+        hard = [
+            dp
+            for dp, errs in schema_errors.items()
+            if any(not e.startswith("[warn]") for e in errs)
+        ]
+        print(
+            f"schema warnings: {len(schema_errors)} dp_id(s) "
+            f"({len(hard)} hard)",
+        )
+        if args.strict_schema and hard:
+            return 2
     return 0
 
 

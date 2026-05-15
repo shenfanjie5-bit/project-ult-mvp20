@@ -50,7 +50,7 @@
 | source | total rows | unique dp_ids | example dp_id |
 |---|---:|---:|---|
 | `tushare:fina_indicator` | 1832 | 16 | `L5.fina.asset_turnover` |
-| `derive:bootstrap_l11_subscore` | 3493 | 11 | `L11.long.business_model` |
+| `derive:bootstrap_l11_subscore` | 3608 | 11 | `L11.long.business_model` |
 | `fmp:income-statement` | 1033 | 9 | `L5.is.cogs` |
 | `tushare:income.derived` | 680 | 6 | `L4.cost.raw_material` |
 | `tushare:income` | 579 | 5 | `L5.is.eps` |
@@ -122,7 +122,6 @@
 | `akshare:stock_fund_flow_individual.5d` | 116 | 1 | `L8.cap.outflow_cut` |
 | `akshare:stock_dzjy_mrmx` | 116 | 1 | `L9.capital.etf_block` |
 | `akshare:em_news` | 116 | 1 | `L9.event.intraday_news` |
-| `fmp:technical.derived` | 115 | 1 | `L11.short.technical` |
 | `fmp:sec-filings` | 115 | 1 | `L9.event.recent_filings` |
 | `fmp:news.derived` | 115 | 1 | `L6.priced.news_age` |
 | `fmp:news` | 115 | 1 | `L9.event.news_flow` |
