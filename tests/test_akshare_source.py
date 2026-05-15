@@ -32,6 +32,9 @@ def test_supported_dp_ids_covers_tier1() -> None:
         "L7.mood.media_social",
         "L9.media.social_buzz",
         "L7.mood.theme",
+        # Bucket A append (per A-share fund-flow + block-trade signals).
+        "L8.cap.outflow_cut",
+        "L9.capital.etf_block",
     }
     assert expected_tier1.issubset(akshare_source.SUPPORTED_DP_IDS)
     assert expected_tier1 == akshare_source.TIER1_DP_IDS
@@ -133,6 +136,24 @@ def _stub_social_buzz(a_codes, now):
     ]
 
 
+def _stub_l8_outflow(a_codes, now):
+    return [
+        (ts, "L8.cap.outflow_cut",
+         json.dumps({"signal": True, "main_net_5d": -2.5e8}),
+         "Known", 0.65, "akshare:stock_fund_flow_individual.5d", now)
+        for ts in a_codes
+    ]
+
+
+def _stub_l9_block(a_codes, now):
+    return [
+        (ts, "L9.capital.etf_block",
+         json.dumps({"events_count": 0}),
+         "Inactive", 0.5, "akshare:stock_dzjy_mrmx", now)
+        for ts in a_codes
+    ]
+
+
 def _stub_cls_telegraph(now):
     """3-row MARKET:CN stub mirroring the real ``fetch_cls_telegraph_batch``."""
 
@@ -177,6 +198,10 @@ def test_fetch_batch_emits_seven_tuples_for_a_share_only(
                         _stub_media_social_theme)
     monkeypatch.setattr(akshare_source, "fetch_social_buzz",
                         _stub_social_buzz)
+    monkeypatch.setattr(akshare_source, "fetch_l8_cap_outflow_cut",
+                        _stub_l8_outflow)
+    monkeypatch.setattr(akshare_source, "fetch_l9_capital_etf_block",
+                        _stub_l9_block)
     monkeypatch.setattr(akshare_source, "fetch_cls_telegraph_batch",
                         _stub_cls_telegraph)
     _patch_x2_batches(monkeypatch)
@@ -184,8 +209,8 @@ def test_fetch_batch_emits_seven_tuples_for_a_share_only(
     rows = akshare_source.fetch_batch(fake_universe, tick=0)
 
     assert rows, "fetch_batch must emit at least one row"
-    # 2 A-share × (news + announcement + 2 mood + buzz) + 3 MARKET:CN = 13
-    assert len(rows) == 13
+    # 2 A-share × (news + announcement + 2 mood + buzz + 2 bucket-A) + 3 MARKET:CN = 17
+    assert len(rows) == 17
 
     # Every row is a 7-tuple in the expected shape
     valid_keys = {"300750.SZ", "600519.SH", "MARKET:CN"}
@@ -203,7 +228,7 @@ def test_fetch_batch_emits_seven_tuples_for_a_share_only(
         assert source.startswith("akshare:")
         assert isinstance(updated_at, int) and updated_at > 0
         seen_dp_ids.add(dp_id)
-    # All 5 Tier-1 + 3 market-level dp_ids represented
+    # All Tier-1 + 3 market-level dp_ids represented
     assert seen_dp_ids == (akshare_source.TIER1_DP_IDS
                            | akshare_source.MARKET_LEVEL_DP_IDS)
 
@@ -221,6 +246,10 @@ def test_fetch_batch_skips_when_no_a_share_codes(
                         _stub_media_social_theme)
     monkeypatch.setattr(akshare_source, "fetch_social_buzz",
                         _stub_social_buzz)
+    monkeypatch.setattr(akshare_source, "fetch_l8_cap_outflow_cut",
+                        _stub_l8_outflow)
+    monkeypatch.setattr(akshare_source, "fetch_l9_capital_etf_block",
+                        _stub_l9_block)
     monkeypatch.setattr(akshare_source, "fetch_cls_telegraph_batch",
                         _stub_cls_telegraph)
     _patch_x2_batches(monkeypatch)
@@ -250,6 +279,10 @@ def test_fetch_batch_isolates_per_fetcher_failures(
                         _stub_media_social_theme)
     monkeypatch.setattr(akshare_source, "fetch_social_buzz",
                         _stub_social_buzz)
+    monkeypatch.setattr(akshare_source, "fetch_l8_cap_outflow_cut",
+                        _stub_l8_outflow)
+    monkeypatch.setattr(akshare_source, "fetch_l9_capital_etf_block",
+                        _stub_l9_block)
     monkeypatch.setattr(akshare_source, "fetch_cls_telegraph_batch",
                         _stub_cls_telegraph)
     _patch_x2_batches(monkeypatch)

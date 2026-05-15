@@ -60,7 +60,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 log = logging.getLogger("mvp20.sources.akshare")
@@ -76,6 +76,9 @@ TIER1_DP_IDS = {
     "L7.mood.media_social",
     "L9.media.social_buzz",
     "L7.mood.theme",
+    # Bucket A append (per A-share fund-flow + block-trade signals).
+    "L8.cap.outflow_cut",
+    "L9.capital.etf_block",
 }
 
 # Market-level (sentinel ts_code = 'MARKET:CN'), shared 财联社电报 stream.
@@ -1355,6 +1358,338 @@ def fetch_tier2_stubs(*_args, **_kwargs) -> list[tuple]:
 
 
 # ---------------------------------------------------------------------------
+# Bucket A: per-A-share fund-flow outflow + block-trade event signals.
+# ---------------------------------------------------------------------------
+#
+# Two dp_ids added in this batch:
+#
+#   * ``L8.cap.outflow_cut`` — 5-day main-fund (主力资金) cumulative net
+#     outflow. Single market-wide pull from THS via
+#     ``ak.stock_fund_flow_individual(symbol='5日排行')`` (free, no token)
+#     followed by a per-stock dict lookup. Signal fires when the cumulative
+#     net inflow string parses to ≤ ``-1e8`` 元 (CNY).
+#
+#   * ``L9.capital.etf_block`` — last-5-trade-day 大宗交易 (block trade)
+#     events. Aggregates daily ``ak.stock_dzjy_mrmx`` snapshots; per-stock
+#     event count + total ``成交额`` rolled up into ``L9.capital.etf_block``.
+#
+# Both fetchers share a 10-min TTL cache (matching the X2 cadence) so a
+# single cycle of the collector pings each endpoint at most once. Failure
+# is per-fetcher isolated — losing the THS pull leaves the dzjy fetcher
+# free to run, and vice versa.
+#
+# Note on the "rank" endpoint we did NOT use: as of 2026-05,
+# ``stock_individual_fund_flow_rank`` raises ``JSONDecodeError`` on the
+# very first byte (upstream returns HTML). The THS-backed
+# ``stock_fund_flow_individual`` returns a string-formatted ``资金流入净额``
+# (e.g. ``"-1.23亿"``) which we parse via ``_parse_cn_amount``.
+
+_BUCKET_A_CACHE_TTL_S = 600
+_LAST_OUTFLOW_FETCH: dict[str, object] = {"ts": 0, "rows": [], "key": ""}
+_LAST_BLOCK_FETCH: dict[str, object] = {"ts": 0, "rows": [], "key": ""}
+
+
+def _parse_cn_amount(v) -> float | None:
+    """Parse a CN-style amount string (``"-1.23亿"`` / ``"4.44亿"`` /
+    ``"2832.86万"``) into a plain ``float`` (元).
+
+    Returns ``None`` if input is empty / unparseable. Numeric inputs pass
+    through ``_safe_float`` unchanged.
+    """
+
+    if v is None:
+        return None
+    # Numeric passthrough (already in 元)
+    if isinstance(v, (int, float)):
+        return _safe_float(v)
+    s = str(v).strip()
+    if not s:
+        return None
+    if s in {"--", "-", "—"}:
+        return None
+    # Strip commas / spaces
+    s = s.replace(",", "").replace(" ", "")
+    mult = 1.0
+    suffix = s[-1]
+    if suffix == "亿":
+        mult = 1e8
+        s = s[:-1]
+    elif suffix == "万":
+        mult = 1e4
+        s = s[:-1]
+    elif suffix == "%":
+        # Caller should call _safe_float instead; defensive only.
+        s = s[:-1]
+    try:
+        return float(s) * mult
+    except ValueError:
+        return None
+
+
+def _fetch_main_fund_flow_5d_snapshot() -> dict[str, dict]:
+    """One market-wide pull of THS ``5日排行`` 个股资金流, keyed by 6-digit
+    A-share code so the per-stock lookup is O(1).
+
+    Returns ``{}`` on any upstream failure — the caller will then emit
+    Inactive rows.
+    """
+
+    try:
+        import akshare as ak  # type: ignore
+    except ImportError:
+        return {}
+    try:
+        df = ak.stock_fund_flow_individual(symbol="5日排行")
+    except Exception as e:  # noqa: BLE001
+        log.warning("[akshare] stock_fund_flow_individual(5日排行) failed: %s", e)
+        return {}
+    if df is None or len(df) == 0:
+        return {}
+    out: dict[str, dict] = {}
+    for rec in df.to_dict(orient="records"):
+        code_raw = rec.get("股票代码") or rec.get("代码")
+        if code_raw is None:
+            continue
+        # akshare returns the 股票代码 as int for some indicator variants —
+        # left-pad to 6 digits so we match the to_a_share_code output.
+        code = str(code_raw).strip()
+        if code.isdigit():
+            code = code.zfill(6)
+        if not code:
+            continue
+        # Parse the CN-formatted 资金流入净额 (string like '-1.23亿')
+        net_amount = _parse_cn_amount(
+            rec.get("资金流入净额") or rec.get("主力净流入-净额"),
+        )
+        # 阶段涨跌幅 may also carry a '%' suffix
+        pct_str = rec.get("阶段涨跌幅") or rec.get("主力净流入-净占比")
+        pct = None
+        if isinstance(pct_str, (int, float)):
+            pct = _safe_float(pct_str)
+        elif isinstance(pct_str, str):
+            pct = _safe_float(pct_str.replace("%", "").strip()) \
+                if pct_str.strip() else None
+        out[code] = {
+            "main_net_5d": net_amount,
+            "stage_pct_change": pct,
+            "name": rec.get("股票简称"),
+            "last_price": _safe_float(rec.get("最新价")),
+        }
+    return out
+
+
+def fetch_l8_cap_outflow_cut(a_codes: list[str], now: int) -> list[tuple]:
+    """``L8.cap.outflow_cut`` — per A-share, 5-day 主力资金 cumulative
+    net outflow.
+
+    Pulls the market-wide THS ``5日排行`` 个股资金流 snapshot once per
+    cycle (10-min TTL cache) and looks up each requested ``ts_code`` in
+    constant time. Threshold for the ``signal=True`` alert:
+
+      * ``main_net_5d ≤ -1e8`` 元 (≥ 100M CNY net outflow over 5d), or
+      * ``stage_pct_change ≤ -10.0`` (5d stage drawdown >= 10%)
+
+    Emits ``Known`` for stocks present in the snapshot and ``Inactive``
+    for stocks missing from the THS top list (those are typically
+    low-turnover names — absence is informative, not an error).
+    """
+
+    if not a_codes:
+        return []
+    cache_key = ",".join(sorted(a_codes))
+    cached_ts = int(_LAST_OUTFLOW_FETCH.get("ts") or 0)
+    cached_key = str(_LAST_OUTFLOW_FETCH.get("key") or "")
+    cached_rows = _LAST_OUTFLOW_FETCH.get("rows") or []
+    if (cached_ts and (now - cached_ts) < _BUCKET_A_CACHE_TTL_S
+            and cached_rows and cached_key == cache_key):
+        return list(cached_rows)
+
+    snapshot = _fetch_main_fund_flow_5d_snapshot()
+    as_of = _as_of_iso()
+    rows: list[tuple] = []
+    for ts_code in a_codes:
+        sec = to_a_share_code(ts_code)
+        if not sec:
+            continue
+        entry = snapshot.get(sec)
+        if entry is None:
+            rows.append((
+                ts_code, "L8.cap.outflow_cut",
+                json.dumps({
+                    "signal": False,
+                    "reason": "not_in_ths_5d_rank_top",
+                    "as_of": as_of,
+                }, ensure_ascii=False),
+                "Inactive", 0.4,
+                "akshare:stock_fund_flow_individual.5d", now,
+            ))
+            continue
+        main_net = entry.get("main_net_5d")
+        stage_pct = entry.get("stage_pct_change")
+        signal = (
+            (main_net is not None and main_net <= -1e8)
+            or (stage_pct is not None and stage_pct <= -10.0)
+        )
+        status = "Known" if signal else "Inactive"
+        payload = {
+            "signal": signal,
+            "main_net_5d": main_net,
+            "stage_pct_change_5d": stage_pct,
+            "last_price": entry.get("last_price"),
+            "alert_severity": "WARN" if signal else None,
+            "as_of": as_of,
+        }
+        rows.append((
+            ts_code, "L8.cap.outflow_cut",
+            json.dumps(payload, ensure_ascii=False),
+            status, 0.65,
+            "akshare:stock_fund_flow_individual.5d", now,
+        ))
+    _LAST_OUTFLOW_FETCH["ts"] = now
+    _LAST_OUTFLOW_FETCH["rows"] = list(rows)
+    _LAST_OUTFLOW_FETCH["key"] = cache_key
+    log.info(
+        "[akshare] L8.cap.outflow_cut: %d rows (snapshot=%d, signals=%d)",
+        len(rows), len(snapshot),
+        sum(1 for r in rows if r[3] == "Known"),
+    )
+    return rows
+
+
+def _fetch_dzjy_events_last5(
+    max_trade_days: int = 5,
+    max_calendar_days: int = 12,
+) -> dict[str, list[dict]]:
+    """Aggregate last ``max_trade_days`` of 大宗交易 events keyed by
+    6-digit 证券代码.
+
+    The ``ak.stock_dzjy_mrmx`` endpoint is a daily snapshot — weekends /
+    holidays return ``None`` (which the underlying akshare wrapper
+    surfaces as a ``TypeError`` about subscripting None). We walk back
+    calendar days, ignoring days that produce no data, until we have
+    accumulated ``max_trade_days`` worth of records OR exceeded
+    ``max_calendar_days`` of look-back.
+    """
+
+    try:
+        import akshare as ak  # type: ignore
+    except ImportError:
+        return {}
+
+    events: dict[str, list[dict]] = {}
+    trade_days_seen = 0
+    for d_back in range(0, max_calendar_days + 1):
+        date_str = (datetime.now() - timedelta(days=d_back)).strftime("%Y%m%d")
+        try:
+            df = ak.stock_dzjy_mrmx(start_date=date_str, end_date=date_str)
+        except Exception:  # noqa: BLE001
+            # NoneType subscripting on weekends, network errors, or layout
+            # drifts all land here — silently skip and keep walking back.
+            continue
+        if df is None or len(df) == 0:
+            continue
+        trade_days_seen += 1
+        for rec in df.to_dict(orient="records"):
+            code_raw = (
+                rec.get("证券代码") or rec.get("代码") or rec.get("股票代码")
+            )
+            if code_raw is None:
+                continue
+            code = str(code_raw).strip()
+            if code.isdigit():
+                code = code.zfill(6)
+            if not code:
+                continue
+            events.setdefault(code, []).append({
+                "date": _stringify_date(rec.get("交易日期")) or date_str,
+                "price": _safe_float(rec.get("成交价")),
+                "volume": _safe_float(rec.get("成交量")),
+                "amount": _safe_float(rec.get("成交额")),
+                "buyer": rec.get("买方营业部"),
+                "seller": rec.get("卖方营业部"),
+            })
+        if trade_days_seen >= max_trade_days:
+            break
+    return events
+
+
+def fetch_l9_capital_etf_block(a_codes: list[str], now: int) -> list[tuple]:
+    """``L9.capital.etf_block`` — per A-share, count + total amount of
+    大宗交易 events in the last 5 trade days.
+
+    Aggregates daily ``ak.stock_dzjy_mrmx`` snapshots once per cycle
+    (10-min TTL cache), then per-stock lookup. Stocks with zero recent
+    events emit ``Inactive``; stocks with at least one event emit
+    ``Known`` plus a payload that includes total ``成交额`` and a
+    sample of up to 5 events.
+    """
+
+    if not a_codes:
+        return []
+    cache_key = ",".join(sorted(a_codes))
+    cached_ts = int(_LAST_BLOCK_FETCH.get("ts") or 0)
+    cached_key = str(_LAST_BLOCK_FETCH.get("key") or "")
+    cached_rows = _LAST_BLOCK_FETCH.get("rows") or []
+    if (cached_ts and (now - cached_ts) < _BUCKET_A_CACHE_TTL_S
+            and cached_rows and cached_key == cache_key):
+        return list(cached_rows)
+
+    block_by_code = _fetch_dzjy_events_last5()
+    as_of = _as_of_iso()
+    rows: list[tuple] = []
+    for ts_code in a_codes:
+        sec = to_a_share_code(ts_code)
+        if not sec:
+            continue
+        events = block_by_code.get(sec) or []
+        if not events:
+            rows.append((
+                ts_code, "L9.capital.etf_block",
+                json.dumps({
+                    "events_count": 0,
+                    "as_of": as_of,
+                }, ensure_ascii=False),
+                "Inactive", 0.5,
+                "akshare:stock_dzjy_mrmx", now,
+            ))
+            continue
+        total_amount = sum(
+            e["amount"] for e in events if e["amount"] is not None
+        )
+        total_volume = sum(
+            e["volume"] for e in events if e["volume"] is not None
+        )
+        avg_price = None
+        priced = [e["price"] for e in events if e["price"] is not None]
+        if priced:
+            avg_price = round(sum(priced) / len(priced), 4)
+        payload = {
+            "events_count": len(events),
+            "total_amount_cny": total_amount,
+            "total_volume": total_volume,
+            "avg_price": avg_price,
+            "events_sample": events[:5],
+            "as_of": as_of,
+        }
+        rows.append((
+            ts_code, "L9.capital.etf_block",
+            json.dumps(payload, ensure_ascii=False),
+            "Known", 0.7,
+            "akshare:stock_dzjy_mrmx", now,
+        ))
+    _LAST_BLOCK_FETCH["ts"] = now
+    _LAST_BLOCK_FETCH["rows"] = list(rows)
+    _LAST_BLOCK_FETCH["key"] = cache_key
+    log.info(
+        "[akshare] L9.capital.etf_block: %d rows "
+        "(market_events=%d, known_stocks=%d)",
+        len(rows), sum(len(v) for v in block_by_code.values()),
+        sum(1 for r in rows if r[3] == "Known"),
+    )
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Batch entry point used by collector.py
 # ---------------------------------------------------------------------------
 
@@ -1390,6 +1725,9 @@ def fetch_batch(
             ("intraday_announcement", lambda: fetch_intraday_announcement(a_codes, now)),
             ("media_social_theme",    lambda: fetch_media_social_and_theme(a_codes, now)),
             ("social_buzz",           lambda: fetch_social_buzz(a_codes, now)),
+            # Bucket A append — fund-flow outflow + block-trade signals.
+            ("l8_cap_outflow_cut",    lambda: fetch_l8_cap_outflow_cut(a_codes, now)),
+            ("l9_capital_etf_block",  lambda: fetch_l9_capital_etf_block(a_codes, now)),
         )
         for name, fn in fetchers:
             try:

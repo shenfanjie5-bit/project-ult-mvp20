@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sqlite3
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +51,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 GOVERNANCE_YAML = ROOT / "config" / "llm_field_governance.yaml"
+HOT_DB_PATH = ROOT / "runtime" / "hot.sqlite"
 
 LOCAL_KINDS = {"local_dp_id", "local_overlay", "industry_inference"}
 WEB_KINDS = {
@@ -134,6 +136,8 @@ class Summary:
     unregistered_nodes: int = 0
     violations: list[Violation] = field(default_factory=list)
     demoted_nodes: int = 0
+    excerpt_checked_nodes: int = 0
+    excerpt_mis_cite_nodes: int = 0
 
     @property
     def hard_violations(self) -> int:
@@ -233,6 +237,219 @@ def validate_web_evidence(entry: Any) -> list[str]:
         errors.append("web evidence missing checksum")
     if not entry.get("fetched_at"):
         errors.append("web evidence missing fetched_at")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# excerpt semantic check (Fix A) — defend against mis-citation
+# ---------------------------------------------------------------------------
+
+
+_PUNCT_RE = re.compile(
+    r"[\s\.,，。、；;:：!！\?？\(\)（）\[\]【】\"'“”‘’<>《》/\\\-—_+=*#&%$@`~]+"
+)
+
+
+def _normalize_text(s: Any) -> str:
+    """Lowercase + strip punctuation/whitespace for fuzzy substring match.
+
+    Used so cosmetic differences (full-width vs ASCII punctuation, trailing
+    whitespace, casing) don't cause false positives.
+    """
+
+    if not isinstance(s, str):
+        return ""
+    return _PUNCT_RE.sub("", s.lower())
+
+
+def _lookup_sqlite_value(
+    db_path: Path,
+    ts_code: str,
+    dp_id: str,
+) -> str:
+    """Pull current ``value_json`` for ``(ts_code, dp_id)`` from realtime_current.
+
+    Falls back to ``MARKET:<market>`` / ``INDUSTRY:<id>`` sentinels per
+    ``storage.read_hot_snapshot`` logic so industry/macro dp_ids resolve.
+    Returns ``""`` if the row is not found or the db is missing.
+    """
+
+    if not db_path.exists():
+        return ""
+    # Priority order: stock row > industry sentinels > market sentinel.
+    candidates: list[str] = [ts_code]
+    market_suffix: str | None = None
+    if ts_code.endswith((".SH", ".SZ", ".BJ")):
+        market_suffix = "MARKET:CN"
+    elif ts_code.endswith(".HK"):
+        market_suffix = "MARKET:HK"
+    elif ts_code.endswith(".US"):
+        market_suffix = "MARKET:US"
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        try:
+            ind_rows = conn.execute(
+                "SELECT industry_id FROM overlay_manifest WHERE ts_code = ? "
+                "ORDER BY primary_industry DESC, industry_id",
+                (ts_code,),
+            ).fetchall()
+            for (ind,) in ind_rows:
+                candidates.append(f"INDUSTRY:{ind}")
+        except sqlite3.OperationalError:
+            # overlay_manifest may not exist in minimal test fixtures.
+            pass
+
+        if market_suffix is not None:
+            candidates.append(market_suffix)
+
+        placeholders = ",".join("?" * len(candidates))
+        try:
+            rows = conn.execute(
+                f"SELECT ts_code, value_json FROM realtime_current "
+                f"WHERE dp_id = ? AND ts_code IN ({placeholders})",
+                (dp_id, *candidates),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return ""
+    finally:
+        conn.close()
+    if not rows:
+        return ""
+    priority = {t: i for i, t in enumerate(candidates)}
+    rows.sort(key=lambda r: priority.get(r[0], 999))
+    return rows[0][1] or ""
+
+
+def verify_excerpt_semantic_match(
+    node: dict[str, Any],
+    ts_code: str,
+    db_path: Path,
+    overlays_root: Path | None = None,
+) -> list[str]:
+    """For each ``evidence_sources`` entry, verify the ``excerpt`` substring
+    is actually present in the source it claims to cite.
+
+    * ``kind=local_dp_id`` — excerpt must appear in the SQLite
+      ``value_json`` of the cited dp_id (across the stock's own row and
+      INDUSTRY/MARKET sentinels).
+    * ``kind=local_overlay`` — excerpt must appear in the overlay yaml
+      node's serialised ``value``.
+    * ``industry_inference`` / web kinds — no excerpt semantics enforced
+      here (industry_inference has no source to compare against; web kinds
+      are checked separately for url+checksum+fetched_at).
+
+    Excerpts shorter than 3 normalised chars are skipped (too short to be
+    meaningful evidence). Missing excerpts are also skipped — absence of
+    excerpt is a quality issue but not a mis-cite.
+
+    Returns the list of mis-cite error messages (empty if all evidence
+    excerpts trace back to their sources).
+    """
+
+    errors: list[str] = []
+    ev_list = _evidence_entries(node)
+    for idx, ev in enumerate(ev_list):
+        if not isinstance(ev, dict):
+            continue
+        kind = ev.get("kind")
+        excerpt = ev.get("excerpt") or ev.get("snippet") or ""
+        if not excerpt:
+            continue
+        norm_excerpt = _normalize_text(excerpt)
+        if len(norm_excerpt) < 3:
+            continue
+
+        if kind == "local_dp_id":
+            src_dp = ev.get("dp_id") or ev.get("source_dp_id") or ""
+            if not src_dp:
+                # Some legacy rows store the dp_id inside `source`, e.g.
+                # "L5.is.revenue@runtime/hot.sqlite". Salvage that form.
+                src_field = ev.get("source") or ""
+                if isinstance(src_field, str) and "@" in src_field:
+                    src_dp = src_field.split("@", 1)[0]
+            if not src_dp:
+                errors.append(
+                    f"ev[{idx}] kind=local_dp_id missing dp_id field"
+                )
+                continue
+            actual = _lookup_sqlite_value(db_path, ts_code, src_dp)
+            if not actual:
+                errors.append(
+                    f"ev[{idx}] cites {src_dp!r} but no SQLite row found for "
+                    f"({ts_code} or sentinel)"
+                )
+                continue
+            if norm_excerpt not in _normalize_text(actual):
+                errors.append(
+                    f"ev[{idx}] mis-cite: excerpt {excerpt[:60]!r} not in "
+                    f"{src_dp}'s actual value {actual[:80]!r}"
+                )
+
+        elif kind == "local_overlay":
+            if overlays_root is None:
+                continue
+            path_str = ev.get("path") or ""
+            target_dp = ev.get("dp_id") or ""
+            if not path_str:
+                continue
+            yaml_path = (
+                Path(path_str)
+                if path_str.startswith("/")
+                else overlays_root / path_str
+            )
+            if not yaml_path.exists():
+                # Also try treating overlays_root as project root.
+                alt = (
+                    overlays_root.parent / path_str
+                    if overlays_root.parent != overlays_root
+                    else yaml_path
+                )
+                if alt.exists():
+                    yaml_path = alt
+                else:
+                    errors.append(
+                        f"ev[{idx}] local_overlay path {path_str!r} not found"
+                    )
+                    continue
+            try:
+                overlay = (
+                    yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+                )
+            except (yaml.YAMLError, OSError) as exc:
+                errors.append(f"ev[{idx}] overlay parse failed: {exc}")
+                continue
+            target_node = None
+            for n in overlay.get("nodes") or []:
+                if isinstance(n, dict) and n.get("dp_id") == target_dp:
+                    target_node = n
+                    break
+            if target_node is None:
+                if target_dp:
+                    errors.append(
+                        f"ev[{idx}] dp_id {target_dp!r} not in overlay"
+                    )
+                continue
+            v = target_node.get("value")
+            actual = (
+                json.dumps(v, ensure_ascii=False)
+                if v not in (None, "", [], {})
+                else ""
+            )
+            if not actual:
+                errors.append(
+                    f"ev[{idx}] overlay node {target_dp!r} has no value"
+                )
+                continue
+            if norm_excerpt not in _normalize_text(actual):
+                errors.append(
+                    f"ev[{idx}] mis-cite: excerpt {excerpt[:60]!r} not in "
+                    f"overlay {target_dp}'s value {actual[:80]!r}"
+                )
+
+        # kind == "industry_inference" → reasoning-only, no source to check.
+        # kind ∈ WEB_KINDS → url+checksum+fetched_at checked separately.
+
     return errors
 
 
@@ -357,14 +574,36 @@ def audit_overlays(
     governance: dict[str, Any],
     auto_demote: bool = False,
     strict_web_only: bool = False,
+    check_excerpt: bool = False,
+    db_path: Path | None = None,
+    overlays_root: Path | None = None,
 ) -> Summary:
-    """Walk every overlay yaml and audit each node's evidence_sources."""
+    """Walk every overlay yaml and audit each node's evidence_sources.
+
+    When ``check_excerpt`` is True, each evidence-bearing node also has
+    its ``excerpt`` strings semantically validated against the cited
+    source (SQLite for ``local_dp_id``, overlay yaml for
+    ``local_overlay``). Mis-cites are reported as SOFT violations
+    (severity ``warn``) and are NEVER auto-demoted, to avoid clobbering
+    overlays for cosmetic excerpt drift.
+    """
+
+    if db_path is None:
+        db_path = HOT_DB_PATH
+    if overlays_root is None:
+        overlays_root = stock_overlays_dir.parent
 
     summary = Summary()
     for path in _iter_overlay_files(stock_overlays_dir, industry_overlays_dir):
         summary.overlays_scanned += 1
         payload = _load_yaml(path)
         nodes = payload.get("nodes") or []
+        overlay_ts_code = str(payload.get("ts_code") or "")
+        # Industry overlay → use INDUSTRY:<id> sentinel as ts_code so the
+        # excerpt lookup naturally resolves industry-level rows.
+        if not overlay_ts_code:
+            industry_id = payload.get("industry_id") or path.stem
+            overlay_ts_code = f"INDUSTRY:{industry_id}"
         path_dirty = False
         for node in nodes:
             summary.nodes_scanned += 1
@@ -405,6 +644,28 @@ def audit_overlays(
                     reason=warn,
                     snippet=_stringify(ev_list),
                 ))
+
+            # Excerpt semantic check (Fix A): soft-warn only, never demote.
+            if check_excerpt and ev_list:
+                summary.excerpt_checked_nodes += 1
+                excerpt_errors = verify_excerpt_semantic_match(
+                    node,
+                    overlay_ts_code,
+                    db_path,
+                    overlays_root=overlays_root,
+                )
+                if excerpt_errors:
+                    summary.excerpt_mis_cite_nodes += 1
+                for msg in excerpt_errors:
+                    summary.violations.append(Violation(
+                        overlay_path=path,
+                        node_dp_id=dp_id,
+                        node_node_id=node_id,
+                        tier=tier,
+                        severity="warn",
+                        reason=f"excerpt_mis_cite: {msg}",
+                        snippet=_stringify(ev_list),
+                    ))
 
             # web_analysis warnings are NOT auto-demoted (could be a small
             # LLM fill miss like missing checksum). Only hard errors on
@@ -457,6 +718,9 @@ def _print_summary(summary: Summary) -> None:
     print(f"- hard violations (error): {summary.hard_violations}")
     print(f"- soft violations (warn): {summary.warn_violations}")
     print(f"- auto-demoted nodes: {summary.demoted_nodes}")
+    if summary.excerpt_checked_nodes:
+        print(f"- excerpt-checked nodes: {summary.excerpt_checked_nodes}")
+        print(f"- excerpt mis-cite nodes: {summary.excerpt_mis_cite_nodes}")
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +756,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Only scan web_analysis tier fields.",
     )
     parser.add_argument(
+        "--check-excerpt", action="store_true",
+        help=(
+            "Opt-in semantic check: verify each evidence excerpt is a "
+            "substring of the cited source value (SQLite for local_dp_id, "
+            "overlay yaml for local_overlay). Mis-cites are reported as "
+            "soft violations and never auto-demoted."
+        ),
+    )
+    parser.add_argument(
+        "--db-path", type=Path, default=HOT_DB_PATH,
+        help="Path to runtime/hot.sqlite (only used with --check-excerpt).",
+    )
+    parser.add_argument(
         "--out-json", type=Path, default=None,
         help="Optional path to write the violation list as JSON.",
     )
@@ -508,6 +785,8 @@ def main(argv: list[str] | None = None) -> int:
         governance=governance,
         auto_demote=args.auto_demote,
         strict_web_only=args.strict_web_only,
+        check_excerpt=args.check_excerpt,
+        db_path=args.db_path,
     )
     if not args.quiet:
         _print_violations(summary.violations)
@@ -527,6 +806,8 @@ def main(argv: list[str] | None = None) -> int:
                     "hard_violations": summary.hard_violations,
                     "warn_violations": summary.warn_violations,
                     "demoted_nodes": summary.demoted_nodes,
+                    "excerpt_checked_nodes": summary.excerpt_checked_nodes,
+                    "excerpt_mis_cite_nodes": summary.excerpt_mis_cite_nodes,
                     "violations": [v.as_row() for v in summary.violations],
                 },
                 ensure_ascii=False,

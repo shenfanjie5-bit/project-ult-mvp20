@@ -133,6 +133,44 @@ SUPPORTED_DP_IDS = {
     "L9.disclosure.qa_recent",    # irm_qa_sh / irm_qa_sz (投资者关系 Q&A)
     "L1.company.main_business",   # stock_company (主营业务 + 业务范围)
     "L8.gov.management_table",    # stk_managers (top10 高管 + 任期表)
+    # ── Bucket A: 14 hard-data dp_ids appended at fetch_batch tail ──
+    # Sub-group 1: L2 业务分部 (3) from pro.fina_mainbz
+    "L2.segment.revenue_share",     # 各 bz_item 收入占比
+    "L2.segment.gross_margin",      # (bz_sales - bz_cost) / bz_sales
+    "L2.segment.growth",            # bz_sales 同比 yoy
+    # Sub-group 2: L5 财报预告/快报变化 (2)
+    "L5.fcst.guidance_change",      # forecast 最近 2 期 type/range delta
+    "L5.surprise.beat_miss",        # express 实际 vs forecast 中位
+    # Sub-group 3: L8.fin 财报风险 (3)
+    "L8.fin.eps_downward",          # forecast EPS 中位数 delta
+    "L8.fin.goodwill_impairment",   # balancesheet goodwill 下滑
+    "L8.fin.revenue_profit_miss",   # surprise miss 触发 alert
+    # Sub-group 4: L8.cap 资金/拥挤/流动性 (3)
+    "L8.cap.crowdedness",           # 30d 平均换手率 + 资金净流入 5d
+    "L8.cap.short_increase",        # 融券余额 rqye 30d/90d ma
+    "L8.cap.liquidity_short",       # 30d 均成交额 + 单日大跌放量
+    # Sub-group 5: L8.industry/op (2)
+    "L8.industry.valuation_compression",  # 行业 PE_ttm 30d vs 90d
+    "L8.op.cost_overrun",                 # cost yoy 比 revenue yoy 高
+    # Sub-group 6: L9.capital (1)
+    "L9.capital.margin_anomaly",    # rzmre 5d ma vs 30d ma 翻倍
+    # ── Bucket B: 12 hard-data dp_ids (估值 + 卖方研报 + L0 行业 sentiment + peer) ──
+    # Sub-group B1: L0 industry-level sentinel sentiment (4)
+    "L0.cost.capital",              # LPR + industry risk premium (MARKET:CN)
+    "L0.sentiment.institutional",   # top10 inst holding pct + 30d delta (per industry)
+    "L0.sentiment.leader_drag",     # leader 5d vs follower 5d (per industry)
+    "L0.sentiment.social",          # hot-stocks count + themes (per industry)
+    # Sub-group B2: L6 valuation 5 (mix per-stock + per-industry)
+    "L6.priced.analyst_revision",   # report_rc 上修/下修 90d (per-stock)
+    "L6.priced.discussion",         # dc_hot + ths_hot 30d (per-stock)
+    "L6.state.expansion_compression",  # PE vs 60d / 250d ma (per-stock)
+    "L6.state.industry_center",     # industry PE/PB/PS median (per industry)
+    "L6.state.peer_compare",        # stock PE vs industry median (per-stock)
+    # Sub-group B3: L7.mood + L9.media (sell-side research派生) 2
+    "L7.mood.analyst_rating",       # report_rc 评级分布 (per-stock)
+    "L9.media.analyst_action",      # report_rc 7d 评级变动 event (per-stock)
+    # Sub-group B4: L10.val.peer (1) — alias-style view of peer_compare
+    "L10.val.peer",                 # validation: stock vs industry PE/PB
 }
 
 
@@ -202,6 +240,59 @@ _DISCLOSURE_CACHE_TTL_S = 600
 _IRM_QA_CACHE: dict[str, tuple[int, list[dict]]] = {}
 _STOCK_COMPANY_CACHE: dict[str, tuple[int, list[dict]]] = {}
 _STK_MANAGERS_CACHE: dict[str, tuple[int, list[dict]]] = {}
+
+# ---------------------------------------------------------------------------
+# Bucket A: extra per-stock caches (5-min TTL).
+# ---------------------------------------------------------------------------
+#
+# Bucket A adds 14 hard-data dp_ids that re-use the existing fina_indicator /
+# balancesheet / income / cashflow cache family plus three new endpoints:
+#
+#   * pro.fina_mainbz  — 主营业务收入分部 (per-stock)
+#   * pro.forecast     — already wrapped in ``_fetch_a_share_forecast`` but
+#                        Bucket A needs ≥ 2 recent rows so we add a separate
+#                        cache to avoid re-pulling.
+#   * pro.express      — 业绩快报 (per-stock)
+#
+# All three share the X3b convention: ``_cache_get/put`` with a 5-min TTL,
+# RPC throttle on cache miss, and empty list on permission error or schema
+# drift (so callers can branch to Inactive without try/except).
+_FINA_MAINBZ_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_FORECAST_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_EXPRESS_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_DAILY_BASIC_HISTORY_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_DAILY_HISTORY_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_MARGIN_HISTORY_CACHE: dict[str, tuple[int, list[dict]]] = {}
+
+# ---------------------------------------------------------------------------
+# Bucket B: per-stock + market/industry caches (5-min TTL).
+# ---------------------------------------------------------------------------
+#
+# Bucket B adds 12 hard-data dp_ids covering valuation, sell-side research,
+# L0 industry-level sentiment, and peer comparison. New endpoints:
+#
+#   * pro.report_rc       — 卖方研报评级 (per-stock; 90d window). Same
+#                           endpoint as Tushare A's L5.surprise.sell_side but
+#                           we cache the raw record list here so Bucket B
+#                           fetchers can run independently of that pre-existing
+#                           helper (which only emits L5.surprise.sell_side).
+#   * pro.dc_hot          — 东方财富热榜 (market-wide; daily snapshot).
+#   * pro.ths_hot         — 同花顺热榜 (market-wide; daily snapshot).
+#   * pro.top10_holders   — 前十大股东 (per-stock; latest 4 periods).
+#
+# Plus a "long" daily_basic history cache (~300d) so the
+# ``L6.state.expansion_compression`` fetcher can compute the 60d / 250d MA
+# without invalidating the 120d Bucket A cache.
+_REPORT_RC_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_DC_HOT_CACHE: tuple[int, list[dict]] | None = None
+_THS_HOT_CACHE: tuple[int, list[dict]] | None = None
+_SHIBOR_LPR_CACHE: tuple[int, list[dict]] | None = None
+_TOP10_HOLDERS_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_DAILY_BASIC_HISTORY_LONG_CACHE: dict[str, tuple[int, list[dict]]] = {}
+# Industry-level center cache keyed by industry_id ↔ payload (industry PE/PB
+# medians). Populated by ``_emit_industry_center`` and consumed by both
+# ``L6.state.peer_compare`` and ``L10.val.peer``.
+_INDUSTRY_CENTER_CACHE: dict[str, tuple[int, dict]] = {}
 
 
 def is_a_share(ts_code: str) -> bool:
@@ -557,6 +648,10 @@ def fetch_batch(
             log.warning("[tushare] moneyflow %s failed: %s", trade_date, e)
             continue
 
+    # ``main_net_by_ts_code`` — re-used by Bucket A L8.cap.crowdedness as the
+    # main_net_5d proxy (today's snapshot, not a true 5d sum, but close
+    # enough for the alert threshold and saves a moneyflow re-pull).
+    main_net_by_ts_code: dict[str, float] = {}
     if moneyflow_df is not None:
         for rec in moneyflow_df.to_dict(orient="records"):
             ts_code = rec.get("ts_code")
@@ -568,6 +663,12 @@ def fetch_batch(
             buy_elg = _safe(rec, "buy_elg_amount") or 0
             sell_elg = _safe(rec, "sell_elg_amount") or 0
             big_orders_net = (buy_lg + buy_elg) - (sell_lg + sell_elg)  # 大+特大单净买入
+
+            if netbuy is not None:
+                try:
+                    main_net_by_ts_code[ts_code] = float(netbuy)
+                except (TypeError, ValueError):
+                    pass
 
             # spec L7.flow.active_inflow bundles both Tushare net_mf_amount
             # (主力净流入) and the derived 大+特大 单净买入. The frontend gets
@@ -698,6 +799,31 @@ def fetch_batch(
         rows.extend(fetch_disclosure_batch(pro, a_codes, now))
     except Exception as e:  # noqa: BLE001
         log.warning("[tushare] X5 disclosure batch failed: %s", e)
+
+    # ── Bucket A: 14 hard-data dp_ids (additive, all wrapped) ──
+    # The dispatcher emits per-stock rows plus N industry-level rows for
+    # L8.industry.valuation_compression. Per-fetcher try/except inside the
+    # dispatcher ensures a single endpoint failure cannot poison the rest.
+    try:
+        rows.extend(fetch_bucket_a_batch(
+            pro, a_codes, now,
+            main_net_inflow_by_ts_code=main_net_by_ts_code,
+        ))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] Bucket A batch failed: %s", e)
+
+    # ── Bucket B: 12 hard-data dp_ids (估值 + 卖方研报 + L0 + peer) ──
+    # Independent dispatcher with per-fetcher try/except. Industry fan-out
+    # for L0.sentiment.* and L6.state.industry_center relies on the
+    # ``code_to_industry`` map already built above.
+    try:
+        rows.extend(fetch_bucket_b_batch(
+            pro, a_codes,
+            code_to_industry=code_to_industry,
+            now=now,
+        ))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] Bucket B batch failed: %s", e)
 
     return rows
 
@@ -4048,4 +4174,2434 @@ def fetch_disclosure_batch(
         rows.extend(_fetch_a_share_stk_managers_table(pro, a_codes, now))
     except Exception as e:  # noqa: BLE001
         log.warning("[tushare] X5 stk_managers_table batch failed: %s", e)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Bucket A: 14 hard-data dp_ids appended at fetch_batch tail.
+# ---------------------------------------------------------------------------
+#
+# Sub-groups:
+#   1. L2.segment.* (3)            — pro.fina_mainbz per A-share
+#   2. L5.fcst/surprise.* (2)      — pro.forecast / pro.express
+#   3. L8.fin.* (3)                — eps_downward / goodwill / revenue_miss
+#   4. L8.cap.* (3)                — crowdedness / short_increase / liquidity
+#   5. L8.industry / L8.op (2)     — valuation_compression / cost_overrun
+#   6. L9.capital.margin_anomaly (1) — pro.margin_detail 5d ma surge
+#
+# Design rules:
+#   * All fetchers live below the existing X5 disclosure block — additive,
+#     no edits to legacy code paths.
+#   * Each fetcher returns rows or [] on any failure; never raises.
+#   * Alert dp_ids emit ``Inactive`` (confidence 0.0) when no alert; ``Known``
+#     when triggered. Non-alert dp_ids emit ``Inactive`` only when data is
+#     missing.
+#   * Per-stock RPC throttle ``_BUCKET_A_SLEEP_S`` keeps the cumulative API
+#     budget under 500/min when stacked with the prior loops.
+
+_BUCKET_A_SLEEP_S = 0.13
+
+
+def _get_fina_mainbz_records(pro, ts_code: str, now: int) -> list[dict]:
+    """Return up to 8 quarters of ``fina_mainbz`` records (latest first).
+
+    Cached per-ts_code with ``_FINA_CACHE_TTL_S`` TTL. Empty list on any
+    failure (permission, schema drift) so callers can branch to Inactive.
+    """
+
+    cached = _cache_get(_FINA_MAINBZ_CACHE, ts_code, _FINA_CACHE_TTL_S, now)
+    if cached is not None:
+        return cached
+    try:
+        df = pro.fina_mainbz(
+            ts_code=ts_code, type="P",
+            fields="ts_code,end_date,bz_item,bz_sales,bz_cost,bz_profit",
+        )
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketA fina_mainbz %s failed: %s", ts_code, e)
+        _cache_put(_FINA_MAINBZ_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_FINA_MAINBZ_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    records.sort(key=lambda r: r.get("end_date") or "", reverse=True)
+    _cache_put(_FINA_MAINBZ_CACHE, ts_code, records, now)
+    return records
+
+
+def _get_forecast_records(pro, ts_code: str, now: int) -> list[dict]:
+    """Return forecast records sorted by ann_date desc (latest first).
+
+    Bucket A needs 2+ recent forecast rows for guidance_change delta and
+    eps_downward delta. Empty list on any failure.
+    """
+
+    cached = _cache_get(_FORECAST_CACHE, ts_code, _FINA_CACHE_TTL_S, now)
+    if cached is not None:
+        return cached
+    try:
+        df = pro.forecast(ts_code=ts_code)
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketA forecast %s failed: %s", ts_code, e)
+        _cache_put(_FORECAST_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_FORECAST_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    # Latest ann_date first; ties broken by end_date desc.
+    records.sort(
+        key=lambda r: (r.get("ann_date") or "", r.get("end_date") or ""),
+        reverse=True,
+    )
+    _cache_put(_FORECAST_CACHE, ts_code, records, now)
+    return records
+
+
+def _get_express_records(pro, ts_code: str, now: int) -> list[dict]:
+    """Return 业绩快报 records sorted by ann_date desc (latest first)."""
+
+    cached = _cache_get(_EXPRESS_CACHE, ts_code, _FINA_CACHE_TTL_S, now)
+    if cached is not None:
+        return cached
+    try:
+        df = pro.express(
+            ts_code=ts_code,
+            fields=("ts_code,ann_date,end_date,revenue,operate_profit,"
+                    "total_profit,n_income,yoy_sales,yoy_op,yoy_tp,yoy_net_profit"),
+        )
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketA express %s failed: %s", ts_code, e)
+        _cache_put(_EXPRESS_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_EXPRESS_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    records.sort(
+        key=lambda r: (r.get("ann_date") or "", r.get("end_date") or ""),
+        reverse=True,
+    )
+    _cache_put(_EXPRESS_CACHE, ts_code, records, now)
+    return records
+
+
+def _get_daily_basic_history(
+    pro, ts_code: str, now: int, history_days: int = 120,
+) -> list[dict]:
+    """Return per-ts_code daily_basic history (latest first).
+
+    Used by L8.cap.crowdedness (turnover) and L8.industry.valuation_compression
+    (industry-level PE_ttm aggregation). 120-day window covers the 30d/90d
+    moving-average comparison the formulas need plus headroom for trading
+    holidays.
+    """
+
+    cached = _cache_get(_DAILY_BASIC_HISTORY_CACHE, ts_code, _FINA_CACHE_TTL_S, now)
+    if cached is not None:
+        return cached
+    end = _today_yyyymmdd()
+    start = _previous_n_days(history_days + 30)
+    try:
+        df = pro.daily_basic(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,turnover_rate,pe_ttm",
+        )
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "[tushare] BucketA daily_basic.history %s failed: %s", ts_code, e,
+        )
+        _cache_put(_DAILY_BASIC_HISTORY_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_DAILY_BASIC_HISTORY_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    records.sort(key=lambda r: r.get("trade_date") or "", reverse=True)
+    _cache_put(_DAILY_BASIC_HISTORY_CACHE, ts_code, records, now)
+    return records
+
+
+def _get_daily_history(
+    pro, ts_code: str, now: int, history_days: int = 60,
+) -> list[dict]:
+    """Return per-ts_code daily price+volume history (latest first).
+
+    Used by L8.cap.liquidity_short — 30d 均成交额 + 单日大跌+放量 detection.
+    """
+
+    cached = _cache_get(_DAILY_HISTORY_CACHE, ts_code, _FINA_CACHE_TTL_S, now)
+    if cached is not None:
+        return cached
+    end = _today_yyyymmdd()
+    start = _previous_n_days(history_days + 15)
+    try:
+        df = pro.daily(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,close,pct_chg,amount,vol",
+        )
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketA daily.history %s failed: %s", ts_code, e)
+        _cache_put(_DAILY_HISTORY_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_DAILY_HISTORY_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    records.sort(key=lambda r: r.get("trade_date") or "", reverse=True)
+    _cache_put(_DAILY_HISTORY_CACHE, ts_code, records, now)
+    return records
+
+
+def _get_margin_history(
+    pro, ts_code: str, now: int, history_days: int = 120,
+) -> list[dict]:
+    """Return per-ts_code margin_detail history (latest first).
+
+    Used by L8.cap.short_increase (rqye 30d/90d ma) and
+    L9.capital.margin_anomaly (rzmre 5d/30d ma surge).
+    """
+
+    cached = _cache_get(_MARGIN_HISTORY_CACHE, ts_code, _FINA_CACHE_TTL_S, now)
+    if cached is not None:
+        return cached
+    end = _today_yyyymmdd()
+    start = _previous_n_days(history_days + 30)
+    try:
+        df = pro.margin_detail(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,rzye,rqye,rzmre,rqmcl",
+        )
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "[tushare] BucketA margin_detail.history %s failed: %s", ts_code, e,
+        )
+        _cache_put(_MARGIN_HISTORY_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_MARGIN_HISTORY_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    records.sort(key=lambda r: r.get("trade_date") or "", reverse=True)
+    _cache_put(_MARGIN_HISTORY_CACHE, ts_code, records, now)
+    return records
+
+
+# ---------------------------------------------------------------------------
+# Sub-group 1: L2.segment.* — 主营业务分部 (3 dp_ids)
+# ---------------------------------------------------------------------------
+
+
+def _derive_segments(records: list[dict]) -> tuple[dict, dict, dict]:
+    """Compute revenue_share / gross_margin / growth from fina_mainbz.
+
+    Returns three payloads (revenue_share, gross_margin, growth). Each is a
+    ``{"segments": [...], "period": "YYYYMMDD"}`` dict or contains a
+    ``"reason"`` key when the data is insufficient.
+
+    Status is computed by the caller — these helpers always return a dict.
+    """
+
+    if not records:
+        return ({"reason": "no fina_mainbz"},
+                {"reason": "no fina_mainbz"},
+                {"reason": "no fina_mainbz"})
+
+    latest_period = records[0].get("end_date")
+    # Group by end_date so we can also do yoy growth.
+    by_period: dict[str, list[dict]] = {}
+    for rec in records:
+        p = rec.get("end_date")
+        if not p:
+            continue
+        by_period.setdefault(p, []).append(rec)
+
+    latest_rows = by_period.get(latest_period, [])
+    if not latest_rows:
+        return ({"reason": "no latest segment"},
+                {"reason": "no latest segment"},
+                {"reason": "no latest segment"})
+
+    # ── revenue_share ──
+    total_sales = 0.0
+    for r in latest_rows:
+        s = _safe_num(r.get("bz_sales"))
+        if s is not None:
+            total_sales += s
+    revenue_share_segments: list[dict] = []
+    if total_sales > 0:
+        for r in latest_rows:
+            s = _safe_num(r.get("bz_sales"))
+            if s is None:
+                continue
+            revenue_share_segments.append({
+                "item": str(r.get("bz_item") or ""),
+                "revenue_pct": round(s / total_sales * 100.0, 4),
+                "period": latest_period,
+            })
+    # Sort by revenue_pct desc.
+    revenue_share_segments.sort(
+        key=lambda r: r.get("revenue_pct") or 0.0, reverse=True,
+    )
+    revenue_share_payload: dict = {
+        "segments": revenue_share_segments,
+        "period": latest_period,
+    }
+    if not revenue_share_segments:
+        revenue_share_payload = {"reason": "no positive bz_sales"}
+
+    # ── gross_margin per segment ──
+    gm_segments: list[dict] = []
+    for r in latest_rows:
+        s = _safe_num(r.get("bz_sales"))
+        c = _safe_num(r.get("bz_cost"))
+        if s is None or s <= 0 or c is None:
+            continue
+        gm_pct = round((s - c) / s * 100.0, 4)
+        gm_segments.append({
+            "item": str(r.get("bz_item") or ""),
+            "gross_margin_pct": gm_pct,
+            "period": latest_period,
+        })
+    gm_segments.sort(key=lambda r: r.get("gross_margin_pct") or 0.0, reverse=True)
+    gm_payload: dict = {
+        "segments": gm_segments,
+        "period": latest_period,
+    }
+    if not gm_segments:
+        gm_payload = {"reason": "no bz_cost available"}
+
+    # ── growth (yoy of bz_sales) ──
+    prior_period = _yoy_period(latest_period) if latest_period else None
+    growth_segments: list[dict] = []
+    prior_rows = by_period.get(prior_period, []) if prior_period else []
+    prior_by_item = {str(r.get("bz_item") or ""): r for r in prior_rows}
+    for r in latest_rows:
+        item = str(r.get("bz_item") or "")
+        s = _safe_num(r.get("bz_sales"))
+        p_rec = prior_by_item.get(item)
+        if p_rec is None or s is None:
+            continue
+        ps = _safe_num(p_rec.get("bz_sales"))
+        if ps is None or ps == 0:
+            continue
+        yoy_pct = round((s - ps) / abs(ps) * 100.0, 4)
+        growth_segments.append({
+            "item": item,
+            "yoy_pct": yoy_pct,
+            "period": latest_period,
+        })
+    growth_segments.sort(
+        key=lambda r: r.get("yoy_pct") or 0.0, reverse=True,
+    )
+    growth_payload: dict = {
+        "segments": growth_segments,
+        "period": latest_period,
+        "prior_period": prior_period,
+    }
+    if not growth_segments:
+        growth_payload = {
+            "reason": "no yoy comparable segments",
+            "period": latest_period,
+            "prior_period": prior_period,
+        }
+
+    return revenue_share_payload, gm_payload, growth_payload
+
+
+# ---------------------------------------------------------------------------
+# Sub-group 2: L5 forecast / surprise (2 dp_ids)
+# ---------------------------------------------------------------------------
+
+
+def _derive_guidance_change(forecast_records: list[dict]) -> tuple[dict, str]:
+    """Compare the two most recent forecast rows and emit a delta payload.
+
+    ``change_direction`` is one of:
+      * ``"new"``       — only one forecast row exists
+      * ``"upgraded"``  — current midpoint > previous midpoint
+      * ``"downgraded"``— current midpoint < previous midpoint
+      * ``"unchanged"`` — equal midpoints
+    """
+
+    if not forecast_records:
+        return {"reason": "no forecast"}, "Inactive"
+
+    cur = forecast_records[0]
+    prev = forecast_records[1] if len(forecast_records) >= 2 else None
+
+    def _midpoint(rec: dict) -> float | None:
+        mn = _safe_num(rec.get("p_change_min"))
+        mx = _safe_num(rec.get("p_change_max"))
+        if mn is None and mx is None:
+            return None
+        if mn is None:
+            return mx
+        if mx is None:
+            return mn
+        return (mn + mx) / 2.0
+
+    cur_mid = _midpoint(cur)
+    prev_mid = _midpoint(prev) if prev is not None else None
+    cur_type = cur.get("type")
+    prev_type = prev.get("type") if prev is not None else None
+
+    if prev is None:
+        return ({
+            "prev_type": None,
+            "current_type": cur_type,
+            "prev_range_pct": None,
+            "current_range_pct": cur_mid,
+            "change_direction": "new",
+            "ann_date": cur.get("ann_date"),
+            "period": cur.get("end_date"),
+        }, "Known")
+
+    if cur_mid is None or prev_mid is None:
+        direction = "unchanged" if cur_type == prev_type else "type_change"
+    elif cur_mid > prev_mid + 0.01:
+        direction = "upgraded"
+    elif cur_mid < prev_mid - 0.01:
+        direction = "downgraded"
+    else:
+        direction = "unchanged"
+
+    return ({
+        "prev_type": prev_type,
+        "current_type": cur_type,
+        "prev_range_pct": prev_mid,
+        "current_range_pct": cur_mid,
+        "change_direction": direction,
+        "ann_date": cur.get("ann_date"),
+        "period": cur.get("end_date"),
+    }, "Known")
+
+
+def _derive_beat_miss(
+    express_records: list[dict],
+    forecast_records: list[dict],
+) -> tuple[dict, str]:
+    """Compare express yoy_sales / actuals to the most recent forecast range.
+
+    Classification:
+      * ``"beat"``     — actual > forecast_range_max
+      * ``"miss"``     — actual < forecast_range_min
+      * ``"in_range"`` — within range
+    """
+
+    if not express_records:
+        return {"reason": "no express"}, "Inactive"
+    if not forecast_records:
+        return {"reason": "no forecast for comparison"}, "Inactive"
+
+    latest_express = express_records[0]
+    actual_yoy = _safe_num(latest_express.get("yoy_sales"))
+    if actual_yoy is None:
+        # Fallback: revenue + last_parent_net inference is too noisy; bail.
+        return {"reason": "express missing yoy_sales"}, "Inactive"
+
+    # Pick the forecast whose end_date matches the express end_date if any,
+    # else fall back to the latest forecast row.
+    fcst = None
+    target = latest_express.get("end_date")
+    if target:
+        for r in forecast_records:
+            if r.get("end_date") == target:
+                fcst = r
+                break
+    if fcst is None:
+        fcst = forecast_records[0]
+
+    f_min = _safe_num(fcst.get("p_change_min"))
+    f_max = _safe_num(fcst.get("p_change_max"))
+    if f_min is None and f_max is None:
+        return {"reason": "forecast missing range"}, "Inactive"
+    if f_min is None:
+        f_min = f_max
+    if f_max is None:
+        f_max = f_min
+
+    if actual_yoy > f_max:
+        classification = "beat"
+        deviation = (actual_yoy - f_max)
+    elif actual_yoy < f_min:
+        classification = "miss"
+        deviation = (actual_yoy - f_min)
+    else:
+        classification = "in_range"
+        midpoint = (f_min + f_max) / 2.0
+        deviation = actual_yoy - midpoint
+
+    return ({
+        "actual_revenue_yoy": actual_yoy,
+        "forecast_range_min": f_min,
+        "forecast_range_max": f_max,
+        "deviation_pct": round(deviation, 4),
+        "classification": classification,
+        "period": target,
+        "ann_date": latest_express.get("ann_date"),
+    }, "Known")
+
+
+# ---------------------------------------------------------------------------
+# Sub-group 3: L8.fin.* (3 dp_ids) — alert-style risk signals
+# ---------------------------------------------------------------------------
+
+
+def _derive_eps_downward(forecast_records: list[dict]) -> tuple[dict, str]:
+    """Detect downward EPS revisions across the two latest forecasts.
+
+    ``alert_severity``:
+      * ``"ERROR"`` if delta_pct < -20%
+      * ``"WARN"``  if delta_pct in (-20%, -5%]
+      * else ``Inactive`` (no alert)
+    """
+
+    if len(forecast_records) < 2:
+        return {"reason": "fewer than 2 forecasts"}, "Inactive"
+
+    cur, prev = forecast_records[0], forecast_records[1]
+
+    def _eps_estimate(rec: dict) -> float | None:
+        """Use net_profit midpoint as an EPS proxy (Tushare forecast doesn't
+        expose EPS estimate directly; net_profit movements track EPS for a
+        constant share count)."""
+        mn = _safe_num(rec.get("net_profit_min"))
+        mx = _safe_num(rec.get("net_profit_max"))
+        if mn is None and mx is None:
+            # Fall back to change_pct midpoint.
+            mn = _safe_num(rec.get("p_change_min"))
+            mx = _safe_num(rec.get("p_change_max"))
+            if mn is None and mx is None:
+                return None
+        if mn is None:
+            return mx
+        if mx is None:
+            return mn
+        return (mn + mx) / 2.0
+
+    cur_eps = _eps_estimate(cur)
+    prev_eps = _eps_estimate(prev)
+    if cur_eps is None or prev_eps is None or prev_eps == 0:
+        return {"reason": "missing eps estimate"}, "Inactive"
+
+    delta_pct = (cur_eps - prev_eps) / abs(prev_eps) * 100.0
+    severity: str | None = None
+    if delta_pct < -20.0:
+        severity = "ERROR"
+    elif delta_pct < -5.0:
+        severity = "WARN"
+
+    payload = {
+        "prev_eps_estimate": round(prev_eps, 4),
+        "current_eps_estimate": round(cur_eps, 4),
+        "delta_pct": round(delta_pct, 4),
+        "alert_severity": severity,
+        "ann_date": cur.get("ann_date"),
+        "period": cur.get("end_date"),
+    }
+    return payload, ("Known" if severity else "Inactive")
+
+
+def _derive_goodwill_impairment(
+    balance_records: list[dict],
+    threshold_pct: float = 5.0,
+) -> tuple[dict, str]:
+    """Detect goodwill impairment between the latest two balance sheets.
+
+    Balance-sheet records in ``_BALANCESHEET_CACHE`` only include
+    ``inventories, accounts_receiv, accounts_pay, lt_borr, st_borr,
+    bond_payable, payroll_payable, total_assets, total_liab`` — no
+    ``goodwill`` field. To stay aligned with the existing cache (and not
+    re-pull goodwill in a separate RPC), we look for ``goodwill`` on the
+    record but treat missing → Inactive, so the dp_id is always emitted.
+    """
+
+    if len(balance_records) < 2:
+        return {"reason": "fewer than 2 balance periods"}, "Inactive"
+
+    cur, prev = balance_records[0], balance_records[1]
+    cur_g = _safe_num(cur.get("goodwill"))
+    prev_g = _safe_num(prev.get("goodwill"))
+    if cur_g is None or prev_g is None or prev_g <= 0:
+        return {
+            "reason": "goodwill not in cached balancesheet fields",
+            "alert_severity": None,
+        }, "Inactive"
+
+    drop_pct = (prev_g - cur_g) / prev_g * 100.0
+    severity: str | None = None
+    if drop_pct >= threshold_pct * 4:  # ≥ 20% drop
+        severity = "ERROR"
+    elif drop_pct >= threshold_pct:
+        severity = "WARN"
+
+    payload = {
+        "current_goodwill": cur_g,
+        "prev_goodwill": prev_g,
+        "drop_pct": round(drop_pct, 4),
+        "alert_severity": severity,
+        "current_period": cur.get("end_date"),
+        "prior_period": prev.get("end_date"),
+    }
+    return payload, ("Known" if severity else "Inactive")
+
+
+def _derive_revenue_profit_miss(beat_miss_payload: dict) -> tuple[dict, str]:
+    """L8.fin.revenue_profit_miss — Known only when L5.surprise.beat_miss
+    classifies as 'miss'. Otherwise Inactive.
+
+    Borrows the already-computed beat_miss payload to avoid recomputation.
+    """
+
+    classification = beat_miss_payload.get("classification")
+    if classification != "miss":
+        return ({
+            "reason": "no miss detected",
+            "alert_severity": None,
+            "classification": classification,
+        }, "Inactive")
+
+    deviation = beat_miss_payload.get("deviation_pct") or 0.0
+    severity = "ERROR" if deviation < -20.0 else "WARN"
+
+    return ({
+        "actual_revenue": beat_miss_payload.get("actual_revenue_yoy"),
+        "forecast_revenue_low": beat_miss_payload.get("forecast_range_min"),
+        "miss_pct": abs(deviation),
+        "alert_severity": severity,
+        "period": beat_miss_payload.get("period"),
+    }, "Known")
+
+
+# ---------------------------------------------------------------------------
+# Sub-group 4: L8.cap.* — crowdedness / short / liquidity (3 dp_ids)
+# ---------------------------------------------------------------------------
+
+
+def _moving_average(values: list[float], window: int) -> float | None:
+    """Return arithmetic mean of the first ``window`` non-null floats, or
+    None if fewer than half-window samples are available."""
+
+    samples = [v for v in values[:window] if v is not None]
+    if len(samples) < max(2, window // 2):
+        return None
+    return sum(samples) / len(samples)
+
+
+def _derive_crowdedness(
+    daily_basic_records: list[dict],
+    main_net_inflow_5d: float | None,
+) -> tuple[dict, str]:
+    """L8.cap.crowdedness — high turnover + sustained inflow → crowded.
+
+    Without the universe-wide industry percentile we approximate with a
+    rule-of-thumb threshold: turnover_30d_avg > 8% (top-quintile A-share
+    activity) + main_net_5d > 0 → crowded.
+    """
+
+    if not daily_basic_records:
+        return {"reason": "no daily_basic history"}, "Inactive"
+
+    turnovers = [_safe_num(r.get("turnover_rate")) for r in daily_basic_records]
+    turnover_30d = _moving_average(turnovers, 30)
+    if turnover_30d is None:
+        return {"reason": "insufficient turnover history"}, "Inactive"
+
+    # Heuristic percentile: turnover > 8% ≈ 95th pct on the A-share market.
+    high_turnover = turnover_30d > 8.0
+    high_inflow = (main_net_inflow_5d is not None and main_net_inflow_5d > 0)
+    severity: str | None = None
+    if high_turnover and high_inflow:
+        severity = "ERROR" if turnover_30d > 15.0 else "WARN"
+    elif high_turnover:
+        severity = "WARN"
+
+    payload = {
+        "turnover_30d_avg": round(turnover_30d, 4),
+        "industry_pct_rank": 0.95 if high_turnover else 0.50,
+        "main_net_5d": main_net_inflow_5d,
+        "alert_severity": severity,
+        "latest_date": daily_basic_records[0].get("trade_date"),
+    }
+    return payload, ("Known" if severity else "Inactive")
+
+
+def _derive_short_increase(
+    margin_records: list[dict],
+    delta_threshold_pct: float = 20.0,
+) -> tuple[dict, str]:
+    """L8.cap.short_increase — 融券余额 rqye 30d ma vs 90d ma > +20% → alert."""
+
+    if not margin_records:
+        return {"reason": "no margin_detail history"}, "Inactive"
+
+    rqye = [_safe_num(r.get("rqye")) for r in margin_records]
+    ma30 = _moving_average(rqye, 30)
+    ma90 = _moving_average(rqye, 90)
+    if ma30 is None or ma90 is None or ma90 <= 0:
+        return {"reason": "insufficient rqye history"}, "Inactive"
+
+    delta_pct = (ma30 - ma90) / ma90 * 100.0
+    severity: str | None = None
+    if delta_pct >= delta_threshold_pct * 2:
+        severity = "ERROR"
+    elif delta_pct >= delta_threshold_pct:
+        severity = "WARN"
+
+    payload = {
+        "rqye_30d": round(ma30, 4),
+        "rqye_90d": round(ma90, 4),
+        "delta_pct": round(delta_pct, 4),
+        "alert_severity": severity,
+        "latest_date": margin_records[0].get("trade_date"),
+    }
+    return payload, ("Known" if severity else "Inactive")
+
+
+def _derive_liquidity_short(
+    daily_records: list[dict],
+    dive_threshold_pct: float = -5.0,
+    volume_surge_ratio: float = 1.5,
+) -> tuple[dict, str]:
+    """L8.cap.liquidity_short — 30d 均成交额 thin + 单日大跌放量 → alert.
+
+    Heuristics:
+      * 30d 均成交额 < 1亿元 (10 万千元) → thin-liquidity flag
+      * 任一交易日 pct_chg < -5% 且 vol > 30d_vol_ma * 1.5 → dive day
+    """
+
+    if not daily_records:
+        return {"reason": "no daily history"}, "Inactive"
+
+    amounts = [_safe_num(r.get("amount")) for r in daily_records]
+    amount_30d = _moving_average(amounts, 30)
+    if amount_30d is None:
+        return {"reason": "insufficient amount history"}, "Inactive"
+
+    vols = [_safe_num(r.get("vol")) for r in daily_records]
+    vol_30d = _moving_average(vols, 30) or 0.0
+    dive_count = 0
+    for r in daily_records[:30]:
+        pct = _safe_num(r.get("pct_chg"))
+        v = _safe_num(r.get("vol"))
+        if pct is None or v is None or vol_30d == 0:
+            continue
+        if pct <= dive_threshold_pct and v >= vol_30d * volume_surge_ratio:
+            dive_count += 1
+
+    thin_amount = amount_30d < 100_000  # tushare daily.amount is 千元
+    severity: str | None = None
+    if thin_amount and dive_count >= 2:
+        severity = "ERROR"
+    elif thin_amount or dive_count >= 1:
+        severity = "WARN" if dive_count >= 1 else None
+
+    payload = {
+        "amount_30d_avg": round(amount_30d, 2),
+        "industry_pct_rank": 0.05 if thin_amount else 0.50,
+        "dive_day_count": dive_count,
+        "alert_severity": severity,
+        "latest_date": daily_records[0].get("trade_date"),
+    }
+    return payload, ("Known" if severity else "Inactive")
+
+
+# ---------------------------------------------------------------------------
+# Sub-group 5: L8.industry / L8.op (2 dp_ids)
+# ---------------------------------------------------------------------------
+
+
+def _derive_valuation_compression(
+    industry_pe_30d: float | None,
+    industry_pe_90d: float | None,
+    threshold_pct: float = 10.0,
+) -> tuple[dict, str]:
+    """Industry-level PE compression: 30d median vs 90d median."""
+
+    if industry_pe_30d is None or industry_pe_90d is None or industry_pe_90d <= 0:
+        return {"reason": "missing industry PE history"}, "Inactive"
+
+    compression_pct = (industry_pe_90d - industry_pe_30d) / industry_pe_90d * 100.0
+    severity: str | None = None
+    if compression_pct >= threshold_pct * 2:
+        severity = "ERROR"
+    elif compression_pct >= threshold_pct:
+        severity = "WARN"
+
+    payload = {
+        "industry_pe_30d": round(industry_pe_30d, 4),
+        "industry_pe_90d": round(industry_pe_90d, 4),
+        "compression_pct": round(compression_pct, 4),
+        "alert_severity": severity,
+    }
+    return payload, ("Known" if severity else "Inactive")
+
+
+def _derive_cost_overrun(
+    income_records: list[dict],
+    gap_threshold_pp: float = 5.0,
+) -> tuple[dict, str]:
+    """L8.op.cost_overrun — oper_cost yoy > revenue yoy + 5pp → alert."""
+
+    if len(income_records) < 2:
+        return {"reason": "fewer than 2 income periods"}, "Inactive"
+
+    latest = income_records[0]
+    end_date = latest.get("end_date")
+    prior_end = _yoy_period(end_date) if end_date else None
+    prior = _find_record(income_records, prior_end) if prior_end else None
+    if prior is None:
+        return {"reason": "no yoy comparable income"}, "Inactive"
+
+    rev_cur = _safe_num(latest.get("total_revenue"))
+    rev_prev = _safe_num(prior.get("total_revenue"))
+    cost_cur = _safe_num(latest.get("oper_cost"))
+    cost_prev = _safe_num(prior.get("oper_cost"))
+    if (rev_cur is None or rev_prev is None or rev_prev == 0
+            or cost_cur is None or cost_prev is None or cost_prev == 0):
+        return {"reason": "missing income fields"}, "Inactive"
+
+    rev_yoy = (rev_cur - rev_prev) / abs(rev_prev) * 100.0
+    cost_yoy = (cost_cur - cost_prev) / abs(cost_prev) * 100.0
+    gap_pp = cost_yoy - rev_yoy
+    severity: str | None = None
+    if gap_pp >= gap_threshold_pp * 2:
+        severity = "ERROR"
+    elif gap_pp >= gap_threshold_pp:
+        severity = "WARN"
+
+    payload = {
+        "revenue_yoy": round(rev_yoy, 4),
+        "cost_yoy": round(cost_yoy, 4),
+        "gap_pp": round(gap_pp, 4),
+        "alert_severity": severity,
+        "period": end_date,
+    }
+    return payload, ("Known" if severity else "Inactive")
+
+
+# ---------------------------------------------------------------------------
+# Sub-group 6: L9.capital.margin_anomaly (1 dp_id)
+# ---------------------------------------------------------------------------
+
+
+def _derive_margin_anomaly(
+    margin_records: list[dict],
+    surge_threshold: float = 2.0,
+) -> tuple[dict, str]:
+    """L9.capital.margin_anomaly — rzmre 5d ma ÷ 30d ma ≥ 2 → alert."""
+
+    if not margin_records:
+        return {"reason": "no margin history"}, "Inactive"
+
+    rzmre = [_safe_num(r.get("rzmre")) for r in margin_records]
+    ma5 = _moving_average(rzmre, 5)
+    ma30 = _moving_average(rzmre, 30)
+    if ma5 is None or ma30 is None or ma30 <= 0:
+        return {"reason": "insufficient rzmre history"}, "Inactive"
+
+    surge_ratio = ma5 / ma30
+    severity: str | None = None
+    if surge_ratio >= surge_threshold * 1.5:  # ≥ 3x
+        severity = "ERROR"
+    elif surge_ratio >= surge_threshold:
+        severity = "WARN"
+
+    payload = {
+        "rzmre_5d": round(ma5, 4),
+        "rzmre_30d": round(ma30, 4),
+        "surge_ratio": round(surge_ratio, 4),
+        "alert_severity": severity,
+        "latest_date": margin_records[0].get("trade_date"),
+    }
+    return payload, ("Known" if severity else "Inactive")
+
+
+# ---------------------------------------------------------------------------
+# Bucket A dispatcher — appended at fetch_batch tail.
+# ---------------------------------------------------------------------------
+
+
+def fetch_bucket_a_batch(
+    pro,
+    a_codes: list[str],
+    now: int | None = None,
+    main_net_inflow_by_ts_code: dict[str, float] | None = None,
+) -> list[tuple]:
+    """Emit all 14 Bucket A dp_ids for the given A-share codes.
+
+    ``main_net_inflow_by_ts_code`` is optionally supplied by the caller so
+    we can re-use the 5d-window inflow already computed in ``fetch_batch``
+    (saves a moneyflow re-pull). When missing, crowdedness still evaluates
+    on turnover alone.
+
+    Returns rows ready for SQLite upsert; never raises.
+    """
+
+    if now is None:
+        now = int(time.time())
+    if not a_codes:
+        return []
+    main_net_inflow_by_ts_code = main_net_inflow_by_ts_code or {}
+
+    rows: list[tuple] = []
+    counts = {
+        "L2.segment.revenue_share": {"Known": 0, "Inactive": 0},
+        "L2.segment.gross_margin":  {"Known": 0, "Inactive": 0},
+        "L2.segment.growth":        {"Known": 0, "Inactive": 0},
+        "L5.fcst.guidance_change":  {"Known": 0, "Inactive": 0},
+        "L5.surprise.beat_miss":    {"Known": 0, "Inactive": 0},
+        "L8.fin.eps_downward":      {"Known": 0, "Inactive": 0},
+        "L8.fin.goodwill_impairment": {"Known": 0, "Inactive": 0},
+        "L8.fin.revenue_profit_miss": {"Known": 0, "Inactive": 0},
+        "L8.cap.crowdedness":       {"Known": 0, "Inactive": 0},
+        "L8.cap.short_increase":    {"Known": 0, "Inactive": 0},
+        "L8.cap.liquidity_short":   {"Known": 0, "Inactive": 0},
+        "L8.op.cost_overrun":       {"Known": 0, "Inactive": 0},
+        "L9.capital.margin_anomaly": {"Known": 0, "Inactive": 0},
+    }
+    alert_dist = {"WARN": 0, "ERROR": 0, "null": 0}
+
+    def _emit(dp_id: str, ts_code: str, payload: dict, status: str,
+              confidence: float, source: str) -> None:
+        rows.append((
+            ts_code, dp_id,
+            json.dumps(payload, ensure_ascii=False),
+            status, confidence if status == "Known" else 0.0,
+            source, now,
+        ))
+        if dp_id in counts:
+            counts[dp_id][status] += 1
+        sev = payload.get("alert_severity")
+        if sev in ("WARN", "ERROR"):
+            alert_dist[sev] += 1
+
+    for ts_code in a_codes:
+        if not is_a_share(ts_code):
+            continue
+
+        # ── Sub-group 1: L2.segment.* from fina_mainbz ──
+        try:
+            seg_records = _get_fina_mainbz_records(pro, ts_code, now)
+            rs_payload, gm_payload, gr_payload = _derive_segments(seg_records)
+            rs_status = "Known" if "segments" in rs_payload and rs_payload["segments"] else "Inactive"
+            gm_status = "Known" if "segments" in gm_payload and gm_payload["segments"] else "Inactive"
+            gr_status = "Known" if "segments" in gr_payload and gr_payload["segments"] else "Inactive"
+            _emit("L2.segment.revenue_share", ts_code, rs_payload, rs_status,
+                  0.75, "tushare:fina_mainbz")
+            _emit("L2.segment.gross_margin", ts_code, gm_payload, gm_status,
+                  0.75, "tushare:fina_mainbz")
+            _emit("L2.segment.growth", ts_code, gr_payload, gr_status,
+                  0.75, "tushare:fina_mainbz")
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] BucketA L2.segment %s failed: %s", ts_code, e)
+
+        # ── Sub-group 2 + 3 share forecast/express data ──
+        try:
+            forecast_records = _get_forecast_records(pro, ts_code, now)
+            express_records = _get_express_records(pro, ts_code, now)
+
+            gc_payload, gc_status = _derive_guidance_change(forecast_records)
+            _emit("L5.fcst.guidance_change", ts_code, gc_payload, gc_status,
+                  0.8, "tushare:forecast")
+
+            bm_payload, bm_status = _derive_beat_miss(
+                express_records, forecast_records,
+            )
+            _emit("L5.surprise.beat_miss", ts_code, bm_payload, bm_status,
+                  0.8, "tushare:express+forecast")
+
+            eps_payload, eps_status = _derive_eps_downward(forecast_records)
+            _emit("L8.fin.eps_downward", ts_code, eps_payload, eps_status,
+                  0.8, "tushare:forecast.derived")
+
+            rpm_payload, rpm_status = _derive_revenue_profit_miss(bm_payload)
+            _emit("L8.fin.revenue_profit_miss", ts_code, rpm_payload, rpm_status,
+                  0.8, "tushare:express+forecast.derived")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketA forecast/express %s failed: %s", ts_code, e,
+            )
+
+        # ── Sub-group 3 cont'd: L8.fin.goodwill_impairment (balancesheet) ──
+        try:
+            balance = _get_balancesheet_records(pro, ts_code, now)
+            gi_payload, gi_status = _derive_goodwill_impairment(balance)
+            _emit("L8.fin.goodwill_impairment", ts_code, gi_payload, gi_status,
+                  0.75, "tushare:balancesheet")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketA L8.fin.goodwill %s failed: %s", ts_code, e,
+            )
+
+        # ── Sub-group 4: L8.cap.* (turnover / margin / liquidity) ──
+        try:
+            db_history = _get_daily_basic_history(pro, ts_code, now)
+            cr_payload, cr_status = _derive_crowdedness(
+                db_history, main_net_inflow_by_ts_code.get(ts_code),
+            )
+            _emit("L8.cap.crowdedness", ts_code, cr_payload, cr_status,
+                  0.7, "tushare:daily_basic.history")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketA L8.cap.crowdedness %s failed: %s", ts_code, e,
+            )
+
+        try:
+            margin_history = _get_margin_history(pro, ts_code, now)
+            si_payload, si_status = _derive_short_increase(margin_history)
+            _emit("L8.cap.short_increase", ts_code, si_payload, si_status,
+                  0.75, "tushare:margin_detail.history")
+
+            ma_payload, ma_status = _derive_margin_anomaly(margin_history)
+            _emit("L9.capital.margin_anomaly", ts_code, ma_payload, ma_status,
+                  0.75, "tushare:margin_detail.history")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketA L8.cap.short / L9.margin %s failed: %s",
+                ts_code, e,
+            )
+
+        try:
+            daily_history = _get_daily_history(pro, ts_code, now)
+            ls_payload, ls_status = _derive_liquidity_short(daily_history)
+            _emit("L8.cap.liquidity_short", ts_code, ls_payload, ls_status,
+                  0.7, "tushare:daily.history")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketA L8.cap.liquidity %s failed: %s", ts_code, e,
+            )
+
+        # ── Sub-group 5: L8.op.cost_overrun (income only) ──
+        try:
+            income = _get_income_records(pro, ts_code, now)
+            co_payload, co_status = _derive_cost_overrun(income)
+            _emit("L8.op.cost_overrun", ts_code, co_payload, co_status,
+                  0.75, "tushare:income.derived")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketA L8.op.cost_overrun %s failed: %s", ts_code, e,
+            )
+
+    # ── Industry-level: L8.industry.valuation_compression × N active ──
+    try:
+        industries = _active_industry_ids()
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketA _active_industry_ids failed: %s", e)
+        industries = []
+    for industry_id in industries:
+        try:
+            # Aggregate PE_ttm from the THS daily fund-flow industry close;
+            # fallback to median-of-stocks PE_ttm if industry yaml has no
+            # ts_codes registered.
+            pe_30d_samples: list[float] = []
+            pe_90d_samples: list[float] = []
+            for ts_code in a_codes:
+                db_hist = _get_daily_basic_history(pro, ts_code, now)
+                if not db_hist:
+                    continue
+                pes = [_safe_num(r.get("pe_ttm")) for r in db_hist]
+                pes_30 = [v for v in pes[:30] if v is not None and v > 0]
+                pes_90 = [v for v in pes[:90] if v is not None and v > 0]
+                if pes_30:
+                    pes_30.sort()
+                    pe_30d_samples.append(pes_30[len(pes_30)//2])
+                if pes_90:
+                    pes_90.sort()
+                    pe_90d_samples.append(pes_90[len(pes_90)//2])
+            industry_pe_30d = None
+            industry_pe_90d = None
+            if pe_30d_samples:
+                pe_30d_samples.sort()
+                industry_pe_30d = pe_30d_samples[len(pe_30d_samples)//2]
+            if pe_90d_samples:
+                pe_90d_samples.sort()
+                industry_pe_90d = pe_90d_samples[len(pe_90d_samples)//2]
+            vc_payload, vc_status = _derive_valuation_compression(
+                industry_pe_30d, industry_pe_90d,
+            )
+            vc_payload["industry_id"] = industry_id
+            rows.append((
+                f"INDUSTRY:{industry_id}", "L8.industry.valuation_compression",
+                json.dumps(vc_payload, ensure_ascii=False),
+                vc_status, 0.7 if vc_status == "Known" else 0.0,
+                "tushare:daily_basic.industry_pe", now,
+            ))
+            sev = vc_payload.get("alert_severity")
+            if sev in ("WARN", "ERROR"):
+                alert_dist[sev] += 1
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketA L8.industry.valuation %s failed: %s",
+                industry_id, e,
+            )
+
+    log.info(
+        "[tushare] BucketA: %d rows across %d A-shares + %d industries; "
+        "Known/Inactive per dp_id: %s; alert_severity: %s",
+        len(rows), len(a_codes), len(industries), counts, alert_dist,
+    )
+    return rows
+
+
+# ===========================================================================
+# Bucket B — 12 hard-data dp_ids (估值 + 卖方研报 + L0 行业 sentiment + peer)
+# ===========================================================================
+#
+# Bucket B emits the following dp_ids, additive over Tushare A + Bucket A:
+#
+#   B1 — L0.* industry sentinel (4):
+#     * L0.cost.capital            (MARKET:CN)  shibor_lpr + industry spread
+#     * L0.sentiment.institutional (per industry) top10_holders avg / 30d delta
+#     * L0.sentiment.leader_drag   (per industry) leader 5d vs follower 5d
+#     * L0.sentiment.social        (per industry) dc_hot + ths_hot count
+#   B2 — L6 valuation (5):
+#     * L6.priced.analyst_revision  (per-stock) report_rc 90d up/down counts
+#     * L6.priced.discussion        (per-stock) dc_hot + ths_hot 30d hits
+#     * L6.state.expansion_compression (per-stock) PE vs 60d / 250d MA regime
+#     * L6.state.industry_center    (per industry) PE/PB/PS median
+#     * L6.state.peer_compare       (per-stock) stock PE vs industry median
+#   B3 — L7.mood + L9.media (2):
+#     * L7.mood.analyst_rating      (per-stock) rating distribution + score
+#     * L9.media.analyst_action     (per-stock) recent 7d rating changes
+#   B4 — L10.val.peer (1):
+#     * L10.val.peer                (per-stock) validation view (mirror of
+#                                    L6.state.peer_compare with the L10
+#                                    convergent/divergent label).
+#
+# Caching: each Tushare endpoint is wrapped in a per-stock or per-market
+# helper with a 5-min TTL. Cross-sectional ``daily_basic`` snapshots used by
+# ``L6.state.industry_center`` reuse Tushare A's full-market call where
+# possible (passed in via ``daily_basic_full_snapshot``).
+#
+# Each fetcher is independently try/except'd: a single endpoint permission
+# denial or schema drift never zeros out the rest of the batch.
+
+
+def _get_report_rc_records(
+    pro,
+    ts_code: str,
+    now: int,
+    lookback_days: int = 90,
+) -> list[dict]:
+    """Return per-ts_code report_rc records sorted by report_date desc.
+
+    Cached per-ts_code with ``_FINA_CACHE_TTL_S`` TTL. Empty list on any
+    failure (permission, schema drift) so callers can branch to Inactive.
+    """
+
+    cached = _cache_get(_REPORT_RC_CACHE, ts_code, _FINA_CACHE_TTL_S, now)
+    if cached is not None:
+        return cached
+    end_date = _today_yyyymmdd()
+    start_date = _previous_n_days(lookback_days)
+    try:
+        df = pro.report_rc(
+            ts_code=ts_code,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if any(k in msg for k in ("权限", "积分", "permission", "credit")):
+            log.warning(
+                "[tushare] BucketB report_rc %s permission issue: %s",
+                ts_code, e,
+            )
+        else:
+            log.warning(
+                "[tushare] BucketB report_rc %s failed: %s", ts_code, e,
+            )
+        _cache_put(_REPORT_RC_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_REPORT_RC_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    records.sort(key=lambda r: r.get("report_date") or "", reverse=True)
+    _cache_put(_REPORT_RC_CACHE, ts_code, records, now)
+    return records
+
+
+def _get_dc_hot_records(pro, now: int) -> list[dict]:
+    """Return latest dc_hot (东方财富热榜) records — market-wide, single TTL slot.
+
+    Cached at module level (not per-ts_code) because the endpoint returns the
+    whole market snapshot in one call.
+    """
+
+    global _DC_HOT_CACHE
+    if _DC_HOT_CACHE is not None:
+        cached_ts, records = _DC_HOT_CACHE
+        if now - cached_ts < _FINA_CACHE_TTL_S:
+            return records
+    try:
+        df = pro.dc_hot(market="A股市场", hot_type="人气榜")
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB dc_hot failed: %s", e)
+        _DC_HOT_CACHE = (now, [])
+        return []
+    if df is None or len(df) == 0:
+        _DC_HOT_CACHE = (now, [])
+        return []
+    records = df.to_dict(orient="records")
+    _DC_HOT_CACHE = (now, records)
+    return records
+
+
+def _get_ths_hot_records(pro, now: int) -> list[dict]:
+    """Return latest ths_hot (同花顺热榜) records — market-wide, single TTL slot."""
+
+    global _THS_HOT_CACHE
+    if _THS_HOT_CACHE is not None:
+        cached_ts, records = _THS_HOT_CACHE
+        if now - cached_ts < _FINA_CACHE_TTL_S:
+            return records
+    try:
+        df = pro.ths_hot(market="A股市场", is_new="Y")
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB ths_hot failed: %s", e)
+        _THS_HOT_CACHE = (now, [])
+        return []
+    if df is None or len(df) == 0:
+        _THS_HOT_CACHE = (now, [])
+        return []
+    records = df.to_dict(orient="records")
+    _THS_HOT_CACHE = (now, records)
+    return records
+
+
+def _get_top10_holders_records(pro, ts_code: str, now: int) -> list[dict]:
+    """Return up to 4 most recent reporting periods of top10 holders.
+
+    Used for ``L0.sentiment.institutional`` to compute mean institutional
+    holding pct and 30-day delta.
+    """
+
+    cached = _cache_get(_TOP10_HOLDERS_CACHE, ts_code, _FINA_CACHE_TTL_S, now)
+    if cached is not None:
+        return cached
+    try:
+        df = pro.top10_holders(
+            ts_code=ts_code,
+            start_date=_previous_n_days(180),
+            end_date=_today_yyyymmdd(),
+        )
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "[tushare] BucketB top10_holders %s failed: %s", ts_code, e,
+        )
+        _cache_put(_TOP10_HOLDERS_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_TOP10_HOLDERS_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    # Sort by end_date desc so latest period is first; we'll need 2 periods
+    # to compute the delta.
+    records.sort(key=lambda r: r.get("end_date") or "", reverse=True)
+    _cache_put(_TOP10_HOLDERS_CACHE, ts_code, records, now)
+    return records
+
+
+def _get_daily_basic_history_long(
+    pro, ts_code: str, now: int, history_days: int = 300,
+) -> list[dict]:
+    """Return per-ts_code daily_basic history with ≥250 trading days.
+
+    Used by ``L6.state.expansion_compression`` to compute the 60d / 250d
+    PE_ttm moving averages. A separate cache from the Bucket A 120d version
+    so we don't invalidate that on Bucket B's wider window.
+    """
+
+    cached = _cache_get(
+        _DAILY_BASIC_HISTORY_LONG_CACHE, ts_code, _FINA_CACHE_TTL_S, now,
+    )
+    if cached is not None:
+        return cached
+    end = _today_yyyymmdd()
+    # Pad +60 days for trading holidays so 250 trading days fit.
+    start = _previous_n_days(history_days + 60)
+    try:
+        df = pro.daily_basic(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,pe_ttm,pb,ps_ttm,total_mv",
+        )
+        time.sleep(_BUCKET_A_SLEEP_S)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "[tushare] BucketB daily_basic.history_long %s failed: %s",
+            ts_code, e,
+        )
+        _cache_put(_DAILY_BASIC_HISTORY_LONG_CACHE, ts_code, [], now)
+        return []
+    if df is None or len(df) == 0:
+        _cache_put(_DAILY_BASIC_HISTORY_LONG_CACHE, ts_code, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    records.sort(key=lambda r: r.get("trade_date") or "", reverse=True)
+    _cache_put(_DAILY_BASIC_HISTORY_LONG_CACHE, ts_code, records, now)
+    return records
+
+
+def _get_daily_basic_full_snapshot(pro, now: int) -> list[dict]:
+    """Return the latest full-market daily_basic cross-section.
+
+    Used by L6.state.industry_center to compute industry-wide PE/PB/PS
+    medians. Cache key is fixed since the call covers all A-shares for the
+    latest trade_date — a 5-min TTL is more than enough.
+    """
+
+    cache_key = "__FULL_DAILY_BASIC__"
+    cached = _cache_get(
+        _DAILY_BASIC_HISTORY_LONG_CACHE, cache_key, _FINA_CACHE_TTL_S, now,
+    )
+    if cached is not None:
+        return cached
+    df = None
+    latest_trade_date = None
+    for back in range(0, 8):
+        trade_date = _previous_n_days(back)
+        try:
+            tmp = pro.daily_basic(
+                trade_date=trade_date,
+                fields=("ts_code,trade_date,pe_ttm,pb,ps_ttm,total_mv,"
+                        "turnover_rate,pct_chg"),
+            )
+            time.sleep(_BUCKET_A_SLEEP_S)
+            if tmp is not None and len(tmp) > 0:
+                df = tmp
+                latest_trade_date = trade_date
+                break
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketB daily_basic full %s failed: %s",
+                trade_date, e,
+            )
+            continue
+    if df is None or len(df) == 0:
+        _cache_put(_DAILY_BASIC_HISTORY_LONG_CACHE, cache_key, [], now)
+        return []
+    records = df.to_dict(orient="records")
+    # Stamp latest_trade_date on each record for the caller's convenience.
+    for r in records:
+        r.setdefault("__trade_date__", latest_trade_date)
+    _cache_put(_DAILY_BASIC_HISTORY_LONG_CACHE, cache_key, records, now)
+    return records
+
+
+# ---------------------------------------------------------------------------
+# Derivation helpers
+# ---------------------------------------------------------------------------
+
+
+def _median(values: list[float]) -> float | None:
+    """Compute median (ignoring None/NaN)."""
+
+    clean = [v for v in values if v is not None]
+    if not clean:
+        return None
+    clean.sort()
+    n = len(clean)
+    if n % 2 == 1:
+        return clean[n // 2]
+    return (clean[n // 2 - 1] + clean[n // 2]) / 2.0
+
+
+def _percentile_rank(value: float | None, sorted_values: list[float]) -> float | None:
+    """Return the percentile rank (0-100) of ``value`` against ``sorted_values``.
+
+    ``sorted_values`` must already be sorted ascending. Returns None on
+    empty / missing input.
+    """
+
+    if value is None or not sorted_values:
+        return None
+    n = len(sorted_values)
+    below = 0
+    for v in sorted_values:
+        if v < value:
+            below += 1
+        else:
+            break
+    return (below / n) * 100.0
+
+
+# ---------------------------------------------------------------------------
+# B1: L0 industry-sentinel fetchers
+# ---------------------------------------------------------------------------
+
+
+def _emit_cost_capital(pro, now: int) -> list[tuple]:
+    """``L0.cost.capital`` — MARKET:CN row from shibor_lpr + industry spread.
+
+    Simplification: 行业资金成本 = LPR_1y + 1.5pp industry risk premium.
+    The payload exposes both components so downstream layers can refine.
+
+    Caches the shibor_lpr response at module level (``_SHIBOR_LPR_CACHE``)
+    with the standard 5-min TTL so back-to-back collector cycles don't
+    re-pull the same monthly data.
+    """
+
+    global _SHIBOR_LPR_CACHE
+    records: list[dict] = []
+    if _SHIBOR_LPR_CACHE is not None:
+        cached_ts, cached_records = _SHIBOR_LPR_CACHE
+        if now - cached_ts < _FINA_CACHE_TTL_S:
+            records = cached_records
+    if not records:
+        try:
+            df = pro.shibor_lpr(fields="date,1y,5y")
+            time.sleep(_BUCKET_A_SLEEP_S)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] BucketB shibor_lpr failed: %s", e)
+            _SHIBOR_LPR_CACHE = (now, [])
+            return [(
+                "MARKET:CN", "L0.cost.capital",
+                json.dumps({"reason": "shibor_lpr endpoint failed"},
+                           ensure_ascii=False),
+                "Inactive", 0.0, "tushare:shibor_lpr", now,
+            )]
+        if df is None or len(df) == 0:
+            _SHIBOR_LPR_CACHE = (now, [])
+            return [(
+                "MARKET:CN", "L0.cost.capital",
+                json.dumps({"reason": "no shibor_lpr data"},
+                           ensure_ascii=False),
+                "Inactive", 0.0, "tushare:shibor_lpr", now,
+            )]
+        df_sorted = df.sort_values("date", ascending=False)
+        records = df_sorted.to_dict(orient="records")
+        _SHIBOR_LPR_CACHE = (now, records)
+    if not records:
+        return [(
+            "MARKET:CN", "L0.cost.capital",
+            json.dumps({"reason": "no shibor_lpr data"},
+                       ensure_ascii=False),
+            "Inactive", 0.0, "tushare:shibor_lpr", now,
+        )]
+    latest = records[0]
+    lpr_1y = _safe_num(latest.get("1y"))
+    lpr_5y = _safe_num(latest.get("5y"))
+    industry_spread_pp = 1.5  # heuristic; downstream may refine per industry
+    cost_capital = None
+    if lpr_1y is not None:
+        cost_capital = lpr_1y + industry_spread_pp
+    payload = {
+        "lpr_1y_pct": lpr_1y,
+        "lpr_5y_pct": lpr_5y,
+        "industry_spread_pp": industry_spread_pp,
+        "implied_cost_of_capital_pct": cost_capital,
+        "as_of": latest.get("date"),
+        "method": "LPR_1y + 1.5pp industry risk premium",
+    }
+    status = "Known" if lpr_1y is not None else "Inactive"
+    return [(
+        "MARKET:CN", "L0.cost.capital",
+        json.dumps(payload, ensure_ascii=False),
+        status, 0.7 if status == "Known" else 0.0,
+        "tushare:shibor_lpr", now,
+    )]
+
+
+def _emit_sentiment_institutional(
+    pro,
+    industries: list[str],
+    code_to_industry: dict[str, str | None],
+    now: int,
+) -> list[tuple]:
+    """``L0.sentiment.institutional`` — per industry top10 inst holding stats.
+
+    For each active industry we sample the constituent stocks present in
+    ``code_to_industry`` (mapped to that industry_id), pull top10_holders for
+    each, average the latest-period hold_ratio, and compute a 30-day delta
+    vs the prior period. Inactive if the industry has no mapped stocks.
+    """
+
+    # Build per-industry sample list (cap to first 5 stocks for RPC budget)
+    industry_to_codes: dict[str, list[str]] = {}
+    for code, ind in code_to_industry.items():
+        if not ind:
+            continue
+        industry_to_codes.setdefault(ind, []).append(code)
+
+    rows: list[tuple] = []
+    for industry_id in industries:
+        sample = industry_to_codes.get(industry_id, [])[:5]
+        if not sample:
+            rows.append((
+                f"INDUSTRY:{industry_id}", "L0.sentiment.institutional",
+                json.dumps({
+                    "industry_id": industry_id,
+                    "reason": "no sampled constituents in code_to_industry",
+                }, ensure_ascii=False),
+                "Inactive", 0.0, "tushare:top10_holders", now,
+            ))
+            continue
+
+        latest_ratios: list[float] = []
+        delta_30d: list[float] = []
+        n_stocks = 0
+        for ts_code in sample:
+            recs = _get_top10_holders_records(pro, ts_code, now)
+            if not recs:
+                continue
+            # Group by end_date so we can average per period.
+            by_period: dict[str, list[float]] = {}
+            for r in recs:
+                ed = r.get("end_date")
+                if not ed:
+                    continue
+                ratio = _safe_num(r.get("hold_ratio"))
+                if ratio is None:
+                    continue
+                by_period.setdefault(ed, []).append(ratio)
+            periods = sorted(by_period.keys(), reverse=True)
+            if not periods:
+                continue
+            latest_avg = sum(by_period[periods[0]]) / len(by_period[periods[0]])
+            latest_ratios.append(latest_avg)
+            if len(periods) >= 2:
+                prior_avg = (
+                    sum(by_period[periods[1]]) / len(by_period[periods[1]])
+                )
+                delta_30d.append(latest_avg - prior_avg)
+            n_stocks += 1
+
+        if not latest_ratios:
+            rows.append((
+                f"INDUSTRY:{industry_id}", "L0.sentiment.institutional",
+                json.dumps({
+                    "industry_id": industry_id,
+                    "reason": "no top10_holders data for sampled stocks",
+                    "n_stocks_sampled": n_stocks,
+                }, ensure_ascii=False),
+                "Inactive", 0.0, "tushare:top10_holders", now,
+            ))
+            continue
+
+        mean_inst = sum(latest_ratios) / len(latest_ratios)
+        delta_mean = (
+            sum(delta_30d) / len(delta_30d) if delta_30d else None
+        )
+        payload = {
+            "industry_id": industry_id,
+            "mean_inst_holding_pct": round(mean_inst, 4),
+            "delta_30d_pp": round(delta_mean, 4) if delta_mean is not None else None,
+            "n_stocks_sampled": n_stocks,
+            "as_of": _today_yyyymmdd(),
+        }
+        rows.append((
+            f"INDUSTRY:{industry_id}", "L0.sentiment.institutional",
+            json.dumps(payload, ensure_ascii=False),
+            "Known", 0.65, "tushare:top10_holders", now,
+        ))
+    return rows
+
+
+def _emit_sentiment_leader_drag(
+    pro,
+    industries: list[str],
+    code_to_industry: dict[str, str | None],
+    now: int,
+    daily_basic_snapshot: list[dict] | None = None,
+) -> list[tuple]:
+    """``L0.sentiment.leader_drag`` — leader 5d vs follower 5d per industry.
+
+    Uses the full-market daily_basic snapshot (passed in or fetched) to find
+    each industry's top-3 by total_mv (the *leaders*) and computes their
+    mean 5d return vs the rest of the industry. Positive drag = leaders
+    outperforming; negative = leaders lagging.
+
+    Note: total_mv from daily_basic is current-day market cap, not historical.
+    For the 5d return we use ``pct_chg`` from daily_basic (today's daily move)
+    aggregated via cached daily history per stock. Cheapest path: fall back
+    to a coarse same-day pct_chg if the 5d series isn't cached.
+    """
+
+    if daily_basic_snapshot is None:
+        daily_basic_snapshot = _get_daily_basic_full_snapshot(pro, now)
+    if not daily_basic_snapshot:
+        return [(
+            f"INDUSTRY:{ind}", "L0.sentiment.leader_drag",
+            json.dumps({
+                "industry_id": ind,
+                "reason": "no daily_basic full snapshot",
+            }, ensure_ascii=False),
+            "Inactive", 0.0, "tushare:daily_basic", now,
+        ) for ind in industries]
+
+    # Index snapshot by ts_code
+    by_code: dict[str, dict] = {}
+    for r in daily_basic_snapshot:
+        code = r.get("ts_code")
+        if code:
+            by_code[code] = r
+
+    # Per-industry stocks
+    industry_to_codes: dict[str, list[str]] = {}
+    for code, ind in code_to_industry.items():
+        if not ind:
+            continue
+        industry_to_codes.setdefault(ind, []).append(code)
+
+    rows: list[tuple] = []
+    for industry_id in industries:
+        codes = industry_to_codes.get(industry_id, [])
+        if len(codes) < 2:
+            rows.append((
+                f"INDUSTRY:{industry_id}", "L0.sentiment.leader_drag",
+                json.dumps({
+                    "industry_id": industry_id,
+                    "reason": "fewer than 2 stocks in industry universe",
+                }, ensure_ascii=False),
+                "Inactive", 0.0, "tushare:daily_basic", now,
+            ))
+            continue
+
+        # Rank by total_mv to find leaders
+        ranked: list[tuple[str, float, float]] = []
+        for code in codes:
+            rec = by_code.get(code)
+            if rec is None:
+                continue
+            mv = _safe_num(rec.get("total_mv"))
+            pct = _safe_num(rec.get("pct_chg"))
+            if mv is None:
+                continue
+            ranked.append((code, mv, pct or 0.0))
+        if len(ranked) < 2:
+            rows.append((
+                f"INDUSTRY:{industry_id}", "L0.sentiment.leader_drag",
+                json.dumps({
+                    "industry_id": industry_id,
+                    "reason": "insufficient daily_basic coverage",
+                    "n_stocks_in_snapshot": len(ranked),
+                }, ensure_ascii=False),
+                "Inactive", 0.0, "tushare:daily_basic", now,
+            ))
+            continue
+        ranked.sort(key=lambda t: t[1], reverse=True)
+        leaders = ranked[:3]
+        followers = ranked[3:]
+        if not followers:
+            followers = ranked  # single-bucket edge case (very small industry)
+        leader_5d = sum(t[2] for t in leaders) / len(leaders)
+        follower_5d = sum(t[2] for t in followers) / len(followers)
+        drag_pp = leader_5d - follower_5d
+        polarity = "positive" if drag_pp >= 0 else "negative"
+        payload = {
+            "industry_id": industry_id,
+            "leader_5d_pct": round(leader_5d, 4),
+            "follower_5d_pct": round(follower_5d, 4),
+            "drag_pp": round(drag_pp, 4),
+            "polarity": polarity,
+            "leader_ts_codes": [t[0] for t in leaders],
+            "n_leaders": len(leaders),
+            "n_followers": len(followers),
+            "method": "pct_chg (latest trade_date) proxy for 5d return",
+        }
+        rows.append((
+            f"INDUSTRY:{industry_id}", "L0.sentiment.leader_drag",
+            json.dumps(payload, ensure_ascii=False),
+            "Known", 0.6, "tushare:daily_basic.industry_pct", now,
+        ))
+    return rows
+
+
+def _emit_sentiment_social(
+    pro,
+    industries: list[str],
+    code_to_industry: dict[str, str | None],
+    now: int,
+) -> list[tuple]:
+    """``L0.sentiment.social`` — per industry hot-board count + themes.
+
+    Aggregates dc_hot + ths_hot across the active industries' constituent
+    stocks. Hot-stocks count is the number of universe stocks in that
+    industry appearing in either hot list today. Themes are the top-5
+    distinct ``concept`` strings reported by either list for the industry
+    stocks.
+    """
+
+    dc_records = _get_dc_hot_records(pro, now)
+    ths_records = _get_ths_hot_records(pro, now)
+    if not dc_records and not ths_records:
+        return [(
+            f"INDUSTRY:{ind}", "L0.sentiment.social",
+            json.dumps({
+                "industry_id": ind,
+                "reason": "no dc_hot / ths_hot data",
+            }, ensure_ascii=False),
+            "Inactive", 0.0, "tushare:dc_hot+ths_hot", now,
+        ) for ind in industries]
+
+    # Index by ts_code
+    dc_by_code: dict[str, dict] = {}
+    for r in dc_records:
+        c = r.get("ts_code")
+        if c:
+            dc_by_code[c] = r
+    ths_by_code: dict[str, dict] = {}
+    for r in ths_records:
+        c = r.get("ts_code")
+        if c:
+            ths_by_code[c] = r
+
+    industry_to_codes: dict[str, list[str]] = {}
+    for code, ind in code_to_industry.items():
+        if not ind:
+            continue
+        industry_to_codes.setdefault(ind, []).append(code)
+
+    rows: list[tuple] = []
+    for industry_id in industries:
+        codes = industry_to_codes.get(industry_id, [])
+        hot_codes: set[str] = set()
+        themes_counter: dict[str, int] = {}
+        ranks: list[float] = []
+        for code in codes:
+            dc = dc_by_code.get(code)
+            ths = ths_by_code.get(code)
+            if dc is not None:
+                hot_codes.add(code)
+                concept = dc.get("concept")
+                if concept:
+                    themes_counter[str(concept)] = (
+                        themes_counter.get(str(concept), 0) + 1
+                    )
+                rank = _safe_num(dc.get("rank"))
+                if rank is not None:
+                    ranks.append(rank)
+            if ths is not None:
+                hot_codes.add(code)
+                concept = ths.get("concept")
+                if concept:
+                    themes_counter[str(concept)] = (
+                        themes_counter.get(str(concept), 0) + 1
+                    )
+                rank = _safe_num(ths.get("rank"))
+                if rank is not None:
+                    ranks.append(rank)
+
+        hot_count = len(hot_codes)
+        top_themes = sorted(
+            themes_counter.items(), key=lambda kv: kv[1], reverse=True,
+        )[:5]
+        # engagement_proxy: 100 / average rank (lower rank → higher heat)
+        avg_rank = (sum(ranks) / len(ranks)) if ranks else None
+        engagement_proxy = (100.0 / avg_rank) if avg_rank and avg_rank > 0 else None
+        if hot_count == 0:
+            rows.append((
+                f"INDUSTRY:{industry_id}", "L0.sentiment.social",
+                json.dumps({
+                    "industry_id": industry_id,
+                    "hot_stocks_count_30d": 0,
+                    "reason": "no industry stock on hot lists today",
+                }, ensure_ascii=False),
+                "Inactive", 0.0, "tushare:dc_hot+ths_hot", now,
+            ))
+            continue
+        payload = {
+            "industry_id": industry_id,
+            "hot_stocks_count_30d": hot_count,
+            "hot_themes": [t[0] for t in top_themes],
+            "engagement_proxy": (
+                round(engagement_proxy, 4) if engagement_proxy is not None else None
+            ),
+            "avg_rank": round(avg_rank, 2) if avg_rank is not None else None,
+            "as_of": _today_yyyymmdd(),
+            "method": "dc_hot + ths_hot today, industry stock count",
+        }
+        rows.append((
+            f"INDUSTRY:{industry_id}", "L0.sentiment.social",
+            json.dumps(payload, ensure_ascii=False),
+            "Known", 0.6, "tushare:dc_hot+ths_hot", now,
+        ))
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# B2 / B3 / B4: per-stock fetchers
+# ---------------------------------------------------------------------------
+
+
+_RATING_MAP = {
+    # Common Tushare rating strings → score (5 = strong buy, 1 = strong sell)
+    "买入": 5,
+    "强烈推荐": 5,
+    "强推": 5,
+    "推荐": 4,
+    "增持": 4,
+    "审慎推荐": 4,
+    "中性": 3,
+    "持有": 3,
+    "审慎增持": 4,
+    "审慎": 3,
+    "减持": 2,
+    "卖出": 1,
+    "回避": 1,
+    "未评级": None,
+}
+
+
+def _classify_rating(rating: str) -> tuple[str, int | None]:
+    """Map a Tushare rating string to (bucket, score) where bucket is one of
+    ``strong_buy``, ``buy``, ``hold``, ``sell``, ``strong_sell``."""
+
+    if not rating:
+        return ("hold", None)
+    r = str(rating).strip()
+    score = _RATING_MAP.get(r)
+    if score is None:
+        return ("hold", None)
+    if score >= 5:
+        return ("strong_buy", score)
+    if score == 4:
+        return ("buy", score)
+    if score == 3:
+        return ("hold", score)
+    if score == 2:
+        return ("sell", score)
+    return ("strong_sell", score)
+
+
+def _derive_analyst_revision(records: list[dict]) -> tuple[dict, str]:
+    """Compute ``L6.priced.analyst_revision`` payload + status.
+
+    Counts upgrades / downgrades / maintains based on the comparison between
+    each report's rating bucket and the same broker's prior rating in the
+    90-day window. Reports without a prior comparable broker rating are
+    classified as ``initiation`` (counted but not in net_revision_score).
+    """
+
+    if not records:
+        return {"reason": "no sell-side reports in window"}, "Inactive"
+
+    # Index by broker for prior-rating lookup
+    by_broker: dict[str, list[dict]] = {}
+    for r in records:
+        broker = str(r.get("org_name") or "")
+        if not broker:
+            continue
+        by_broker.setdefault(broker, []).append(r)
+    for lst in by_broker.values():
+        lst.sort(key=lambda x: x.get("report_date") or "")
+
+    upgrades = 0
+    downgrades = 0
+    maintains = 0
+    initiations = 0
+    for broker, lst in by_broker.items():
+        last_score: int | None = None
+        for r in lst:
+            bucket, score = _classify_rating(r.get("rating") or "")
+            if score is None:
+                continue
+            if last_score is None:
+                initiations += 1
+            elif score > last_score:
+                upgrades += 1
+            elif score < last_score:
+                downgrades += 1
+            else:
+                maintains += 1
+            last_score = score
+
+    total_signed = upgrades - downgrades
+    denom = upgrades + downgrades + maintains
+    net_revision_score = (total_signed / denom) if denom > 0 else 0.0
+    payload = {
+        "upgrades": upgrades,
+        "downgrades": downgrades,
+        "maintains": maintains,
+        "initiations": initiations,
+        "net_revision_score": round(net_revision_score, 4),
+        "period_days": 90,
+        "n_reports": len(records),
+    }
+    status = "Known" if (upgrades + downgrades + maintains + initiations) > 0 else "Inactive"
+    return payload, status
+
+
+def _derive_discussion(
+    ts_code: str,
+    dc_records: list[dict],
+    ths_records: list[dict],
+) -> tuple[dict, str]:
+    """Compute ``L6.priced.discussion`` payload for a single ts_code.
+
+    Tushare's dc_hot / ths_hot return only the *current* day's snapshot —
+    we can't compute a true 30d window without a per-day fan-out. We use the
+    latest snapshot's rank as a proxy: a stock on the hot list today has at
+    least one hit; the rank-percentile gives a relative heat score.
+    """
+
+    dc_hits = sum(1 for r in dc_records if r.get("ts_code") == ts_code)
+    ths_hits = sum(1 for r in ths_records if r.get("ts_code") == ts_code)
+    if dc_hits == 0 and ths_hits == 0:
+        return ({"reason": "not on dc_hot or ths_hot today",
+                 "dc_hot_count_30d": 0, "ths_hot_count_30d": 0}, "Inactive")
+
+    # Average rank percentile across hits
+    ranks: list[float] = []
+    n_dc = len(dc_records) or 1
+    n_ths = len(ths_records) or 1
+    for r in dc_records:
+        if r.get("ts_code") == ts_code:
+            rank = _safe_num(r.get("rank"))
+            if rank is not None:
+                ranks.append(rank / n_dc * 100.0)
+    for r in ths_records:
+        if r.get("ts_code") == ts_code:
+            rank = _safe_num(r.get("rank"))
+            if rank is not None:
+                ranks.append(rank / n_ths * 100.0)
+    avg_rank_pct = (sum(ranks) / len(ranks)) if ranks else None
+    payload = {
+        "dc_hot_count_30d": dc_hits,
+        "ths_hot_count_30d": ths_hits,
+        "avg_rank_pct": round(avg_rank_pct, 4) if avg_rank_pct is not None else None,
+        "as_of": _today_yyyymmdd(),
+        "method": "today's dc_hot + ths_hot rank (single-day snapshot proxy)",
+    }
+    return payload, "Known"
+
+
+def _derive_expansion_compression(
+    daily_basic_records: list[dict],
+) -> tuple[dict, str]:
+    """Compute ``L6.state.expansion_compression`` payload + status.
+
+    Compare current PE to 60d MA and 250d MA. < 0.95 → compressed (cheap),
+    > 1.05 → expanded (rich), else neutral. Slope = (current - 250d MA) /
+    250d MA, signed.
+    """
+
+    if not daily_basic_records:
+        return ({"reason": "no daily_basic history"}, "Inactive")
+    # Records are pre-sorted newest first.
+    pe_series = [
+        _safe_num(r.get("pe_ttm")) for r in daily_basic_records
+    ]
+    pe_clean = [v for v in pe_series if v is not None and v > 0]
+    if len(pe_clean) < 60:
+        return ({"reason": "insufficient history (<60 trading days)",
+                 "n_days": len(pe_clean)}, "Inactive")
+    pe_current = pe_clean[0]
+    pe_60d = pe_clean[:60]
+    pe_250d = pe_clean[: min(250, len(pe_clean))]
+    pe_60d_ma = sum(pe_60d) / len(pe_60d)
+    pe_250d_ma = sum(pe_250d) / len(pe_250d)
+    # Compare current vs 250d MA for regime classification.
+    if pe_250d_ma == 0:
+        return ({"reason": "PE 250d MA = 0"}, "Inactive")
+    ratio = pe_current / pe_250d_ma
+    if ratio < 0.95:
+        regime = "compressed"
+    elif ratio > 1.05:
+        regime = "expanded"
+    else:
+        regime = "neutral"
+    slope = (pe_current - pe_250d_ma) / pe_250d_ma
+    payload = {
+        "pe_current": round(pe_current, 4),
+        "pe_60d_ma": round(pe_60d_ma, 4),
+        "pe_250d_ma": round(pe_250d_ma, 4),
+        "ratio_vs_250d": round(ratio, 4),
+        "slope": round(slope, 4),
+        "regime": regime,
+        "n_days_60d": len(pe_60d),
+        "n_days_250d": len(pe_250d),
+    }
+    return payload, "Known"
+
+
+def _derive_industry_center(
+    industry_id: str,
+    codes: list[str],
+    snapshot_by_code: dict[str, dict],
+    trade_date: str | None,
+) -> tuple[dict, str]:
+    """Compute ``L6.state.industry_center`` payload + status for one industry.
+
+    Uses the full-market daily_basic snapshot to extract PE/PB/PS for the
+    industry's constituent stocks and takes the median. Inactive when fewer
+    than 2 stocks have valid data.
+    """
+
+    pe_vals: list[float] = []
+    pb_vals: list[float] = []
+    ps_vals: list[float] = []
+    for code in codes:
+        rec = snapshot_by_code.get(code)
+        if rec is None:
+            continue
+        pe = _safe_num(rec.get("pe_ttm"))
+        pb = _safe_num(rec.get("pb"))
+        ps = _safe_num(rec.get("ps_ttm"))
+        if pe is not None and pe > 0:
+            pe_vals.append(pe)
+        if pb is not None and pb > 0:
+            pb_vals.append(pb)
+        if ps is not None and ps > 0:
+            ps_vals.append(ps)
+    n_stocks = max(len(pe_vals), len(pb_vals), len(ps_vals))
+    if n_stocks < 2:
+        return ({
+            "industry_id": industry_id,
+            "reason": "fewer than 2 stocks with valuation data",
+            "n_stocks": n_stocks,
+        }, "Inactive")
+    payload = {
+        "industry_id": industry_id,
+        "industry_pe_median": _median(pe_vals),
+        "industry_pb_median": _median(pb_vals),
+        "industry_ps_median": _median(ps_vals),
+        "n_stocks": n_stocks,
+        "trade_date": trade_date,
+    }
+    # Round
+    for k in ("industry_pe_median", "industry_pb_median", "industry_ps_median"):
+        if payload[k] is not None:
+            payload[k] = round(payload[k], 4)
+    return payload, "Known"
+
+
+def _derive_peer_compare(
+    ts_code: str,
+    stock_record: dict | None,
+    industry_center: dict | None,
+) -> tuple[dict, dict, str]:
+    """Compute (peer_compare_payload, val_peer_payload, status) for a stock.
+
+    Returns both ``L6.state.peer_compare`` and ``L10.val.peer`` payloads from
+    the same computation so the two dp_ids stay byte-identical on the input
+    side.
+    """
+
+    if stock_record is None or industry_center is None:
+        reason = "no stock daily_basic record" if stock_record is None else \
+                 "no industry_center for stock's industry"
+        return (
+            {"reason": reason},
+            {"reason": reason},
+            "Inactive",
+        )
+    if "industry_pe_median" not in industry_center:
+        return (
+            {"reason": "industry_center missing pe_median"},
+            {"reason": "industry_center missing pe_median"},
+            "Inactive",
+        )
+    stock_pe = _safe_num(stock_record.get("pe_ttm"))
+    stock_pb = _safe_num(stock_record.get("pb"))
+    ind_pe = industry_center.get("industry_pe_median")
+    ind_pb = industry_center.get("industry_pb_median")
+    if stock_pe is None or ind_pe is None or ind_pe <= 0:
+        return (
+            {"reason": "missing stock or industry PE",
+             "stock_pe": stock_pe, "industry_pe_median": ind_pe},
+            {"reason": "missing stock or industry PE",
+             "stock_pe": stock_pe, "industry_pe_median": ind_pe},
+            "Inactive",
+        )
+    premium_pct = (stock_pe - ind_pe) / ind_pe * 100.0
+    # Percentile rank: not computed without full industry distribution; use
+    # ratio as a coarse signal.
+    if abs(premium_pct) < 15.0:
+        validation_signal = "convergent"
+    else:
+        validation_signal = "divergent"
+    peer_compare_payload = {
+        "stock_pe": round(stock_pe, 4),
+        "industry_pe_median": round(ind_pe, 4),
+        "industry_id": industry_center.get("industry_id"),
+        "premium_vs_industry_pct": round(premium_pct, 4),
+        "trade_date": industry_center.get("trade_date"),
+    }
+    val_peer_payload = {
+        "stock_pe": round(stock_pe, 4),
+        "stock_pb": round(stock_pb, 4) if stock_pb is not None else None,
+        "industry_pe_median": round(ind_pe, 4),
+        "industry_pb_median": (
+            round(ind_pb, 4) if ind_pb is not None else None
+        ),
+        "industry_id": industry_center.get("industry_id"),
+        "premium_vs_industry_pct": round(premium_pct, 4),
+        "validation_signal": validation_signal,
+        "trade_date": industry_center.get("trade_date"),
+    }
+    return peer_compare_payload, val_peer_payload, "Known"
+
+
+def _derive_analyst_rating(records: list[dict]) -> tuple[dict, str]:
+    """Compute ``L7.mood.analyst_rating`` payload + status.
+
+    Counts each report's rating bucket. Reports without a parseable rating
+    are dropped silently.
+    """
+
+    if not records:
+        return ({"reason": "no sell-side reports in window"}, "Inactive")
+    counts = {
+        "strong_buy": 0, "buy": 0, "hold": 0, "sell": 0, "strong_sell": 0,
+    }
+    scores: list[int] = []
+    # Dedup by (report_date, org_name) to avoid year-fan-out double counting.
+    seen: set[tuple] = set()
+    for r in records:
+        key = (
+            r.get("report_date"),
+            r.get("org_name"),
+            r.get("author_name"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        bucket, score = _classify_rating(r.get("rating") or "")
+        if score is None:
+            continue
+        counts[bucket] = counts.get(bucket, 0) + 1
+        scores.append(score)
+    n_reports = sum(counts.values())
+    if n_reports == 0:
+        return ({"reason": "no parseable ratings in window",
+                 "raw_records": len(records)}, "Inactive")
+    avg_score = sum(scores) / len(scores)
+    payload = {
+        **counts,
+        "avg_rating_score": round(avg_score, 4),
+        "n_reports": n_reports,
+        "period_days": 90,
+    }
+    return payload, "Known"
+
+
+def _derive_analyst_action(records: list[dict]) -> tuple[dict, str]:
+    """Compute ``L9.media.analyst_action`` payload + status.
+
+    Scans the last 7 days for any rating change (broker's prior rating vs
+    this report's rating, both within the 90d cache window). Reports a list
+    of recent changes + count_7d + action_type ("upgrade_event" /
+    "downgrade_event" / "none").
+    """
+
+    if not records:
+        return ({"reason": "no sell-side reports", "count_7d": 0,
+                 "action_type": "none"}, "Inactive")
+
+    cutoff_7d = _previous_n_days(7)
+    # Sort by report_date ASC for sliding broker comparison
+    by_broker: dict[str, list[dict]] = {}
+    for r in records:
+        broker = str(r.get("org_name") or "")
+        if not broker:
+            continue
+        by_broker.setdefault(broker, []).append(r)
+    for lst in by_broker.values():
+        lst.sort(key=lambda x: x.get("report_date") or "")
+
+    recent_changes: list[dict] = []
+    upgrade_count = 0
+    downgrade_count = 0
+    for broker, lst in by_broker.items():
+        last_score: int | None = None
+        last_rating: str | None = None
+        for r in lst:
+            rating = r.get("rating") or ""
+            bucket, score = _classify_rating(rating)
+            if score is None:
+                continue
+            rd = r.get("report_date") or ""
+            if last_score is not None and score != last_score and rd >= cutoff_7d:
+                if score > last_score:
+                    upgrade_count += 1
+                    change_type = "upgrade"
+                else:
+                    downgrade_count += 1
+                    change_type = "downgrade"
+                recent_changes.append({
+                    "date": rd,
+                    "broker": broker,
+                    "prev_rating": last_rating,
+                    "new_rating": rating,
+                    "change_type": change_type,
+                })
+            last_score = score
+            last_rating = rating
+
+    count_7d = upgrade_count + downgrade_count
+    if count_7d == 0:
+        return ({
+            "recent_changes": [],
+            "count_7d": 0,
+            "action_type": "none",
+            "lookback_days": 7,
+        }, "Inactive")
+    if upgrade_count >= downgrade_count:
+        action_type = "upgrade_event"
+    else:
+        action_type = "downgrade_event"
+    payload = {
+        "recent_changes": recent_changes[:10],
+        "count_7d": count_7d,
+        "upgrade_count": upgrade_count,
+        "downgrade_count": downgrade_count,
+        "action_type": action_type,
+        "lookback_days": 7,
+    }
+    return payload, "Known"
+
+
+# ---------------------------------------------------------------------------
+# B: top-level dispatcher
+# ---------------------------------------------------------------------------
+
+
+def fetch_bucket_b_batch(
+    pro,
+    a_codes: list[str],
+    code_to_industry: dict[str, str | None] | None = None,
+    now: int | None = None,
+) -> list[tuple]:
+    """Emit all 12 Bucket B dp_ids for the given A-share codes.
+
+    ``code_to_industry`` is optional but recommended — without it the
+    industry-level fan-out (L0.sentiment.* and L6.state.industry_center) only
+    emits ``Inactive`` rows because there's nothing to aggregate. The
+    market-level row (``L0.cost.capital``) is unaffected.
+
+    Returns rows in the standard 7-tuple shape; never raises.
+    """
+
+    if now is None:
+        now = int(time.time())
+    if code_to_industry is None:
+        code_to_industry = {}
+    rows: list[tuple] = []
+
+    counts = {
+        "L0.cost.capital":               {"Known": 0, "Inactive": 0},
+        "L0.sentiment.institutional":    {"Known": 0, "Inactive": 0},
+        "L0.sentiment.leader_drag":      {"Known": 0, "Inactive": 0},
+        "L0.sentiment.social":           {"Known": 0, "Inactive": 0},
+        "L6.priced.analyst_revision":    {"Known": 0, "Inactive": 0},
+        "L6.priced.discussion":          {"Known": 0, "Inactive": 0},
+        "L6.state.expansion_compression": {"Known": 0, "Inactive": 0},
+        "L6.state.industry_center":      {"Known": 0, "Inactive": 0},
+        "L6.state.peer_compare":         {"Known": 0, "Inactive": 0},
+        "L7.mood.analyst_rating":        {"Known": 0, "Inactive": 0},
+        "L9.media.analyst_action":       {"Known": 0, "Inactive": 0},
+        "L10.val.peer":                  {"Known": 0, "Inactive": 0},
+    }
+
+    def _emit(dp_id: str, ts_code: str, payload: dict, status: str,
+              confidence: float, source: str) -> None:
+        rows.append((
+            ts_code, dp_id,
+            json.dumps(payload, ensure_ascii=False),
+            status, confidence if status == "Known" else 0.0,
+            source, now,
+        ))
+        if dp_id in counts:
+            counts[dp_id][status] = counts[dp_id].get(status, 0) + 1
+
+    # ── B1.a: L0.cost.capital (market-level) ──
+    try:
+        for r in _emit_cost_capital(pro, now):
+            rows.append(r)
+            if r[1] in counts:
+                counts[r[1]][r[3]] = counts[r[1]].get(r[3], 0) + 1
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB L0.cost.capital failed: %s", e)
+
+    # ── Industry-level fetchers ──
+    try:
+        industries = _active_industry_ids()
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB _active_industry_ids failed: %s", e)
+        industries = []
+
+    # Pull full-market daily_basic snapshot once and reuse across
+    # industry-center + leader_drag.
+    try:
+        snapshot = _get_daily_basic_full_snapshot(pro, now)
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "[tushare] BucketB daily_basic full snapshot failed: %s", e,
+        )
+        snapshot = []
+
+    snapshot_by_code: dict[str, dict] = {}
+    snapshot_trade_date: str | None = None
+    for rec in snapshot:
+        c = rec.get("ts_code")
+        if c:
+            snapshot_by_code[c] = rec
+            if snapshot_trade_date is None:
+                snapshot_trade_date = (
+                    rec.get("__trade_date__") or rec.get("trade_date")
+                )
+
+    # B1.b: L0.sentiment.institutional
+    try:
+        for r in _emit_sentiment_institutional(
+            pro, industries, code_to_industry, now,
+        ):
+            rows.append(r)
+            if r[1] in counts:
+                counts[r[1]][r[3]] = counts[r[1]].get(r[3], 0) + 1
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB L0.sentiment.institutional failed: %s", e)
+
+    # B1.c: L0.sentiment.leader_drag
+    try:
+        for r in _emit_sentiment_leader_drag(
+            pro, industries, code_to_industry, now,
+            daily_basic_snapshot=snapshot,
+        ):
+            rows.append(r)
+            if r[1] in counts:
+                counts[r[1]][r[3]] = counts[r[1]].get(r[3], 0) + 1
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB L0.sentiment.leader_drag failed: %s", e)
+
+    # B1.d: L0.sentiment.social
+    try:
+        for r in _emit_sentiment_social(
+            pro, industries, code_to_industry, now,
+        ):
+            rows.append(r)
+            if r[1] in counts:
+                counts[r[1]][r[3]] = counts[r[1]].get(r[3], 0) + 1
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB L0.sentiment.social failed: %s", e)
+
+    # B2.d: L6.state.industry_center (per industry)
+    # Populate the in-memory _INDUSTRY_CENTER_CACHE keyed by industry_id so
+    # the per-stock peer_compare/val.peer step can read without re-deriving.
+    industry_to_codes: dict[str, list[str]] = {}
+    for code, ind in code_to_industry.items():
+        if not ind:
+            continue
+        industry_to_codes.setdefault(ind, []).append(code)
+    industry_center_by_id: dict[str, dict] = {}
+    for industry_id in industries:
+        try:
+            codes_for_ind = industry_to_codes.get(industry_id, [])
+            payload, status = _derive_industry_center(
+                industry_id, codes_for_ind, snapshot_by_code,
+                snapshot_trade_date,
+            )
+            _emit(
+                "L6.state.industry_center",
+                f"INDUSTRY:{industry_id}",
+                payload, status, 0.7, "tushare:daily_basic.industry_median",
+            )
+            if status == "Known":
+                industry_center_by_id[industry_id] = payload
+                _INDUSTRY_CENTER_CACHE[industry_id] = (now, payload)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketB L6.state.industry_center %s failed: %s",
+                industry_id, e,
+            )
+
+    # Pre-fetch dc_hot / ths_hot (used by both per-stock discussion + industry social)
+    try:
+        dc_records = _get_dc_hot_records(pro, now)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB dc_hot pre-fetch failed: %s", e)
+        dc_records = []
+    try:
+        ths_records = _get_ths_hot_records(pro, now)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] BucketB ths_hot pre-fetch failed: %s", e)
+        ths_records = []
+
+    # ── Per-stock fetchers (B2.a/b/c/e + B3 + B4) ──
+    for ts_code in a_codes:
+        if not is_a_share(ts_code):
+            continue
+
+        # B2.a / B3.a / B3.b: report_rc derived dp_ids share a single
+        # _get_report_rc_records call.
+        try:
+            rc_records = _get_report_rc_records(pro, ts_code, now)
+            rev_payload, rev_status = _derive_analyst_revision(rc_records)
+            _emit("L6.priced.analyst_revision", ts_code, rev_payload,
+                  rev_status, 0.75, "tushare:report_rc")
+            rating_payload, rating_status = _derive_analyst_rating(rc_records)
+            _emit("L7.mood.analyst_rating", ts_code, rating_payload,
+                  rating_status, 0.75, "tushare:report_rc")
+            action_payload, action_status = _derive_analyst_action(rc_records)
+            _emit("L9.media.analyst_action", ts_code, action_payload,
+                  action_status, 0.7, "tushare:report_rc")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketB report_rc-derived %s failed: %s",
+                ts_code, e,
+            )
+
+        # B2.b: L6.priced.discussion
+        try:
+            disc_payload, disc_status = _derive_discussion(
+                ts_code, dc_records, ths_records,
+            )
+            _emit("L6.priced.discussion", ts_code, disc_payload, disc_status,
+                  0.6, "tushare:dc_hot+ths_hot")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketB L6.priced.discussion %s failed: %s",
+                ts_code, e,
+            )
+
+        # B2.c: L6.state.expansion_compression
+        try:
+            db_long = _get_daily_basic_history_long(pro, ts_code, now)
+            exp_payload, exp_status = _derive_expansion_compression(db_long)
+            _emit("L6.state.expansion_compression", ts_code, exp_payload,
+                  exp_status, 0.7, "tushare:daily_basic.history_long")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketB L6.state.expansion_compression %s failed: %s",
+                ts_code, e,
+            )
+
+        # B2.e / B4: L6.state.peer_compare + L10.val.peer (shared compute)
+        try:
+            stock_rec = snapshot_by_code.get(ts_code)
+            ind = code_to_industry.get(ts_code)
+            ind_center = industry_center_by_id.get(ind) if ind else None
+            pc_payload, vp_payload, pc_status = _derive_peer_compare(
+                ts_code, stock_rec, ind_center,
+            )
+            _emit("L6.state.peer_compare", ts_code, pc_payload, pc_status,
+                  0.7, "tushare:daily_basic.peer_compare")
+            _emit("L10.val.peer", ts_code, vp_payload, pc_status,
+                  0.7, "tushare:daily_basic.peer_compare")
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] BucketB L6.peer_compare/L10.val.peer %s failed: %s",
+                ts_code, e,
+            )
+
+    log.info(
+        "[tushare] BucketB: %d rows across %d A-shares + %d industries; "
+        "Known/Inactive per dp_id: %s",
+        len(rows), len(a_codes), len(industries), counts,
+    )
     return rows
