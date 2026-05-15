@@ -186,13 +186,69 @@ def test_overlay_node_unknown_skips_validation() -> None:
     assert errors == []
 
 
-def test_overlay_node_na_skips_validation() -> None:
+def test_overlay_node_na_with_correct_policy_skips_validation() -> None:
+    """N/A node with correct ``not_applicable_remove`` policy passes
+    value-shape validation (the compiler-parity check is satisfied)."""
+
     node = {
         "dp_id": "L1.position.market_share",
         "data_status": "N/A",
+        "missing_policy": "not_applicable_remove",
         "value": None,
     }
     assert schema_validator.validate_overlay_node(node) == []
+
+
+def test_overlay_node_na_with_wrong_policy_errors() -> None:
+    """Compiler-parity rule: N/A status REQUIRES
+    ``missing_policy=not_applicable_remove`` or compile-overlays rejects."""
+
+    node = {
+        "dp_id": "L1.position.market_share",
+        "data_status": "N/A",
+        "missing_policy": "unknown_reduce_confidence",  # wrong
+        "value": None,
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    assert any("not_applicable_remove" in e for e in errors), errors
+
+
+def test_overlay_node_unknown_required_errors() -> None:
+    """Compiler-parity rule: ``required`` node left Unknown is a hard
+    error — required slots must always be filled (or downgraded)."""
+
+    node = {
+        "dp_id": "L1.position.market_share",
+        "data_status": "Unknown",
+        "required_level": "required",
+        "value": None,
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    assert any("required" in e and "Unknown" in e for e in errors), errors
+
+
+def test_overlay_node_unknown_conditional_required_needs_reason() -> None:
+    """Compiler-parity rule: ``conditional_required`` Unknown nodes must
+    explain themselves via ``missing_reason``."""
+
+    node_missing = {
+        "dp_id": "L1.position.market_share",
+        "data_status": "Unknown",
+        "required_level": "conditional_required",
+        "missing_reason": None,
+        "value": None,
+    }
+    errors = schema_validator.validate_overlay_node(node_missing)
+    assert any("missing_reason" in e for e in errors), errors
+
+    node_with_reason = {
+        "dp_id": "L1.position.market_share",
+        "data_status": "Unknown",
+        "required_level": "conditional_required",
+        "missing_reason": "annual report didn't disclose 排名",
+        "value": None,
+    }
+    assert schema_validator.validate_overlay_node(node_with_reason) == []
 
 
 def test_overlay_node_inactive_skips_validation() -> None:
@@ -223,9 +279,34 @@ def test_overlay_node_empty_optionality_skips_validation() -> None:
     assert schema_validator.validate_overlay_node(node_empty) == []
 
 
-def test_overlay_node_filled_optionality_runs_validation() -> None:
-    """Filled Optionality (current_contribution populated) must still
-    be validated — sneaky unknown sibling keys should surface."""
+def test_overlay_node_filled_optionality_with_split_passes() -> None:
+    """Filled Optionality with BOTH ``current_contribution`` and
+    ``future_option_value`` keys passes the compiler-parity rule."""
+
+    node = {
+        "dp_id": "L2.newbiz.tam",
+        "data_status": "Optionality",
+        "value": {
+            "current_contribution": {"revenue_share_pct": 3.2},
+            "future_option_value": {
+                "tam_usd_or_cny": 1e10,
+                "tam_year": 2027,
+                "source": "company filing",
+            },
+        },
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    # No hard errors expected — Optionality outer-dict layer accepts the
+    # split shape; nested current_contribution / future_option_value are
+    # free-form sub-dicts (not in DP_SCHEMA), so value-shape validator
+    # treats unknown keys as warn at most.
+    hard = [e for e in errors if not e.startswith("[warn]")]
+    assert hard == [], f"unexpected hard errors: {hard}"
+
+
+def test_overlay_node_filled_optionality_missing_future_errors() -> None:
+    """Compiler-parity rule: filled Optionality with ONLY
+    ``current_contribution`` (no ``future_option_value``) is rejected."""
 
     node = {
         "dp_id": "L2.newbiz.tam",
@@ -234,19 +315,45 @@ def test_overlay_node_filled_optionality_runs_validation() -> None:
             "tam_usd_or_cny": 1e10,
             "tam_year": 2027,
             "source": "company filing",
-            "current_contribution": {"some": "thing"},  # not in optional set
+            "current_contribution": {"some": "thing"},  # missing future_option_value
         },
     }
-    # tam_year=2027 valid int, tam_usd_or_cny is float, source is str.
-    # current_contribution is unknown → warn.
     errors = schema_validator.validate_overlay_node(node)
-    # No required-field errors expected.
-    hard = [
-        e
+    assert any(
+        "current_contribution" in e and "future_option_value" in e
         for e in errors
-        if not e.startswith("[warn]")
-    ]
-    assert hard == [], f"unexpected hard errors: {hard}"
+    ), errors
+
+
+def test_overlay_node_filled_optionality_missing_current_errors() -> None:
+    """Compiler-parity rule: filled Optionality with ONLY
+    ``future_option_value`` (no ``current_contribution``) is rejected."""
+
+    node = {
+        "dp_id": "L2.newbiz.tam",
+        "data_status": "Optionality",
+        "value": {
+            "future_option_value": {"tam_year": 2027},
+        },
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    assert any(
+        "current_contribution" in e and "future_option_value" in e
+        for e in errors
+    ), errors
+
+
+def test_overlay_node_filled_optionality_non_dict_value_errors() -> None:
+    """Compiler-parity rule: Optionality ``value`` that's not a dict
+    (e.g. raw scalar 0.5 or a list) is rejected."""
+
+    node = {
+        "dp_id": "L2.newbiz.tam",
+        "data_status": "Optionality",
+        "value": 0.5,
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    assert any("dict" in e for e in errors), errors
 
 
 # ---------------------------------------------------------------------------

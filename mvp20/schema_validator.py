@@ -765,46 +765,105 @@ def validate_overlay_node(
 ) -> list[str]:
     """Validate one overlay-yaml node's ``value`` against its dp_id schema.
 
-    Only ``data_status == 'Known'`` nodes are validated — Unknown / N/A /
-    Inactive / Optionality (with empty value) intentionally carry no
-    structured value, so running the schema check on them would produce
-    false positives.
+    Returns a list of error strings (empty list = passes).
 
-    For Optionality with a populated ``value`` (current_contribution /
-    future_option_value present), we still run validation on the outer
-    dict so codex doesn't sneak in unknown sibling keys.
+    The function fires TWO layers of rules:
+
+    1. **Compiler-parity rules** — mirror the four invariants that
+       ``mvp20.overlays`` enforces during ``compile-overlays``. These run
+       regardless of status because they describe how the *status itself*
+       interacts with policy / required_level / value shape:
+
+       a. ``status == 'Unknown'`` AND ``required_level == 'required'`` →
+          hard error (required node was not filled).
+       b. ``status == 'Unknown'`` AND ``required_level ==
+          'conditional_required'`` AND ``missing_reason`` missing → hard
+          error (conditional Unknown must explain itself).
+       c. ``status == 'N/A'`` AND ``missing_policy !=
+          'not_applicable_remove'`` → hard error (N/A must opt out via
+          the remove policy, otherwise it pollutes coverage math).
+       d. ``status == 'Optionality'`` with a non-empty ``value`` dict →
+          ``value`` must contain BOTH ``current_contribution`` AND
+          ``future_option_value`` keys; the Optionality node represents a
+          dual-state position (what's already priced in vs. what's the
+          option upside) and downstream scoring depends on the split.
+
+       These rules previously lived only in ``overlays.py`` so codex
+       fills that the verifier marked clean still failed at compile
+       time. Mirroring them here closes that gap.
+
+    2. **Value-shape validation** — run the dp_id-specific schema in
+       :data:`DP_SCHEMA` for ``Known`` (and populated ``Optionality``)
+       nodes. Unknown / N/A / Inactive nodes legitimately have
+       ``value=None`` so this layer is skipped for them.
     """
 
     if not isinstance(node, dict):
         return ["node is not a dict"]
     dp_id = node.get("dp_id") or ""
     status = node.get("data_status")
+    errors: list[str] = []
 
+    # --- Layer 1: compiler-parity status / policy rules -----------------
+    if status == "Unknown" and node.get("required_level") == "required":
+        errors.append("required node is Unknown")
+    if (
+        status == "Unknown"
+        and node.get("required_level") == "conditional_required"
+        and not node.get("missing_reason")
+    ):
+        errors.append("Unknown node must include missing_reason")
+    if (
+        status == "N/A"
+        and node.get("missing_policy") != "not_applicable_remove"
+    ):
+        errors.append("N/A node must use missing_policy=not_applicable_remove")
+    if status == "Optionality":
+        opt_value = node.get("value")
+        if isinstance(opt_value, dict) and opt_value:
+            # Empty dict {} is treated as "not yet filled" — see Layer 2
+            # gating below — so only enforce the split on non-empty dicts.
+            missing_keys = {
+                "current_contribution",
+                "future_option_value",
+            } - set(opt_value)
+            if missing_keys:
+                errors.append(
+                    "Optionality node must split current_contribution and "
+                    "future_option_value"
+                )
+        elif opt_value is not None and not isinstance(opt_value, dict):
+            errors.append(
+                "Optionality value must be a dict with current_contribution "
+                "and future_option_value"
+            )
+
+    # --- Layer 2: dp_id schema validation -------------------------------
     # Validate Known + populated Optionality slots. Unknown / N/A /
     # Inactive nodes legitimately have value=None or empty.
     if status not in ("Known", "Optionality"):
-        return []
+        return errors
     value = node.get("value")
     if status == "Optionality":
         # Skip empty Optionality (not yet filled, still in candidacy).
         if value is None:
-            return []
-        if isinstance(value, dict):
-            has_current = value.get("current_contribution") not in (
-                None, "", [], {},
-            )
-            has_future = value.get("future_option_value") not in (
-                None, "", [], {},
-            )
-            # Allow legacy Optionality shape (raw fields, no
-            # current/future split) — validate the value dict directly.
-            # But if neither slot is set, treat as not yet filled.
-            if not (has_current or has_future):
-                # No populated contribution slot AND no top-level keys at
-                # all → treat as empty.
-                if not value:
-                    return []
-    return validate_value(dp_id, value, strict=strict)
+            return errors
+        if isinstance(value, dict) and not value:
+            return errors
+        # Properly-split Optionality wraps the dp_id payload inside
+        # ``future_option_value`` (and pairs it with ``current_contribution``).
+        # The nested payload is intentionally free-form — operators
+        # describe the option upside narratively, sometimes with quantitative
+        # sub-fields that do not match the dp_id's "Known" schema. So when
+        # the split is present, we trust Layer 1 (key-presence) and stop
+        # here. Layer 2 schema validation still applies to ``Known`` and
+        # to legacy unsplit Optionality (which Layer 1 already errored on).
+        if isinstance(value, dict) and {
+            "current_contribution",
+            "future_option_value",
+        } <= set(value):
+            return errors
+    return errors + validate_value(dp_id, value, strict=strict)
 
 
 # ---------------------------------------------------------------------------

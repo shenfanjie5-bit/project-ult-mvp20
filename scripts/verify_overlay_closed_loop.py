@@ -898,11 +898,17 @@ def audit_overlays(
                 schema_errors = schema_validator.validate_overlay_node(
                     node, strict=False,
                 )
-                # Only count it as "checked" when the dp_id has a schema
-                # registered AND the node was eligible (Known/filled).
-                # validate_overlay_node returns [] for both
-                # "no schema registered" and "non-eligible status" — we
-                # only want the former counted, so do a manual gate.
+                # validate_overlay_node fires two layers:
+                #   (a) compiler-parity rules (N/A missing_policy,
+                #       Unknown missing_reason, Optionality split) — these
+                #       fire regardless of dp_id schema registration;
+                #   (b) dp_id schema validation (Known/populated
+                #       Optionality only, requires registered schema).
+                # We count "schema_checked_nodes" for the dp_id-validated
+                # bucket so the metric stays comparable across runs, but
+                # *every* node that returns errors is surfaced as a
+                # schema_drift warning so operators can see compiler
+                # parity issues before running compile-overlays.
                 eligible_status = node.get("data_status") in (
                     "Known", "Optionality",
                 )
