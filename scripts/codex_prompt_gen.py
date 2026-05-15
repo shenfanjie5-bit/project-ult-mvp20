@@ -583,6 +583,108 @@ def _build_source_value_table(
     return rows
 
 
+# A1 Phase: which annual-report sections each fillable dp_id should see.
+# Conservative — only fields where the AR章节 actually adds signal beyond
+# what L9.disclosure.qa_recent / L1.company.main_business already gives.
+_AR_SECTION_BY_DP_ID: dict[str, tuple[str, ...]] = {
+    "L3.customer.segment_mix": ("customer_segment", "revenue_structure"),
+    "L3.channel.mix": ("revenue_structure", "customer_segment"),
+    "L3.region.tier_mix": ("region_distribution", "revenue_structure"),
+    "L3.product.lifecycle": ("business_overview", "revenue_structure"),
+    "L2.segment.industry_exposure": ("revenue_structure", "customer_segment"),
+    "L2.segment.compete_landscape": ("business_overview", "risk_disclosure"),
+    "L2.segment.business_risk": ("risk_disclosure",),
+    "L4.eff.conversion_retention": ("customer_segment",),
+    "L4.share.customer_channel": ("customer_segment", "revenue_structure"),
+    "L1.position.channel_edge": ("revenue_structure", "business_overview"),
+    "L1.position.market_share": ("business_overview", "revenue_structure"),
+    "L1.position.brand": ("business_overview",),
+    "L1.position.tech_barrier": ("business_overview", "risk_disclosure"),
+    "L3.customer.solvency": ("customer_segment",),
+    "L3.channel.overseas": ("region_distribution", "revenue_structure"),
+}
+
+
+def _build_annual_report_block(
+    fillable_nodes: list[dict],
+    realtime: dict,
+) -> list[str]:
+    """A1 Phase: when ``L9.disclosure.annual_report`` exists in the snapshot
+    AND at least one fillable dp_id maps to AR sections, surface the relevant
+    section excerpts so codex can quote them verbatim.
+
+    Returns markdown lines (possibly empty). Lives between the source-value
+    table and the preserved list so codex sees AR excerpts as the strongest
+    text-evidence channel.
+    """
+
+    ar_entry = realtime.get("L9.disclosure.annual_report")
+    if not ar_entry:
+        return []
+
+    ar_value = ar_entry.get("value") or {}
+    sections = ar_value.get("sections") or {}
+    if not isinstance(sections, dict) or not sections:
+        return []
+
+    # Which dp_ids will actually use AR sections? Only emit those rows.
+    relevant: dict[str, set[str]] = {}
+    for n in fillable_nodes:
+        dp_id = n.get("dp_id") or ""
+        wanted = _AR_SECTION_BY_DP_ID.get(dp_id)
+        if not wanted:
+            continue
+        relevant[dp_id] = set(wanted)
+    if not relevant:
+        return []
+
+    used_sections: set[str] = set()
+    for s in relevant.values():
+        used_sections.update(s)
+
+    ar_year = ar_value.get("ar_year")
+    ar_url = ar_value.get("ar_url") or ""
+    src = ar_entry.get("source", "")
+
+    parts: list[str] = []
+    parts.append(
+        f"### 年报章节摘录（{ar_year} 年报）— A1 inline 文本证据"
+    )
+    parts.append("")
+    parts.append(
+        f"以下章节来自 `L9.disclosure.annual_report` (source={src}, url={ar_url})。"
+        "这些章节包含具体客户结构 / 收入构成 / 区域分布 / 业务概览 / 风险因素披露 — "
+        "**填充以下 D bucket / 公司画像字段时，必须从对应章节抽取证据**：（详见下表）。"
+    )
+    parts.append("")
+    parts.append("| dp_id | 应引用的年报章节 |")
+    parts.append("|---|---|")
+    for dp_id in sorted(relevant.keys()):
+        section_names = ", ".join(sorted(relevant[dp_id]))
+        parts.append(f"| `{dp_id}` | {section_names} |")
+    parts.append("")
+
+    # Render each used section's text verbatim
+    for sec_name in sorted(used_sections):
+        text = (sections.get(sec_name) or "").strip()
+        if not text:
+            continue
+        parts.append(f"#### 章节：`{sec_name}`（{len(text)} 字符）")
+        parts.append("")
+        parts.append("```")
+        parts.append(text)
+        parts.append("```")
+        parts.append("")
+
+    parts.append(
+        "**写入 `evidence_sources` 时**：使用 `kind=local_dp_id`，"
+        "`local_dp_id=L9.disclosure.annual_report`，`excerpt` 从上面章节文本里 "
+        "verbatim 复制对应数字 / 描述。引用 ar_url 作为 url 字段。"
+    )
+    parts.append("")
+    return parts
+
+
 def _format_source_value_section(
     rows: list[tuple[str, str, str]],
 ) -> list[str]:
@@ -1055,6 +1157,11 @@ def build_company_prompt(
             fillable_company, governance, ts_code, db_path,
         )
         parts.extend(_format_source_value_section(source_rows))
+
+    # A1 Phase: when L9.disclosure.annual_report exists in realtime,
+    # inline the relevant section excerpts for D-bucket / company-portrait
+    # fields so codex has real text evidence (not just qa_recent snippets).
+    parts.extend(_build_annual_report_block(fillable_company, realtime))
 
     parts.extend(_format_preserved_section(preserved_company))
 

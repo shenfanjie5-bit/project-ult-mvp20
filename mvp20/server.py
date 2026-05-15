@@ -355,6 +355,132 @@ def handle_history(cfg: ServerConfig, query: dict) -> HandlerResult:
     })
 
 
+def handle_market_events(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """Cross-stock real-time event stream from SQLite.
+
+    Combines two sources:
+      * ``MARKET:CN/L9.media.report.top_headlines`` — CLS telegraph rollup
+        (market-level; ``time`` field is ISO string).
+      * Per-stock ``L9.event.intraday_news.top_headlines`` — EastMoney news
+        per A-share (``publish_time`` ``YYYY-MM-DD HH:MM:SS`` string).
+
+    Returns headlines sorted by timestamp desc, deduped by title, limited to
+    ``?limit=N`` (default 12, max 50). Backs the MarketOverview "实时事件流"
+    timeline so it shows today's real news instead of a fixture.
+    """
+
+    import sqlite3
+    from datetime import datetime
+
+    try:
+        limit = min(int((query.get("limit") or ["12"])[0]), 50)
+    except (TypeError, ValueError):
+        return 400, _error_envelope(
+            "BAD_PARAM", "limit must be an integer", status=400,
+        )
+
+    db_path = cfg.hot_db_path
+    if not db_path.exists():
+        return 200, _ok_envelope({
+            "events": [],
+            "total": 0,
+            "limit": limit,
+            "as_of": None,
+            "source": "sqlite",
+            "note": f"hot.sqlite not found at {db_path}",
+        })
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            """
+            SELECT ts_code, dp_id, value_json, updated_at
+              FROM realtime_current
+             WHERE data_status = 'Known'
+               AND (
+                    (ts_code = 'MARKET:CN' AND dp_id = 'L9.media.report')
+                 OR dp_id = 'L9.event.intraday_news'
+               )
+            """
+        ).fetchall()
+    except sqlite3.OperationalError as e:
+        conn.close()
+        return 500, _error_envelope(
+            "SQLITE_ERROR", f"read realtime_current failed: {e}", status=500,
+        )
+    conn.close()
+
+    def _parse_ts(s: str | None) -> int | None:
+        # Accept ISO ("2026-05-15T20:15:12"), space-form ("2026-05-15
+        # 17:05:00"), or short date — return epoch seconds, None on failure.
+        if not s or not isinstance(s, str):
+            return None
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return int(datetime.strptime(s[:19], fmt).timestamp())
+            except ValueError:
+                continue
+        return None
+
+    collected: list[dict] = []
+    for ts_code, dp_id, val_json, _upd in rows:
+        try:
+            payload = json.loads(val_json)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        headlines = payload.get("top_headlines") or []
+        if not isinstance(headlines, list):
+            continue
+        for h in headlines:
+            if not isinstance(h, dict):
+                continue
+            title = (h.get("title") or "").strip()
+            if not title:
+                continue
+            raw_ts = h.get("time") or h.get("publish_time")
+            epoch = _parse_ts(raw_ts)
+            if epoch is None:
+                continue
+            collected.append({
+                "ts_code": ts_code,
+                "dp_id": dp_id,
+                "title": title,
+                "timestamp_epoch": epoch,
+                "timestamp_iso": datetime.fromtimestamp(epoch).isoformat(
+                    timespec="seconds",
+                ),
+                "url": h.get("url"),
+                "source": h.get("source"),
+            })
+
+    # Dedupe by title — different stocks can echo the same headline.
+    seen_titles: set[str] = set()
+    deduped: list[dict] = []
+    for ev in sorted(collected, key=lambda e: e["timestamp_epoch"], reverse=True):
+        if ev["title"] in seen_titles:
+            continue
+        seen_titles.add(ev["title"])
+        deduped.append(ev)
+        if len(deduped) >= limit:
+            break
+
+    as_of_epoch = max((e["timestamp_epoch"] for e in deduped), default=None)
+    as_of_iso = (
+        datetime.fromtimestamp(as_of_epoch).isoformat(timespec="seconds")
+        if as_of_epoch is not None else None
+    )
+
+    return 200, _ok_envelope({
+        "events": deduped,
+        "total": len(deduped),
+        "limit": limit,
+        "as_of": as_of_iso,
+        "source": "sqlite:realtime_current",
+    })
+
+
 def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
     """Read one company graph overlay plus the minute-level hot snapshot.
 
@@ -619,12 +745,18 @@ def handle_coverage(cfg: ServerConfig, query: dict) -> HandlerResult:
         return status, err
 
     try:
-        from mvp20.coverage import coverage_summary_for_overlay
-        report = coverage_summary_for_overlay(overlay) or {}
+        from mvp20.coverage import combined_coverage_summary
+        spec_path = CONFIG_DIR / "data_point_roles.yaml"
+        report = combined_coverage_summary(
+            overlay,
+            ts_code=ts_code,
+            db_path=cfg.hot_db_path,
+            spec_path=spec_path if spec_path.exists() else None,
+        ) or {}
     except Exception as exc:  # noqa: BLE001
         return 500, _error_envelope(
             "COVERAGE_FAILED",
-            f"coverage_summary_for_overlay raised: {exc}",
+            f"combined_coverage_summary raised: {exc}",
             status=500,
             details={"ts_code": ts_code, "industry_id": industry_id},
         )
@@ -645,6 +777,14 @@ def handle_coverage(cfg: ServerConfig, query: dict) -> HandlerResult:
         "warning_level": overall.get("warning_level", "ok"),
         "n_parents": overall.get("n_parents", 0),
         "totals": overall.get("totals", {}),
+        "sqlite_coverage_pct": overall.get("sqlite_coverage_pct", 0.0),
+        "llm_yaml_coverage_pct": overall.get("llm_yaml_coverage_pct", 0.0),
+        "combined_coverage_pct": overall.get("combined_coverage_pct", 0.0),
+        "yaml_only_data_coverage": overall.get("yaml_only_data_coverage"),
+        "n_sqlite_known": overall.get("n_sqlite_known", 0),
+        "n_yaml_known": overall.get("n_yaml_known", 0),
+        "n_combined_known": overall.get("n_combined_known", 0),
+        "spec_total": overall.get("spec_total", 0),
         "per_node": per_node,
         "alerts": report.get("alerts") or [],
     })
@@ -815,6 +955,8 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/alerts/.*$"), handle_alerts_stub),
         # Phase-1 data-layer: merged stock overlay (YAML static + SQLite hot)
         (re.compile(r"^/api/project-ult/stock-overlay$"), handle_stock_overlay),
+        # Cross-stock real-time event stream (MarketOverview "实时事件流")
+        (re.compile(r"^/api/project-ult/market-events$"), handle_market_events),
         # Phase-2 data-layer: Parquet minute history replay
         (re.compile(r"^/api/project-ult/history$"), handle_history),
         # Derived layers — A1 / A2 / A3 (spec §23 / §27 / §29 / §30)

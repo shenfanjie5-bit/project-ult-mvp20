@@ -21,6 +21,7 @@ from mvp20.derive import (
     _bootstrap_l11_subscores,
     derive_l6_path_second_derivative,
     derive_l6_path_tag,
+    derive_l6_priced_run_up_snapshot,
     derive_l6_sens_cashflow,
     derive_l6_sens_growth_margin,
     derive_l6_sens_rates,
@@ -29,6 +30,7 @@ from mvp20.derive import (
     derive_l7_mood_fomo,
     derive_l8_industry_demand_supply,
     derive_l8_industry_price_war,
+    derive_l8_val_overvalued_snapshot,
     derive_l8_val_priced_in,
     derive_l10_val_expansion_compression,
     derive_l11_long_score,
@@ -458,6 +460,267 @@ def test_derive_runner_inactive_when_inputs_missing(tmp_path: Path):
         status, payload_json = by_dp["L8.industry.demand_supply"]
         if status == "Inactive":
             payload = json.loads(payload_json)
+            assert payload.get("_inactive") is True
+
+
+# ---------------------------------------------------------------------------
+# US-side fallback tests for the 5 unblocked formulas
+# ---------------------------------------------------------------------------
+
+
+def test_l6_sens_growth_margin_us_fallback():
+    """FMP-style ratio inputs (gross_margin as 0.71, revenue_yoy as 0.65)
+    should be normalised to percent before being fed into the multiplier."""
+
+    out = derive_l6_sens_growth_margin(
+        fina_gross_margin=None,
+        fina_revenue_yoy=None,
+        is_gross_margin={"scalar": 0.7106},  # 71.06% gross margin (NVDA-like)
+        is_revenue_growth={"yoy_pct": 0.6547},  # 65.47% YoY revenue growth
+    )
+    assert out is not None
+    assert out["gross_margin_pct"] == pytest.approx(71.06, abs=0.1)
+    assert out["revenue_yoy_pct"] == pytest.approx(65.47, abs=0.1)
+    assert out["multiplier"] > 1.0  # premium-margin premium-growth => multiplier > 1
+    # A-share path still works when both supplied — primary wins.
+    out2 = derive_l6_sens_growth_margin(
+        fina_gross_margin={"value": 28.27},
+        fina_revenue_yoy={"value": 6.12},
+        is_gross_margin={"scalar": 0.7106},
+        is_revenue_growth={"yoy_pct": 0.6547},
+    )
+    assert out2["gross_margin_pct"] == pytest.approx(28.27, abs=0.05)
+
+
+def test_l6_sens_growth_margin_inactive_when_all_missing():
+    assert derive_l6_sens_growth_margin(None, None, None, None) is None
+
+
+def test_l6_path_second_derivative_us_fallback():
+    """When `L6.priced.run_up` is absent, fall back to FMP's L5.surprise.preprice
+    which carries run_up_5/10/20d_pct."""
+
+    out = derive_l6_path_second_derivative(
+        historical_pct=None,
+        run_up=None,
+        surprise_preprice={
+            "run_up_5d_pct": 0.04,
+            "run_up_10d_pct": 0.06,
+            "run_up_20d_pct": 0.05,
+        },
+    )
+    assert out is not None
+    assert out["source"] == "L5.surprise.preprice"
+    # d5/5 = 0.008, d20/20 = 0.0025 → second_deriv positive ⇒ accelerating
+    assert out["label"] == "accelerating"
+
+
+def test_l6_priced_run_up_snapshot_us():
+    """FMP preprice payload should reshape into the standard run_up payload."""
+
+    out = derive_l6_priced_run_up_snapshot({
+        "run_up_5d_pct": 0.02,
+        "run_up_10d_pct": 0.04,
+        "run_up_20d_pct": 0.07,
+    })
+    assert out["d20_pct"] == pytest.approx(0.07, abs=0.001)
+    assert out["d5_pct"] == pytest.approx(0.02, abs=0.001)
+    assert out["d60_pct"] is None
+    assert out["source"] == "L5.surprise.preprice"
+
+
+def test_l6_priced_run_up_snapshot_missing():
+    assert derive_l6_priced_run_up_snapshot(None) is None
+    assert derive_l6_priced_run_up_snapshot({}) is None
+
+
+def test_l8_val_overvalued_snapshot_via_quantile():
+    out = derive_l8_val_overvalued_snapshot(
+        historical_quantile={"pe_percentile": 0.96, "pb_percentile": 0.87},
+        historical_pct=None,
+    )
+    assert out is not None
+    assert out["is_overvalued"] is True
+    assert out["severity"] == "extreme"
+    assert out["source"] == "historical_quantile"
+
+
+def test_l8_val_overvalued_snapshot_peg_fallback():
+    """When no PE/PB history is available, classify by PEG (US fallback)."""
+
+    out = derive_l8_val_overvalued_snapshot(
+        historical_quantile=None,
+        historical_pct=None,
+        mult_peg={"scalar": 2.3},
+        mult_pe={"scalar": 35.0},
+    )
+    assert out is not None
+    assert out["severity"] == "high"
+    assert out["is_overvalued"] is True
+    assert out["source"] == "L6.mult.peg"
+
+
+def test_l10_val_expansion_compression_us_fallback():
+    """When L6.state.expansion_compression is missing, derive a regime
+    label from PE quantile (US fallback path)."""
+
+    out = derive_l10_val_expansion_compression(
+        state_expansion=None,
+        mult_pe={"scalar": 35.0},
+        historical_quantile={"pe_percentile": 0.88},
+        historical_pct=None,
+    )
+    assert out is not None
+    assert out["regime"] == "expanded"
+    assert out["fallback"] == "fmp_pe_quantile"
+    assert out["pe_percentile"] == pytest.approx(0.88, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Integration: US ts_code through DeriveRunner
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tmp_us_hot_db(tmp_path: Path) -> Path:
+    """Hot DB seeded with NVDA.US + MARKET:US sentinel only — no A-share
+    L5.fina.* and no Tushare L6.state.expansion_compression. Exercises the
+    US fallback paths in the 5 unblocked derives."""
+
+    db = tmp_path / "us_hot.sqlite"
+    init_db(db)
+    now = int(time.time())
+    rows = [
+        # US per-stock FMP-style inputs.
+        ("NVDA.US", "L5.is.gross_margin",
+         {"scalar": 0.7106, "unit": "ratio"}, "Known", 0.85, "fmp:income-statement", now),
+        ("NVDA.US", "L5.is.revenue_growth",
+         {"yoy_pct": 0.6547, "eps_growth_yoy": 0.66}, "Known", 0.85,
+         "fmp:financial-growth", now),
+        ("NVDA.US", "L5.cf.fcf",
+         {"scalar": 6e10}, "Known", 0.85, "fmp:cash-flow", now),
+        ("NVDA.US", "L5.surprise.preprice",
+         {"earnings_date": "2026-05-28", "run_up_5d_pct": 0.04,
+          "run_up_10d_pct": 0.06, "run_up_20d_pct": 0.07,
+          "spx_relative_5d": 0.02, "is_upcoming": True},
+         "Known", 0.75, "fmp:earnings.derived", now),
+        ("NVDA.US", "L6.mult.pe",
+         {"scalar": 50.0, "unit": "ratio"}, "Known", 0.85, "fmp:ratios-ttm", now),
+        ("NVDA.US", "L6.mult.peg",
+         {"scalar": 0.69, "unit": "ratio"}, "Known", 0.85, "fmp:ratios-ttm", now),
+        # Sentinel MARKET:US carrying macro/env values.
+        ("MARKET:US", "L7.env.market_trend",
+         {"regime": "bull", "spx_30d_pct": 0.12, "ndx_30d_pct": 0.21},
+         "Known", 0.8, "fmp:historical-index", now),
+        ("MARKET:US", "L7.env.rates",
+         {"1y": 3.79, "10y": 4.46, "lpr_1y_pct": 4.46},
+         "Known", 0.85, "fmp:treasury", now),
+        ("MARKET:US", "L9.macro.rates",
+         {"10y": 4.46, "lpr_1y_pct": 4.46}, "Known", 0.85,
+         "fmp:treasury.derived", now),
+        ("MARKET:US", "L9.macro.cpi_employment",
+         {"cpi_yoy_latest": 3.8, "unemployment_pct": 4.3},
+         "Known", 0.85, "fmp:economic-calendar", now),
+    ]
+    upsert_realtime(db, rows)
+    # NVDA must be in overlay_manifest for derive runner to find it.
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            """INSERT INTO overlay_manifest
+                 (ts_code, industry_id, overlay_path, period, primary_industry,
+                  overlay_status, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("NVDA.US", "SEMICONDUCTOR_GPU", "test", "2026Q1", 1, "ok", now),
+        )
+    return db
+
+
+def test_derive_runner_us_unblocks_target_dp_ids(tmp_us_hot_db: Path):
+    """The 5 unblocked formulas should emit Known on NVDA.US given FMP-side
+    inputs only (no MARKET:CN / L5.fina.*)."""
+
+    runner = DeriveRunner(tmp_us_hot_db)
+    stats = runner.run_all(["NVDA.US"])
+    assert stats["companies_processed"] == 1
+
+    with sqlite3.connect(f"file:{tmp_us_hot_db}?mode=ro", uri=True) as conn:
+        rows = conn.execute(
+            """SELECT dp_id, data_status, value_json FROM realtime_current
+                WHERE ts_code = 'NVDA.US' AND source LIKE 'derive:%'"""
+        ).fetchall()
+    by_dp = {r[0]: (r[1], json.loads(r[2])) for r in rows}
+
+    # L6.sens.growth_margin: FMP fallback should produce Known.
+    status, payload = by_dp["L6.sens.growth_margin"]
+    assert status == "Known", f"unexpected status for growth_margin: {status} payload={payload}"
+    assert payload.get("multiplier", 0) > 1.0
+    assert payload.get("gross_margin_pct") == pytest.approx(71.06, abs=0.1)
+
+    # L6.priced.run_up: snapshot fallback from L5.surprise.preprice => Known.
+    status, payload = by_dp["L6.priced.run_up"]
+    assert status == "Known"
+    assert payload["d20_pct"] == pytest.approx(0.07, abs=0.001)
+
+    # L6.path.second_derivative: derives from preprice (since run_up was
+    # also freshly emitted to `emitted` dict and visible to downstream).
+    status, payload = by_dp["L6.path.second_derivative"]
+    assert status == "Known"
+    assert payload["label"] in ("accelerating", "decelerating", "stable")
+
+    # L8.val.overvalued: PEG fallback (no historical_quantile yet for US).
+    status, payload = by_dp["L8.val.overvalued"]
+    assert status == "Known"
+    # PEG 0.69 => normal (not high). PE alone doesn't flag overvalued.
+    assert payload.get("severity") in ("normal", "elevated", "high", "extreme")
+
+    # L10.val.expansion_compression: fallback to PE + quantile when no
+    # upstream L6.state.expansion_compression. Without quantile, we get
+    # regime=neutral because pe_pct is None; pe_current carries through.
+    status, payload = by_dp["L10.val.expansion_compression"]
+    assert status == "Known"
+    assert payload["mirror_of"] == "L6.state.expansion_compression"
+    assert payload.get("regime") in ("expanded", "compressed", "neutral")
+
+
+def test_derive_runner_us_inactive_when_upstream_missing(tmp_path: Path):
+    """When even the US fallback inputs are missing, the 5 derives should
+    emit Inactive with `_inactive: True` and not crash."""
+
+    db = tmp_path / "us_bare.sqlite"
+    init_db(db)
+    now = int(time.time())
+    # Only seed one unrelated dp_id — no FMP-side inputs to feed the
+    # 5 target formulas.
+    upsert_realtime(db, [
+        ("AAPL.US", "L9.event.news_flow",
+         {"count": 12}, "Known", 0.75, "fmp:news", now),
+    ])
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute(
+            """INSERT INTO overlay_manifest
+                 (ts_code, industry_id, overlay_path, period, primary_industry,
+                  overlay_status, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("AAPL.US", "CONSUMER_ELECTRONICS", "test", "2026Q1", 1, "ok", now),
+        )
+
+    runner = DeriveRunner(db)
+    runner.run_all(["AAPL.US"])
+
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        rows = conn.execute(
+            """SELECT dp_id, data_status, value_json FROM realtime_current
+                WHERE ts_code = 'AAPL.US' AND source LIKE 'derive:%'"""
+        ).fetchall()
+    by_dp = {r[0]: (r[1], json.loads(r[2])) for r in rows}
+
+    # All 5 target dp_ids should at least have a row (Inactive is fine).
+    for dp in ("L6.sens.growth_margin", "L6.priced.run_up",
+               "L6.path.second_derivative", "L8.val.overvalued",
+               "L10.val.expansion_compression"):
+        assert dp in by_dp, f"missing fallback emit for {dp}"
+        status, payload = by_dp[dp]
+        if status == "Inactive":
             assert payload.get("_inactive") is True
 
 

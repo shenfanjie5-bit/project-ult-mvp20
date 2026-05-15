@@ -389,6 +389,9 @@ def derive_l7_mood_fomo(
 
 def derive_l10_val_expansion_compression(
     state_expansion: Mapping[str, Any] | None,
+    mult_pe: Mapping[str, Any] | None = None,
+    historical_quantile: Mapping[str, Any] | None = None,
+    historical_pct: Mapping[str, Any] | None = None,
 ) -> dict | None:
     """L10.val.expansion_compression — 10-layer verification view that mirrors
     ``L6.state.expansion_compression``.
@@ -396,13 +399,172 @@ def derive_l10_val_expansion_compression(
     The 10-layer macro audit re-reports the same valuation expansion/compression
     state at the market verification layer so consumers can cross-check whether
     the stock-level state is consistent with the macro view.
+
+    For A-share, the primary input is the Tushare-emitted
+    ``L6.state.expansion_compression`` payload (PE vs 60d / 250d MA regime).
+
+    For US/HK stocks where no upstream emits that dp_id, fall back to
+    composing a regime label from FMP-driven inputs: current PE
+    (``L6.mult.pe``) compared against the historical PE quantile
+    (``L10.val.historical_quantile`` or ``L6.state.historical_percentile``)
+    so the verification view still has something to report.
     """
 
-    if not isinstance(state_expansion, Mapping):
+    # Primary path: mirror upstream state_expansion verbatim.
+    if isinstance(state_expansion, Mapping):
+        out = dict(state_expansion)
+        out["mirror_of"] = "L6.state.expansion_compression"
+        return out
+
+    # Fallback path: synthesise a regime label from PE + quantile inputs
+    # (used when upstream L6.state.expansion_compression is unavailable, e.g.
+    # US stocks without the Tushare history fetcher).
+    pe_current: float | None = None
+    if isinstance(mult_pe, Mapping):
+        pe_current = mult_pe.get("scalar")
+        if pe_current is None:
+            pe_current = mult_pe.get("pe_ttm") or mult_pe.get("value")
+        pe_current = _coerce_float(pe_current, 0.0) or None
+
+    pe_pct: float | None = None
+    for src in (historical_pct, historical_quantile):
+        if isinstance(src, Mapping):
+            cand = src.get("pe_percentile")
+            if cand is not None:
+                pe_pct = _coerce_float(cand)
+                break
+
+    if pe_current is None and pe_pct is None:
         return None
-    out = dict(state_expansion)  # mirror
-    out["mirror_of"] = "L6.state.expansion_compression"
-    return out
+
+    if pe_pct is not None:
+        if pe_pct >= 0.75:
+            regime = "expanded"
+        elif pe_pct <= 0.25:
+            regime = "compressed"
+        else:
+            regime = "neutral"
+    else:
+        regime = "neutral"
+
+    return {
+        "pe_current": pe_current,
+        "pe_percentile": pe_pct,
+        "regime": regime,
+        "mirror_of": "L6.state.expansion_compression",
+        "fallback": "fmp_pe_quantile",
+    }
+
+
+def derive_l6_priced_run_up_snapshot(
+    surprise_preprice: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.priced.run_up — snapshot fallback when Tushare history is absent.
+
+    For A-shares, this dp_id is populated by the Tier 0 history derive
+    (`derive_run_up` over Tushare daily closes). For US stocks we don't run
+    that path; instead FMP's `/earnings` + `/historical-price-eod` already
+    produce `L5.surprise.preprice` carrying ``run_up_5d_pct`` /
+    ``run_up_10d_pct`` / ``run_up_20d_pct``. Re-shape those into the
+    standard ``d5_pct``/``d20_pct``/``d60_pct`` payload so downstream
+    derives (`L6.path.second_derivative`, `L8.val.priced_in`) work
+    unchanged on US tickers.
+
+    Returns ``None`` when no preprice payload is available (so the
+    DeriveRunner emits Inactive). When called for an A-share that already
+    has a Tier 0 emit, the runner's skip-on-existing-known guard prevents
+    this fallback from clobbering the better value.
+    """
+
+    if not isinstance(surprise_preprice, Mapping):
+        return None
+    d5 = surprise_preprice.get("run_up_5d_pct")
+    d10 = surprise_preprice.get("run_up_10d_pct")
+    d20 = surprise_preprice.get("run_up_20d_pct")
+    if d5 is None and d10 is None and d20 is None:
+        return None
+    payload: dict[str, Any] = {
+        "d5_pct": _coerce_float(d5) if d5 is not None else None,
+        "d10_pct": _coerce_float(d10) if d10 is not None else None,
+        "d20_pct": _coerce_float(d20) if d20 is not None else None,
+        "d60_pct": None,
+        "source": "L5.surprise.preprice",
+    }
+    return payload
+
+
+def derive_l8_val_overvalued_snapshot(
+    historical_quantile: Mapping[str, Any] | None,
+    historical_pct: Mapping[str, Any] | None,
+    mult_peg: Mapping[str, Any] | None = None,
+    mult_pe: Mapping[str, Any] | None = None,
+) -> dict | None:
+    """L8.val.overvalued — snapshot fallback when Tier 0 history is absent.
+
+    Composes the same overvalued boolean + severity label that
+    ``derive_overvalued`` produces from PE/PB percentile data — but works
+    on snapshot inputs only:
+
+      * Prefer ``L10.val.historical_quantile`` (per-stock PE/PB percentile
+        within own history; populated by Tushare A-share Tier 0 OR FMP key
+        metrics aggregations for US tickers).
+      * Fall back to ``L6.state.historical_percentile`` (alias, same shape).
+      * As a last resort, use PEG (``L6.mult.peg``) banding: PEG >= 2 =>
+        high, PEG >= 1.5 => elevated, PEG < 1.0 with positive growth =>
+        normal. This gives US stocks at least one severity classification
+        even when no PE history is available yet.
+
+    Returns ``None`` only when every source is missing.
+    """
+
+    pe_pct = pb_pct = None
+    src_payload = historical_quantile if isinstance(historical_quantile, Mapping) else historical_pct
+    if isinstance(src_payload, Mapping):
+        pe_pct = src_payload.get("pe_percentile")
+        pb_pct = src_payload.get("pb_percentile")
+
+    if pe_pct is not None or pb_pct is not None:
+        max_pct = max(
+            (p for p in (_coerce_float(pe_pct, -1.0), _coerce_float(pb_pct, -1.0)) if p >= 0),
+            default=None,
+        )
+        if max_pct is not None:
+            severity = (
+                "extreme" if max_pct > 0.95 else
+                "high" if max_pct > 0.80 else
+                "elevated" if max_pct > 0.60 else
+                "normal"
+            )
+            return {
+                "is_overvalued": max_pct > 0.80,
+                "severity": severity,
+                "max_quantile": max_pct,
+                "pe_pct": _coerce_float(pe_pct, 0.0) if pe_pct is not None else None,
+                "pb_pct": _coerce_float(pb_pct, 0.0) if pb_pct is not None else None,
+                "source": "historical_quantile",
+            }
+
+    # PEG fallback (US stocks without PE/PB history). PEG > 2 ≈ rich, < 1 ≈ cheap.
+    peg = None
+    if isinstance(mult_peg, Mapping):
+        peg = mult_peg.get("scalar") or mult_peg.get("value")
+    if peg is not None:
+        pegf = _coerce_float(peg)
+        if pegf > 0:
+            severity = (
+                "high" if pegf >= 2.0 else
+                "elevated" if pegf >= 1.5 else
+                "normal" if pegf >= 1.0 else
+                "normal"
+            )
+            return {
+                "is_overvalued": pegf >= 2.0,
+                "severity": severity,
+                "peg": pegf,
+                "source": "L6.mult.peg",
+            }
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -644,27 +806,59 @@ def derive_l6_path_tag(
 def derive_l6_path_second_derivative(
     historical_pct: Mapping[str, Any] | None,
     run_up: Mapping[str, Any] | None,
+    surprise_preprice: Mapping[str, Any] | None = None,
 ) -> dict | None:
     """L6.path.second_derivative — rate-of-change of valuation expansion.
 
     Uses 20d vs 60d run-up as a proxy for valuation acceleration. Positive
     => accelerating expansion, negative => decelerating.
+
+    For A-share the primary input is ``L6.priced.run_up`` (Tushare history
+    derived) which carries ``d20_pct`` / ``d60_pct``. For US stocks where
+    that Tier 0 derive is not run, fall back to FMP's
+    ``L5.surprise.preprice`` payload which carries ``run_up_5d_pct`` /
+    ``run_up_10d_pct`` / ``run_up_20d_pct`` so we still get an
+    acceleration signal at the shorter horizons.
     """
 
-    if not isinstance(run_up, Mapping):
+    d20: float | None = None
+    d60: float | None = None
+    d5: float | None = None
+    source = "L6.priced.run_up"
+
+    if isinstance(run_up, Mapping):
+        d20 = run_up.get("d20_pct")
+        d60 = run_up.get("d60_pct")
+        if d20 is None and d60 is None and "run_up_20d_pct" in run_up:
+            # Tolerate caller passing a preprice-shaped payload directly.
+            d20 = run_up.get("run_up_20d_pct")
+            d5 = run_up.get("run_up_5d_pct")
+
+    # Fallback: US side via L5.surprise.preprice (FMP). Only consult when
+    # the primary run_up payload didn't yield numbers.
+    if d20 is None and d60 is None and isinstance(surprise_preprice, Mapping):
+        d20 = surprise_preprice.get("run_up_20d_pct")
+        d5 = surprise_preprice.get("run_up_5d_pct")
+        source = "L5.surprise.preprice"
+
+    if d20 is None and d60 is None and d5 is None:
         return None
 
-    d20 = run_up.get("d20_pct")
-    d60 = run_up.get("d60_pct")
-    if d20 is None and d60 is None:
-        return None
-
-    d20f = _coerce_float(d20)
-    d60f = _coerce_float(d60)
-    # Annualized "acceleration" — d20 daily rate vs d60 daily rate
+    d20f = _coerce_float(d20) if d20 is not None else 0.0
+    d60f = _coerce_float(d60) if d60 is not None else 0.0
+    d5f = _coerce_float(d5) if d5 is not None else 0.0
     d20_daily = d20f / 20.0 if d20 is not None else 0.0
     d60_daily = d60f / 60.0 if d60 is not None else 0.0
-    second_deriv = d20_daily - d60_daily
+    d5_daily = d5f / 5.0 if d5 is not None else 0.0
+
+    if d60 is not None and d20 is not None:
+        second_deriv = d20_daily - d60_daily
+    elif d20 is not None and d5 is not None:
+        # No 60d horizon — compare 5d daily rate vs 20d daily rate. Same
+        # sign convention (faster recent = accelerating).
+        second_deriv = d5_daily - d20_daily
+    else:
+        second_deriv = d20_daily or d5_daily
 
     label = (
         "accelerating" if second_deriv > 0.002 else
@@ -676,6 +870,7 @@ def derive_l6_path_second_derivative(
         "d20_daily": d20_daily,
         "d60_daily": d60_daily,
         "label": label,
+        "source": source,
     }
 
 
@@ -711,17 +906,88 @@ def _l6_sens_factor(
 def derive_l6_sens_growth_margin(
     fina_gross_margin: Mapping[str, Any] | None,
     fina_revenue_yoy: Mapping[str, Any] | None,
+    is_gross_margin: Mapping[str, Any] | None = None,
+    is_revenue_growth: Mapping[str, Any] | None = None,
 ) -> dict | None:
     """L6.sens.growth_margin — valuation sensitivity to growth+margin.
 
     Higher margin and higher YoY growth => valuation supports premium
     multipliers.
+
+    Inputs in priority order:
+      * A-share (Tushare ``fina_indicator``): ``L5.fina.gross_margin``
+        carries ``value`` as percent (e.g. 28.27 => 28.27%); ``L5.fina.revenue_yoy``
+        likewise pct.
+      * US (FMP ``income-statement`` / ``financial-growth``):
+        ``L5.is.gross_margin`` carries ``scalar`` as ratio (0.71 => 71%);
+        ``L5.is.revenue_growth`` carries ``yoy_pct`` as ratio (0.06 => 6%).
+
+    We normalise both onto a percent scale (e.g. 28.27 or 71.0) before
+    feeding ``_l6_sens_factor`` so the same baseline (25% margin, 10% YoY)
+    is meaningful across markets.
     """
 
-    return _l6_sens_factor([
-        (fina_gross_margin, 0.5, 25.0),     # baseline gross margin 25%
-        (fina_revenue_yoy, 0.5, 10.0),      # baseline revenue YoY 10%
-    ])
+    margin_pct: float | None = None
+    margin_conf: float | None = None
+    if isinstance(fina_gross_margin, Mapping):
+        v = fina_gross_margin.get("value")
+        if v is not None:
+            margin_pct = _coerce_float(v)
+            margin_conf = _coerce_float(fina_gross_margin.get("confidence"), 0.5)
+    if margin_pct is None and isinstance(is_gross_margin, Mapping):
+        scalar = is_gross_margin.get("scalar")
+        if scalar is None:
+            scalar = is_gross_margin.get("value")
+        if scalar is not None:
+            f = _coerce_float(scalar)
+            # FMP emits ratio (0..1) — convert to percent for baseline parity.
+            margin_pct = f * 100.0 if abs(f) <= 1.5 else f
+            margin_conf = _coerce_float(is_gross_margin.get("confidence"), 0.5)
+
+    revenue_pct: float | None = None
+    revenue_conf: float | None = None
+    if isinstance(fina_revenue_yoy, Mapping):
+        v = fina_revenue_yoy.get("value")
+        if v is not None:
+            revenue_pct = _coerce_float(v)
+            revenue_conf = _coerce_float(fina_revenue_yoy.get("confidence"), 0.5)
+    if revenue_pct is None and isinstance(is_revenue_growth, Mapping):
+        yoy = is_revenue_growth.get("yoy_pct")
+        if yoy is None:
+            yoy = is_revenue_growth.get("value")
+        if yoy is not None:
+            f = _coerce_float(yoy)
+            # FMP emits ratio (0.06 => 6%) — convert to percent.
+            revenue_pct = f * 100.0 if abs(f) <= 5.0 else f
+            revenue_conf = _coerce_float(is_revenue_growth.get("confidence"), 0.5)
+
+    if margin_pct is None and revenue_pct is None:
+        return None
+
+    # Compose multiplier directly so we can record the normalised inputs.
+    factor = 1.0
+    drivers: list[str] = []
+    if margin_pct is not None:
+        delta = (margin_pct - 25.0) / 25.0
+        factor *= 1.0 + _clip(delta, -0.5, 0.5) * 0.5
+        drivers.append(f"gm={margin_pct:.2f}%")
+    if revenue_pct is not None:
+        delta = (revenue_pct - 10.0) / 10.0
+        factor *= 1.0 + _clip(delta, -0.5, 0.5) * 0.5
+        drivers.append(f"rev_yoy={revenue_pct:.2f}%")
+
+    factor = _clip(factor, 0.5, 1.5)
+    out: dict[str, Any] = {
+        "multiplier": factor,
+        "drivers": drivers,
+        "gross_margin_pct": margin_pct,
+        "revenue_yoy_pct": revenue_pct,
+    }
+    if margin_conf is not None or revenue_conf is not None:
+        confs = [c for c in (margin_conf, revenue_conf) if c is not None]
+        if confs:
+            out["confidence"] = _decay(min(confs), 0.9)
+    return out
 
 
 def derive_l6_sens_cashflow(
@@ -1277,7 +1543,24 @@ _FORMULA_REGISTRY: list[tuple[str, list[str], Callable[..., dict | None]]] = [
     ], derive_l7_mood_fomo),
     ("L10.val.expansion_compression", [
         "L6.state.expansion_compression",
+        # US fallback inputs (FMP-side): synthesise regime from PE + quantile
+        # when no upstream L6.state.expansion_compression exists.
+        "L6.mult.pe", "L10.val.historical_quantile",
+        "L6.state.historical_percentile",
     ], derive_l10_val_expansion_compression),
+
+    # ---- Tier 1.5: snapshot fallbacks for Tier 0 dp_ids ----
+    # These re-emit `L6.priced.run_up` and `L8.val.overvalued` when the
+    # legacy A-share Tier 0 derive (derive_all) didn't run for this ts_code,
+    # using FMP-side inputs already in the snapshot. The runner skips emit
+    # when the same dp_id is already Known from a non-derive source.
+    ("L6.priced.run_up", [
+        "L5.surprise.preprice",
+    ], derive_l6_priced_run_up_snapshot),
+    ("L8.val.overvalued", [
+        "L10.val.historical_quantile", "L6.state.historical_percentile",
+        "L6.mult.peg", "L6.mult.pe",
+    ], derive_l8_val_overvalued_snapshot),
 
     # ---- Tier 3: L8 risks ----
     ("L8.industry.demand_supply", [
@@ -1298,9 +1581,13 @@ _FORMULA_REGISTRY: list[tuple[str, list[str], Callable[..., dict | None]]] = [
     ], derive_l6_path_tag),
     ("L6.path.second_derivative", [
         "L6.state.historical_percentile", "L6.priced.run_up",
+        # US fallback — FMP surprise.preprice carries 5/10/20d run-up.
+        "L5.surprise.preprice",
     ], derive_l6_path_second_derivative),
     ("L6.sens.growth_margin", [
         "L5.fina.gross_margin", "L5.fina.revenue_yoy",
+        # US fallback — FMP income-statement + financial-growth fields.
+        "L5.is.gross_margin", "L5.is.revenue_growth",
     ], derive_l6_sens_growth_margin),
     ("L6.sens.cashflow", [
         "L5.fina.ocf_quality", "L5.cf.fcf",
@@ -1577,7 +1864,34 @@ class DeriveRunner:
 
         # Now run each formula
         emitted: dict[str, dict] = {}
+        # Track dp_ids that came from a non-derive upstream source so we
+        # don't clobber them with a snapshot fallback.
+        upstream_known: dict[str, dict] = {}
+        for dp_id, row in usable.items():
+            src = (row.get("source") or "")
+            if src and not src.startswith("derive:"):
+                upstream_known[dp_id] = row
+
         for output_dp, input_dp_ids, fn in _FORMULA_REGISTRY:
+            # If a real upstream source already wrote this dp_id (Known,
+            # non-derive), preserve it rather than re-emit. This protects
+            # Tier 0 A-share derives (source: derived:price_history) and
+            # any future direct FMP emit for L6.priced.run_up /
+            # L8.val.overvalued from being clobbered by our snapshot
+            # fallback. Note: derived:* (Tier 0) is also preserved here.
+            existing = upstream_known.get(output_dp)
+            if existing is not None and (existing.get("data_status") or "").lower() == "known":
+                # Pass the upstream value through `emitted` so downstream
+                # formulas that depend on `output_dp` still see it.
+                upstream_val = existing.get("value")
+                if isinstance(upstream_val, Mapping):
+                    emitted[output_dp] = dict(upstream_val)
+                else:
+                    emitted[output_dp] = {"scalar": upstream_val}
+                emitted[output_dp]["_input_conf"] = float(existing.get("confidence") or 0.5)
+                emitted[output_dp]["_preserved_upstream"] = True
+                continue
+
             payloads = []
             input_confs = []
             for inp_dp in input_dp_ids:
@@ -1633,9 +1947,14 @@ class DeriveRunner:
                 json.dumps(payload, ensure_ascii=False),
                 "Known", 0.5, f"derive:bootstrap_l11_subscore", now,
             ))
-        # Strip _input_conf before persistence to keep payloads clean
+        # Strip _input_conf before persistence to keep payloads clean.
+        # Skip preserved-upstream rows so we don't overwrite the original
+        # row's source attribution (Tier 0 derived:* or upstream fmp:*).
         for dp_id, payload in emitted.items():
-            persist = {k: v for k, v in payload.items() if k != "_input_conf"}
+            if payload.get("_preserved_upstream"):
+                continue
+            persist = {k: v for k, v in payload.items()
+                       if k not in ("_input_conf", "_preserved_upstream")}
             data_status = "Inactive" if payload.get("_inactive") else "Known"
             confidence = float(payload.get("confidence", 0.5))
             formula_id = dp_id.replace(".", "_").lower()
@@ -1646,8 +1965,14 @@ class DeriveRunner:
                 f"derive:{formula_id}", now,
             ))
 
-        status_map = {dp: ("Inactive" if payload.get("_inactive") else "Known")
-                      for dp, payload in emitted.items()}
+        status_map = {}
+        for dp, payload in emitted.items():
+            if payload.get("_preserved_upstream"):
+                status_map[dp] = "Known"
+            elif payload.get("_inactive"):
+                status_map[dp] = "Inactive"
+            else:
+                status_map[dp] = "Known"
         return rows, status_map
 
     def run_all(

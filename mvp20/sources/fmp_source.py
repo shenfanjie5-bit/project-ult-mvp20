@@ -113,6 +113,33 @@ SUPPORTED_DP_IDS = {
     "L5.surprise.preprice",
     "L6.priced.news_age",
     "L11.short.technical",
+    # B.6e ─ Bucket-A mirror: 22 fields cloned from tushare A-share fetchers
+    # so US tickers populate the same dp_ids. See fetch_bucket_a_mirror_batch
+    # and Sub-A1..Sub-A5 sub-helpers below. All emit US-only — A-shares are
+    # filtered out before any HTTP call so this is byte-equivalent to the
+    # tushare path for non-US codes.
+    "L2.segment.revenue_share",
+    "L2.segment.gross_margin",
+    "L2.segment.growth",
+    "L4.cost.labor",
+    "L4.cost.raw_material",
+    "L4.eff.turnover",
+    "L4.eff.cycle",
+    "L8.fin.cash_ar",
+    "L8.fin.debt_pressure",
+    "L6.priced.analyst_revision",
+    "L7.mood.analyst_rating",
+    "L7.trade.margin_short",
+    "L9.media.analyst_action",
+    "L5.fcst.guidance_change",
+    "L9.company.buyback_dividend",
+    "L9.company.earnings_guidance",
+    "L6.state.historical_percentile",
+    "L6.state.expansion_compression",
+    "L6.state.peer_compare",
+    "L10.val.historical_quantile",
+    "L10.val.peer",
+    "L6.priced.run_up",
 }
 
 
@@ -1845,6 +1872,1684 @@ def fetch_short_technical_batch(
     return rows
 
 
+# ---------------------------------------------------------------------------
+# B.6e ── Bucket-A mirror: 22 fields paralleling the tushare A-share fetchers
+# ---------------------------------------------------------------------------
+#
+# The A-share path emits 22 dp_ids that the US path historically missed:
+#   * L2.segment.{revenue_share,gross_margin,growth}            (3)
+#   * L4.cost.{labor,raw_material} / L4.eff.{turnover,cycle}    (4)
+#   * L8.fin.{cash_ar,debt_pressure}                             (2)
+#   * L6.priced.analyst_revision / L7.mood.analyst_rating /
+#     L7.trade.margin_short / L9.media.analyst_action            (4)
+#   * L5.fcst.guidance_change / L9.company.{buyback_dividend,
+#     earnings_guidance}                                         (3)
+#   * L6.state.{historical_percentile,expansion_compression,
+#     peer_compare} / L10.val.{historical_quantile,peer} /
+#     L6.priced.run_up                                           (6)
+#
+# This block re-uses /income-statement, /balance-sheet-statement,
+# /cash-flow-statement, /key-metrics, /key-metrics-ttm,
+# /revenue-product-segmentation, /grades-historical,
+# /analyst-stock-recommendations, /historical-buyback,
+# /dividends-calendar, /earnings-calendar, /stock-peers,
+# /historical-price-eod/light. All endpoints are FMP-Starter-accessible per
+# the spec; the few Premium-locked ones (/short-interest, /historical-buyback
+# on some tiers) fall back to derived proxies via key-metrics so the row
+# always emits — Inactive when no fallback exists.
+#
+# Module-level caches are TTL-keyed so the per-symbol loop doesn't re-hit
+# the same endpoint multiple times when several Bucket-A fetchers need it.
+# Default TTL: 10 minutes (financial data is day-level).
+
+_BUCKET_A_FMP_TTL_S = 600
+
+_SEGMENT_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_KEY_METRICS_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_INCOME_STMT_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_BS_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_CF_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_GRADES_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_ANALYST_REC_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_BUYBACK_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_DIVIDENDS_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_EARNINGS_CAL_CACHE: dict[str, tuple[int, list[dict]]] = {}
+_SHORT_INTEREST_CACHE: dict[str, tuple[int, dict | list]] = {}
+_STOCK_PEERS_CACHE: dict[str, tuple[int, list[str]]] = {}
+_KEY_METRICS_TTM_CACHE: dict[str, tuple[int, list[dict]]] = {}
+
+
+def _cached_get_list(
+    cache: dict[str, tuple[int, list[dict]]],
+    key: str,
+    endpoint: str,
+    params: dict,
+    ttl: int = _BUCKET_A_FMP_TTL_S,
+) -> list[dict]:
+    """Generic ``list[dict]`` cache wrapper around ``_get_json``.
+
+    Returns ``[]`` on any error / non-list payload so the caller can branch
+    cleanly. Populates the cache with ``[]`` on miss so we don't retry the
+    same failing endpoint within the TTL."""
+
+    now_s = int(time.time())
+    cached = cache.get(key)
+    if cached and (now_s - cached[0]) < ttl:
+        return cached[1]
+    data = _get_json(endpoint, params)
+    if not isinstance(data, list):
+        cache[key] = (now_s, [])
+        return []
+    cache[key] = (now_s, data)
+    return data
+
+
+def _bucket_a_inactive(ts_code: str, dp_id: str, source: str, now: int,
+                       reason: str = "no_data") -> tuple:
+    """Inactive row factory for the Bucket-A mirror — mirrors the format
+    used in the tushare path so downstream readers see byte-identical
+    layouts across US and CN universes."""
+
+    return (
+        ts_code, dp_id,
+        json.dumps({"reason": reason}, ensure_ascii=False),
+        "Inactive", 0.0, source, now,
+    )
+
+
+def _bucket_a_known(ts_code: str, dp_id: str, payload: dict, source: str,
+                    now: int, confidence: float = 0.75) -> tuple:
+    """Known row factory for the Bucket-A mirror."""
+
+    return (
+        ts_code, dp_id,
+        json.dumps(payload, ensure_ascii=False),
+        "Known", confidence, source, now,
+    )
+
+
+# ── /revenue-product-segmentation cache (segments per symbol) ─────────────
+
+
+def _fetch_segments_cached(symbol: str) -> list[dict]:
+    """Pull product-segmentation rows for ``symbol``. FMP /stable endpoint
+    returns one row per fiscal period, each with a ``data`` dict mapping
+    segment-name → revenue. We sort desc by date so [0] is the latest
+    period."""
+
+    rows = _cached_get_list(
+        _SEGMENT_CACHE, symbol,
+        "/revenue-product-segmentation",
+        {"symbol": symbol, "period": "annual"},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def fetch_segments_batch(
+    api_key: str | None,
+    us_codes: Iterable[tuple[str, str]],
+    sleep_s: float = 0.21,
+) -> list[tuple]:
+    """Emit L2.segment.{revenue_share, gross_margin, growth} per US symbol.
+
+    FMP /revenue-product-segmentation exposes only revenue per segment; FMP
+    does not break out segment-level cost. We therefore emit
+    ``L2.segment.gross_margin`` as ``Inactive`` with a ``proxy`` field
+    pointing back at the company-level gross-margin from /income-statement
+    — same fallback the spec calls out."""
+
+    if not api_key:
+        return []
+
+    now = int(time.time())
+    rows: list[tuple] = []
+    for ts_code, sym in us_codes:
+        if sleep_s:
+            time.sleep(sleep_s)
+        recs = _fetch_segments_cached(sym)
+        if not recs:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L2.segment.revenue_share",
+                "fmp:revenue-product-segmentation", now,
+                "no_segments"))
+            rows.append(_bucket_a_inactive(
+                ts_code, "L2.segment.gross_margin",
+                "fmp:revenue-product-segmentation", now,
+                "no_segments"))
+            rows.append(_bucket_a_inactive(
+                ts_code, "L2.segment.growth",
+                "fmp:revenue-product-segmentation", now,
+                "no_segments"))
+            continue
+
+        latest = recs[0]
+        latest_data = latest.get("data") or {}
+        latest_period = latest.get("date")
+        if not isinstance(latest_data, dict) or not latest_data:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L2.segment.revenue_share",
+                "fmp:revenue-product-segmentation", now,
+                "no_segment_data"))
+            rows.append(_bucket_a_inactive(
+                ts_code, "L2.segment.gross_margin",
+                "fmp:revenue-product-segmentation", now,
+                "no_segment_data"))
+            rows.append(_bucket_a_inactive(
+                ts_code, "L2.segment.growth",
+                "fmp:revenue-product-segmentation", now,
+                "no_segment_data"))
+            continue
+
+        # ── revenue_share ──
+        items: list[tuple[str, float]] = []
+        for name, val in latest_data.items():
+            try:
+                fv = float(val)
+            except (TypeError, ValueError):
+                continue
+            items.append((str(name), fv))
+        total = sum(v for _, v in items if v > 0)
+        rev_segs: list[dict] = []
+        if total > 0:
+            for name, val in items:
+                if val <= 0:
+                    continue
+                rev_segs.append({
+                    "item": name,
+                    "revenue_pct": round(val / total * 100.0, 4),
+                    "revenue": val,
+                    "period": latest_period,
+                })
+            rev_segs.sort(key=lambda r: r.get("revenue_pct") or 0.0,
+                          reverse=True)
+            rows.append(_bucket_a_known(
+                ts_code, "L2.segment.revenue_share",
+                {"segments": rev_segs, "period": latest_period,
+                 "unit": "USD"},
+                "fmp:revenue-product-segmentation", now, 0.8))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L2.segment.revenue_share",
+                "fmp:revenue-product-segmentation", now,
+                "no_positive_segment_revenue"))
+
+        # ── gross_margin per segment — FMP doesn't break out segment cost ─
+        rows.append(_bucket_a_inactive(
+            ts_code, "L2.segment.gross_margin",
+            "fmp:revenue-product-segmentation", now,
+            "fmp_no_segment_cost; use_company_gross_margin_proxy"))
+
+        # ── growth (yoy of segment revenue) ──
+        prior = recs[1] if len(recs) >= 2 else None
+        prior_data = (prior.get("data") if prior else None) or {}
+        if isinstance(prior_data, dict) and prior_data:
+            growth_segs: list[dict] = []
+            for name, val in items:
+                prev = prior_data.get(name)
+                try:
+                    fv = float(val)
+                    pv = float(prev) if prev is not None else None
+                except (TypeError, ValueError):
+                    continue
+                if pv is None or pv == 0:
+                    continue
+                yoy_pct = (fv - pv) / abs(pv) * 100.0
+                growth_segs.append({
+                    "item": name,
+                    "yoy_pct": round(yoy_pct, 4),
+                    "current": fv,
+                    "prior": pv,
+                    "period": latest_period,
+                })
+            if growth_segs:
+                growth_segs.sort(key=lambda r: r.get("yoy_pct") or 0.0,
+                                 reverse=True)
+                rows.append(_bucket_a_known(
+                    ts_code, "L2.segment.growth",
+                    {"segments": growth_segs, "period": latest_period,
+                     "prior_period": prior.get("date") if prior else None},
+                    "fmp:revenue-product-segmentation", now, 0.75))
+            else:
+                rows.append(_bucket_a_inactive(
+                    ts_code, "L2.segment.growth",
+                    "fmp:revenue-product-segmentation", now,
+                    "no_yoy_comparable_segments"))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L2.segment.growth",
+                "fmp:revenue-product-segmentation", now,
+                "no_prior_period"))
+    return rows
+
+
+# ── Income / balance-sheet / cash-flow caches (annual, last 2 periods) ────
+
+
+def _fetch_income_stmt_cached(symbol: str, limit: int = 2) -> list[dict]:
+    rows = _cached_get_list(
+        _INCOME_STMT_CACHE, symbol,
+        "/income-statement",
+        {"symbol": symbol, "period": "annual", "limit": limit},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def _fetch_bs_cached(symbol: str, limit: int = 2) -> list[dict]:
+    rows = _cached_get_list(
+        _BS_CACHE, symbol,
+        "/balance-sheet-statement",
+        {"symbol": symbol, "period": "annual", "limit": limit},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def _fetch_cf_cached(symbol: str, limit: int = 2) -> list[dict]:
+    rows = _cached_get_list(
+        _CF_CACHE, symbol,
+        "/cash-flow-statement",
+        {"symbol": symbol, "period": "annual", "limit": limit},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def _fetch_key_metrics_cached(symbol: str, limit: int = 2) -> list[dict]:
+    """``/key-metrics`` — period-rated metrics with the
+    daysOfInventoryOnHand / Sales / Payables fields used for L4.eff.*."""
+
+    rows = _cached_get_list(
+        _KEY_METRICS_CACHE, symbol,
+        "/key-metrics",
+        {"symbol": symbol, "period": "annual", "limit": limit},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def _fetch_key_metrics_ttm_cached(symbol: str) -> list[dict]:
+    return _cached_get_list(
+        _KEY_METRICS_TTM_CACHE, symbol,
+        "/key-metrics-ttm", {"symbol": symbol},
+    )
+
+
+# ── L4.cost.* / L4.eff.* / L8.fin.* (financial derived) ───────────────────
+
+
+def fetch_financial_derived_batch(
+    api_key: str | None,
+    us_codes: Iterable[tuple[str, str]],
+    sleep_s: float = 0.0,
+) -> list[tuple]:
+    """Emit 6 financial-derived dp_ids per US symbol.
+
+    Re-uses /income-statement, /balance-sheet-statement, /cash-flow-statement,
+    /key-metrics caches so per-symbol cost is ~4 HTTP at most (cached across
+    Bucket-A fetchers). ``sleep_s`` defaults to 0 because callers run this
+    after another fetcher that already paced /income-statement etc.
+    """
+
+    if not api_key:
+        return []
+
+    now = int(time.time())
+    rows: list[tuple] = []
+    for ts_code, sym in us_codes:
+        if sleep_s:
+            time.sleep(sleep_s)
+        inc = _fetch_income_stmt_cached(sym, limit=2)
+        bs = _fetch_bs_cached(sym, limit=2)
+        cf = _fetch_cf_cached(sym, limit=2)
+        km = _fetch_key_metrics_cached(sym, limit=2)
+        kmt = _fetch_key_metrics_ttm_cached(sym)
+
+        latest_inc = inc[0] if inc else None
+        prior_inc = inc[1] if len(inc) >= 2 else None
+        latest_bs = bs[0] if bs else None
+        prior_bs = bs[1] if len(bs) >= 2 else None
+        latest_cf = cf[0] if cf else None
+        latest_km = km[0] if km else None
+        latest_kmt = kmt[0] if kmt else None
+
+        period = (latest_inc or {}).get("date") if latest_inc else None
+
+        # ── L4.cost.labor — proxy via SGA + R&D share of revenue ──
+        if latest_inc:
+            try:
+                rev = _safe(latest_inc, "revenue")
+                sga = _safe(latest_inc,
+                            "sellingGeneralAndAdministrativeExpenses") or 0.0
+                rd = _safe(latest_inc, "researchAndDevelopmentExpenses") or 0.0
+                if rev and rev != 0:
+                    labor_cost_pct = (
+                        (float(sga) + float(rd)) / float(rev)) * 100.0
+                    labor_yoy_pct = None
+                    if prior_inc:
+                        p_rev = _safe(prior_inc, "revenue")
+                        p_sga = _safe(
+                            prior_inc,
+                            "sellingGeneralAndAdministrativeExpenses") or 0.0
+                        p_rd = _safe(
+                            prior_inc,
+                            "researchAndDevelopmentExpenses") or 0.0
+                        if p_rev and p_rev != 0:
+                            prior_pct = ((float(p_sga) + float(p_rd))
+                                         / float(p_rev)) * 100.0
+                            labor_yoy_pct = labor_cost_pct - prior_pct
+                    rows.append(_bucket_a_known(
+                        ts_code, "L4.cost.labor",
+                        {
+                            "labor_cost_pct": round(labor_cost_pct, 4),
+                            "labor_cost_yoy_pct": (
+                                round(labor_yoy_pct, 4)
+                                if labor_yoy_pct is not None else None
+                            ),
+                            "proxy_method": "sga_rd_share",
+                            "latest_period": period,
+                            "unit": "pct",
+                        },
+                        "fmp:income-statement.derived", now, 0.7))
+                else:
+                    rows.append(_bucket_a_inactive(
+                        ts_code, "L4.cost.labor",
+                        "fmp:income-statement.derived", now,
+                        "missing_revenue"))
+            except (TypeError, ValueError):
+                rows.append(_bucket_a_inactive(
+                    ts_code, "L4.cost.labor",
+                    "fmp:income-statement.derived", now, "compute_error"))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L4.cost.labor",
+                "fmp:income-statement.derived", now,
+                "no_income_statement"))
+
+        # ── L4.cost.raw_material — cogs share of revenue + YoY ──
+        if latest_inc:
+            rev = _safe(latest_inc, "revenue")
+            cogs = _safe(latest_inc, "costOfRevenue")
+            if rev and cogs is not None:
+                try:
+                    raw_pct = (float(cogs) / float(rev)) * 100.0
+                    cogs_yoy_pct = None
+                    if prior_inc:
+                        p_cogs = _safe(prior_inc, "costOfRevenue")
+                        if p_cogs and float(p_cogs) != 0:
+                            cogs_yoy_pct = ((float(cogs) - float(p_cogs))
+                                            / float(p_cogs)) * 100.0
+                    rows.append(_bucket_a_known(
+                        ts_code, "L4.cost.raw_material",
+                        {
+                            "raw_material_cost_pct": round(raw_pct, 4),
+                            "cogs_yoy_pct": (
+                                round(cogs_yoy_pct, 4)
+                                if cogs_yoy_pct is not None else None
+                            ),
+                            "primary_commodity": None,
+                            "labor_adjusted": False,
+                            "proxy_method": "cogs_share_no_labor_breakdown",
+                            "latest_period": period,
+                        },
+                        "fmp:income-statement.derived", now, 0.7))
+                except (TypeError, ValueError):
+                    rows.append(_bucket_a_inactive(
+                        ts_code, "L4.cost.raw_material",
+                        "fmp:income-statement.derived", now,
+                        "compute_error"))
+            else:
+                rows.append(_bucket_a_inactive(
+                    ts_code, "L4.cost.raw_material",
+                    "fmp:income-statement.derived", now,
+                    "missing_revenue_or_cogs"))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L4.cost.raw_material",
+                "fmp:income-statement.derived", now,
+                "no_income_statement"))
+
+        # ── L4.eff.turnover & L4.eff.cycle from /key-metrics days fields ──
+        # FMP /stable named these ``daysOfInventoryOutstanding`` /
+        # ``daysOfSalesOutstanding`` / ``daysOfPayablesOutstanding``, plus an
+        # already-derived ``cashConversionCycle``. Older docs called the
+        # inventory field ``daysOfInventoryOnHand`` — try both for safety.
+        dio = dso = dpo = ccc_from_api = None
+        if latest_km:
+            dio_raw = (_safe(latest_km, "daysOfInventoryOutstanding")
+                       or _safe(latest_km, "daysOfInventoryOnHand"))
+            dso_raw = _safe(latest_km, "daysOfSalesOutstanding")
+            dpo_raw = _safe(latest_km, "daysOfPayablesOutstanding")
+            ccc_raw = _safe(latest_km, "cashConversionCycle")
+            try:
+                dio = float(dio_raw) if dio_raw is not None else None
+                dso = float(dso_raw) if dso_raw is not None else None
+                dpo = float(dpo_raw) if dpo_raw is not None else None
+                ccc_from_api = (
+                    float(ccc_raw) if ccc_raw is not None else None)
+            except (TypeError, ValueError):
+                dio = dso = dpo = ccc_from_api = None
+
+        turnover_status = "Inactive"
+        turnover_payload: dict
+        if dio is not None or dso is not None or dpo is not None:
+            turnover_payload = {
+                "inventory_turnover_days": round(dio, 2) if dio is not None else None,
+                "ar_turnover_days": round(dso, 2) if dso is not None else None,
+                "ap_turnover_days": round(dpo, 2) if dpo is not None else None,
+                "latest_period": (latest_km or {}).get("date") or period,
+                "unit": "days",
+            }
+            turnover_status = "Known"
+            rows.append(_bucket_a_known(
+                ts_code, "L4.eff.turnover", turnover_payload,
+                "fmp:key-metrics", now, 0.75))
+        else:
+            turnover_payload = {"reason": "no_days_metrics"}
+            rows.append(_bucket_a_inactive(
+                ts_code, "L4.eff.turnover", "fmp:key-metrics", now,
+                "no_days_metrics"))
+
+        if (turnover_status == "Known" and dio is not None and dso is not None
+                and dpo is not None):
+            ccc = dio + dso - dpo
+            rows.append(_bucket_a_known(
+                ts_code, "L4.eff.cycle",
+                {
+                    "ccc_days": round(ccc, 2),
+                    "dio": round(dio, 2),
+                    "dso": round(dso, 2),
+                    "dpo": round(dpo, 2),
+                    "latest_period": turnover_payload.get("latest_period"),
+                },
+                "fmp:key-metrics.derived", now, 0.75))
+        elif ccc_from_api is not None:
+            # FMP already publishes ``cashConversionCycle`` — surface it even
+            # when one of the three day components is missing.
+            rows.append(_bucket_a_known(
+                ts_code, "L4.eff.cycle",
+                {
+                    "ccc_days": round(ccc_from_api, 2),
+                    "dio": round(dio, 2) if dio is not None else None,
+                    "dso": round(dso, 2) if dso is not None else None,
+                    "dpo": round(dpo, 2) if dpo is not None else None,
+                    "latest_period": (turnover_payload.get("latest_period")
+                                      if isinstance(turnover_payload, dict)
+                                      else period),
+                    "source_field": "cashConversionCycle",
+                },
+                "fmp:key-metrics", now, 0.75))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L4.eff.cycle", "fmp:key-metrics.derived", now,
+                "incomplete_DIO_DSO_DPO"))
+
+        # ── L8.fin.cash_ar — OCF/NI + AR yoy alert ──
+        ocf_to_ni = ar_yoy_pct = None
+        if latest_cf and latest_inc:
+            ni = _safe(latest_inc, "netIncome")
+            ocf = _safe(latest_cf, "operatingCashFlow")
+            if ni and ni != 0 and ocf is not None:
+                try:
+                    ocf_to_ni = float(ocf) / float(ni)
+                except (TypeError, ValueError):
+                    ocf_to_ni = None
+        if latest_bs and prior_bs:
+            cur_ar = _safe(latest_bs, "accountsReceivables")
+            prv_ar = _safe(prior_bs, "accountsReceivables")
+            if cur_ar is not None and prv_ar and float(prv_ar) != 0:
+                try:
+                    ar_yoy_pct = ((float(cur_ar) - float(prv_ar))
+                                  / abs(float(prv_ar))) * 100.0
+                except (TypeError, ValueError):
+                    ar_yoy_pct = None
+        alert_severity = None
+        warn_trig = ((ocf_to_ni is not None and ocf_to_ni < 0.8)
+                     or (ar_yoy_pct is not None and ar_yoy_pct > 20.0))
+        err_trig = ((ocf_to_ni is not None and ocf_to_ni < 0.5)
+                    or (ar_yoy_pct is not None and ar_yoy_pct > 50.0))
+        if err_trig:
+            alert_severity = "ERROR"
+        elif warn_trig:
+            alert_severity = "WARN"
+        if ocf_to_ni is None and ar_yoy_pct is None:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L8.fin.cash_ar",
+                "fmp:cash-flow.derived", now,
+                "no_ocf_ni_or_ar_yoy"))
+        else:
+            payload = {
+                "ocf_to_ni": round(ocf_to_ni, 4) if ocf_to_ni is not None else None,
+                "ar_yoy_pct": round(ar_yoy_pct, 4) if ar_yoy_pct is not None else None,
+                "alert_severity": alert_severity,
+                "latest_period": period,
+            }
+            # Mirror tushare: "Known" only when an alert fires.
+            if alert_severity:
+                rows.append(_bucket_a_known(
+                    ts_code, "L8.fin.cash_ar", payload,
+                    "fmp:cash-flow.derived", now, 0.8))
+            else:
+                rows.append((
+                    ts_code, "L8.fin.cash_ar",
+                    json.dumps(payload, ensure_ascii=False),
+                    "Inactive", 0.0, "fmp:cash-flow.derived", now,
+                ))
+
+        # ── L8.fin.debt_pressure — interest_debt / EBITDA ──
+        total_debt = ebitda = None
+        debt_to_assets = None
+        if latest_bs:
+            total_debt = _safe(latest_bs, "totalDebt")
+            if total_debt is None:
+                st = _safe(latest_bs, "shortTermDebt") or 0
+                lt = _safe(latest_bs, "longTermDebt") or 0
+                total_debt = (st + lt) if (st or lt) else None
+            tot_assets = _safe(latest_bs, "totalAssets")
+            tot_liab = _safe(latest_bs, "totalLiabilities")
+            if tot_assets and tot_liab is not None:
+                try:
+                    debt_to_assets = float(tot_liab) / float(tot_assets)
+                except (TypeError, ValueError):
+                    debt_to_assets = None
+        if latest_kmt:
+            ebitda = _safe(latest_kmt, "ebitdaTTM")
+            # FMP /stable's /key-metrics-ttm doesn't expose ebitdaTTM
+            # directly — derive from enterpriseValueTTM / evToEBITDATTM.
+            if ebitda is None:
+                ev_ttm = _safe(latest_kmt, "enterpriseValueTTM")
+                ev_eb_ttm = _safe(latest_kmt, "evToEBITDATTM")
+                if ev_ttm and ev_eb_ttm and float(ev_eb_ttm) != 0:
+                    try:
+                        ebitda = float(ev_ttm) / float(ev_eb_ttm)
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        ebitda = None
+        if ebitda is None and latest_km:
+            ebitda = _safe(latest_km, "ebitda")
+            # FMP /key-metrics doesn't expose ebitda directly; derive from
+            # ``enterpriseValue / evToEBITDA`` when both fields are present.
+            if ebitda is None:
+                ev = _safe(latest_km, "enterpriseValue")
+                ev_to_ebitda = _safe(latest_km, "evToEBITDA")
+                if ev and ev_to_ebitda and float(ev_to_ebitda) != 0:
+                    try:
+                        ebitda = float(ev) / float(ev_to_ebitda)
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        ebitda = None
+        ratio = None
+        if total_debt is not None and ebitda and float(ebitda) != 0:
+            try:
+                ratio = float(total_debt) / float(ebitda)
+            except (TypeError, ValueError):
+                ratio = None
+        alert = None
+        if ratio is not None and ratio > 4.0:
+            alert = "ERROR"
+        elif ratio is not None and ratio > 2.5:
+            alert = "WARN"
+        if ratio is None and debt_to_assets is None:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L8.fin.debt_pressure",
+                "fmp:balance-sheet.derived", now,
+                "no_debt_or_ebitda"))
+        else:
+            payload = {
+                "interest_debt_to_ebitda": (
+                    round(ratio, 4) if ratio is not None else None),
+                "debt_to_assets": (
+                    round(debt_to_assets, 4)
+                    if debt_to_assets is not None else None),
+                "alert_severity": alert,
+                "interest_debt_usd": (
+                    float(total_debt) if total_debt is not None else None),
+                "ebitda_usd": float(ebitda) if ebitda is not None else None,
+                "latest_period": period,
+            }
+            if alert:
+                rows.append(_bucket_a_known(
+                    ts_code, "L8.fin.debt_pressure", payload,
+                    "fmp:balance-sheet.derived", now, 0.8))
+            else:
+                rows.append((
+                    ts_code, "L8.fin.debt_pressure",
+                    json.dumps(payload, ensure_ascii=False),
+                    "Inactive", 0.0, "fmp:balance-sheet.derived", now,
+                ))
+    return rows
+
+
+# ── /grades-historical + /analyst-stock-recommendations + /short-interest ─
+
+
+def _fetch_grades_cached(symbol: str) -> list[dict]:
+    """Pull per-event grade history (one row per upgrade/downgrade/initiate)
+    from /grades. FMP's /grades-historical returns aggregate ratings buckets
+    (see _fetch_analyst_recs_cached) — different shape, different purpose.
+    """
+
+    rows = _cached_get_list(
+        _GRADES_CACHE, symbol,
+        "/grades",
+        {"symbol": symbol, "limit": 200},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def _fetch_analyst_recs_cached(symbol: str) -> list[dict]:
+    """Pull aggregate rating-bucket distribution. FMP exposes this under
+    /grades-historical on Starter (the /analyst-stock-recommendations name
+    returns 404 on this tier). The payload schema matches what the older
+    /analyst-stock-recommendations endpoint used to return, so we keep the
+    same downstream parser."""
+
+    rows = _cached_get_list(
+        _ANALYST_REC_CACHE, symbol,
+        "/grades-historical",
+        {"symbol": symbol, "limit": 12},
+    )
+    if rows:
+        return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+    # Fall back to the older endpoint name if the new one is unavailable.
+    rows = _cached_get_list(
+        _ANALYST_REC_CACHE, f"_old_{symbol}",
+        "/analyst-stock-recommendations",
+        {"symbol": symbol, "limit": 12},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+_GRADE_SCORE: dict[str, int] = {
+    # Buy bucket
+    "strong buy": 5, "buy": 4, "outperform": 4, "overweight": 4,
+    "accumulate": 4, "positive": 4, "add": 4, "long-term buy": 4,
+    "top pick": 5, "market outperform": 4,
+    # Hold bucket
+    "hold": 3, "neutral": 3, "market perform": 3, "sector perform": 3,
+    "equal-weight": 3, "in-line": 3, "peer perform": 3,
+    # Sell bucket
+    "underperform": 2, "underweight": 2, "reduce": 2, "negative": 2,
+    "sell": 1, "strong sell": 1, "weak hold": 2, "market underperform": 2,
+    "below average": 2,
+}
+
+
+def _classify_grade(grade: str) -> tuple[str, int | None]:
+    """Map FMP grade text → (bucket, 1..5 score). Unknown grade → (None, None)."""
+
+    g = (grade or "").strip().lower()
+    if not g:
+        return ("", None)
+    score = _GRADE_SCORE.get(g)
+    if score is None:
+        # Crude keyword fallback
+        if any(k in g for k in ("strong buy", "top pick")):
+            score = 5
+        elif any(k in g for k in ("buy", "outperform", "overweight",
+                                  "accumulate", "positive", "long-term")):
+            score = 4
+        elif any(k in g for k in ("hold", "neutral", "market perform",
+                                  "sector perform", "equal", "in-line")):
+            score = 3
+        elif any(k in g for k in ("underperform", "underweight",
+                                  "reduce", "negative")):
+            score = 2
+        elif any(k in g for k in ("sell",)):
+            score = 1
+    if score is None:
+        return (g, None)
+    bucket = (
+        "strong_buy" if score == 5 else
+        "buy" if score == 4 else
+        "hold" if score == 3 else
+        "sell" if score == 2 else
+        "strong_sell"
+    )
+    return (bucket, score)
+
+
+def fetch_grades_batch(
+    api_key: str | None,
+    us_codes: Iterable[tuple[str, str]],
+    sleep_s: float = 0.21,
+) -> list[tuple]:
+    """Emit L6.priced.analyst_revision + L7.mood.analyst_rating +
+    L9.media.analyst_action from /grades-historical."""
+
+    if not api_key:
+        return []
+
+    today = datetime.now(timezone.utc).date()
+    cutoff_90d = (today - timedelta(days=90)).isoformat()
+    cutoff_7d = (today - timedelta(days=7)).isoformat()
+
+    now = int(time.time())
+    rows: list[tuple] = []
+    for ts_code, sym in us_codes:
+        if sleep_s:
+            time.sleep(sleep_s)
+        data = _fetch_grades_cached(sym)
+        # data is desc; filter to last 90d.
+        recent = [
+            r for r in data
+            if (_iso_date(r.get("date")) or "") >= cutoff_90d
+        ]
+        if not recent:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L6.priced.analyst_revision",
+                "fmp:grades-historical", now, "no_grades_90d"))
+            rows.append(_bucket_a_inactive(
+                ts_code, "L7.mood.analyst_rating",
+                "fmp:grades-historical", now, "no_grades_90d"))
+            rows.append(_bucket_a_inactive(
+                ts_code, "L9.media.analyst_action",
+                "fmp:grades-historical", now, "no_grades_7d"))
+            continue
+
+        # ── L6.priced.analyst_revision (90d) ──
+        upgrades = downgrades = maintains = initiations = 0
+        by_broker: dict[str, list[dict]] = {}
+        for r in recent:
+            broker = str(r.get("gradingCompany") or "")
+            if not broker:
+                continue
+            by_broker.setdefault(broker, []).append(r)
+        for lst in by_broker.values():
+            lst.sort(key=lambda x: x.get("date") or "")
+        for broker, lst in by_broker.items():
+            last_score: int | None = None
+            for r in lst:
+                action = (r.get("action") or "").lower()
+                _, score = _classify_grade(r.get("newGrade") or r.get("grade")
+                                           or "")
+                if score is None:
+                    continue
+                if action == "initiate" or last_score is None:
+                    initiations += 1
+                elif action == "upgrade" or score > last_score:
+                    upgrades += 1
+                elif action == "downgrade" or score < last_score:
+                    downgrades += 1
+                else:
+                    maintains += 1
+                last_score = score
+        denom = upgrades + downgrades + maintains
+        net = (upgrades - downgrades) / denom if denom > 0 else 0.0
+        rev_payload = {
+            "upgrades": upgrades,
+            "downgrades": downgrades,
+            "maintains": maintains,
+            "initiations": initiations,
+            "net_revision_score": round(net, 4),
+            "period_days": 90,
+            "n_reports": len(recent),
+        }
+        rows.append(_bucket_a_known(
+            ts_code, "L6.priced.analyst_revision", rev_payload,
+            "fmp:grades-historical", now, 0.75))
+
+        # ── L7.mood.analyst_rating — distribution from /analyst-rec ──
+        rec_rows = _fetch_analyst_recs_cached(sym)
+        if rec_rows:
+            cur = rec_rows[0]
+            sb = int(_safe(cur, "analystRatingsStrongBuy") or 0)
+            b = int(_safe(cur, "analystRatingsBuy") or 0)
+            h = int(_safe(cur, "analystRatingsHold") or 0)
+            s = int(_safe(cur, "analystRatingsSell") or 0)
+            ss = int(_safe(cur, "analystRatingsStrongSell") or 0)
+            total = sb + b + h + s + ss
+            if total > 0:
+                avg = (sb * 5 + b * 4 + h * 3 + s * 2 + ss * 1) / total
+                rating_payload = {
+                    "strong_buy": sb,
+                    "buy": b,
+                    "hold": h,
+                    "sell": s,
+                    "strong_sell": ss,
+                    "n_reports": total,
+                    "avg_rating_score": round(avg, 4),
+                    "as_of": cur.get("date"),
+                    "period_days": 30,
+                }
+                rows.append(_bucket_a_known(
+                    ts_code, "L7.mood.analyst_rating", rating_payload,
+                    "fmp:analyst-stock-recommendations", now, 0.8))
+            else:
+                # Fall back to /grades-historical bucket count.
+                bucket_counts = {"strong_buy": 0, "buy": 0, "hold": 0,
+                                 "sell": 0, "strong_sell": 0}
+                scores: list[int] = []
+                for r in recent:
+                    bk, sc = _classify_grade(r.get("newGrade")
+                                             or r.get("grade") or "")
+                    if sc is None:
+                        continue
+                    bucket_counts[bk] = bucket_counts.get(bk, 0) + 1
+                    scores.append(sc)
+                if scores:
+                    rows.append(_bucket_a_known(
+                        ts_code, "L7.mood.analyst_rating",
+                        {**bucket_counts,
+                         "n_reports": len(scores),
+                         "avg_rating_score": round(
+                             sum(scores) / len(scores), 4),
+                         "period_days": 90,
+                         "source": "grades-historical_fallback"},
+                        "fmp:grades-historical.derived", now, 0.7))
+                else:
+                    rows.append(_bucket_a_inactive(
+                        ts_code, "L7.mood.analyst_rating",
+                        "fmp:analyst-stock-recommendations", now,
+                        "no_ratings_or_grades"))
+        else:
+            # /analyst-stock-recommendations unavailable — derive from grades.
+            bucket_counts = {"strong_buy": 0, "buy": 0, "hold": 0,
+                             "sell": 0, "strong_sell": 0}
+            scores = []
+            for r in recent:
+                bk, sc = _classify_grade(r.get("newGrade") or r.get("grade")
+                                         or "")
+                if sc is None:
+                    continue
+                bucket_counts[bk] = bucket_counts.get(bk, 0) + 1
+                scores.append(sc)
+            if scores:
+                rows.append(_bucket_a_known(
+                    ts_code, "L7.mood.analyst_rating",
+                    {**bucket_counts,
+                     "n_reports": len(scores),
+                     "avg_rating_score": round(sum(scores) / len(scores), 4),
+                     "period_days": 90,
+                     "source": "grades-historical_fallback"},
+                    "fmp:grades-historical.derived", now, 0.7))
+            else:
+                rows.append(_bucket_a_inactive(
+                    ts_code, "L7.mood.analyst_rating",
+                    "fmp:analyst-stock-recommendations", now,
+                    "no_ratings"))
+
+        # ── L9.media.analyst_action — 7d rating changes ──
+        recent_7d = [
+            r for r in recent
+            if (_iso_date(r.get("date")) or "") >= cutoff_7d
+        ]
+        recent_changes: list[dict] = []
+        up7 = down7 = 0
+        for r in recent_7d:
+            action = (r.get("action") or "").lower()
+            new_g = r.get("newGrade") or r.get("grade")
+            prev_g = r.get("previousGrade")
+            if action in ("upgrade", "up"):
+                up7 += 1
+                ctype = "upgrade"
+            elif action in ("downgrade", "down"):
+                down7 += 1
+                ctype = "downgrade"
+            else:
+                # If we have prev grade, infer.
+                _, sc_new = _classify_grade(new_g or "")
+                _, sc_prev = _classify_grade(prev_g or "")
+                if (sc_new is not None and sc_prev is not None
+                        and sc_new != sc_prev):
+                    if sc_new > sc_prev:
+                        up7 += 1
+                        ctype = "upgrade"
+                    else:
+                        down7 += 1
+                        ctype = "downgrade"
+                else:
+                    continue
+            recent_changes.append({
+                "date": _iso_date(r.get("date")),
+                "broker": r.get("gradingCompany"),
+                "prev_rating": prev_g,
+                "new_rating": new_g,
+                "change_type": ctype,
+            })
+        count_7d = up7 + down7
+        if count_7d == 0:
+            rows.append((
+                ts_code, "L9.media.analyst_action",
+                json.dumps({
+                    "recent_changes": [],
+                    "count_7d": 0,
+                    "upgrades_7d": 0,
+                    "downgrades_7d": 0,
+                    "action_type": "none",
+                }, ensure_ascii=False),
+                "Inactive", 0.0, "fmp:grades-historical.derived", now,
+            ))
+        else:
+            action_type = ("upgrade_event" if up7 > down7 else
+                           "downgrade_event" if down7 > up7 else
+                           "mixed_event")
+            rows.append(_bucket_a_known(
+                ts_code, "L9.media.analyst_action",
+                {
+                    "recent_changes": recent_changes[:10],
+                    "count_7d": count_7d,
+                    "upgrades_7d": up7,
+                    "downgrades_7d": down7,
+                    "action_type": action_type,
+                },
+                "fmp:grades-historical.derived", now, 0.8))
+    return rows
+
+
+def fetch_short_interest_batch(
+    api_key: str | None,
+    us_codes: Iterable[tuple[str, str]],
+    sleep_s: float = 0.21,
+) -> list[tuple]:
+    """Emit L7.trade.margin_short from /short-interest (Premium) with a
+    /key-metrics-ttm.shortRatio fallback on 401/403/empty."""
+
+    if not api_key:
+        return []
+    now = int(time.time())
+    rows: list[tuple] = []
+    for ts_code, sym in us_codes:
+        if sleep_s:
+            time.sleep(sleep_s)
+        # Try /short-interest first (may 401 on Starter).
+        cached = _SHORT_INTEREST_CACHE.get(sym)
+        now_s = int(time.time())
+        if cached and (now_s - cached[0]) < _BUCKET_A_FMP_TTL_S:
+            data = cached[1]
+        else:
+            data = _get_json("/short-interest", {"symbol": sym})
+            _SHORT_INTEREST_CACHE[sym] = (now_s, data if data is not None else [])
+
+        short_ratio = None
+        days_to_cover = None
+        short_pct_float = None
+        as_of = None
+        source = "fmp:short-interest"
+        if isinstance(data, list) and data:
+            r = data[0]
+            short_ratio = _safe(r, "shortInterestRatio")
+            short_pct_float = _safe(r, "shortInterestPercentFloat") \
+                or _safe(r, "shortPercentOfFloat")
+            days_to_cover = _safe(r, "daysToCover")
+            as_of = r.get("date") or r.get("settlementDate")
+
+        # Fallback to /key-metrics-ttm.shortRatio if /short-interest empty
+        if short_ratio is None and short_pct_float is None:
+            km = _fetch_key_metrics_ttm_cached(sym)
+            if km and isinstance(km, list) and km:
+                sr = _safe(km[0], "shortRatio") or _safe(km[0],
+                                                         "shortRatioTTM")
+                if sr is not None:
+                    try:
+                        short_ratio = float(sr)
+                        source = "fmp:key-metrics-ttm.fallback"
+                    except (TypeError, ValueError):
+                        short_ratio = None
+
+        if (short_ratio is None and short_pct_float is None
+                and days_to_cover is None):
+            rows.append(_bucket_a_inactive(
+                ts_code, "L7.trade.margin_short", source, now,
+                "no_short_interest_available"))
+            continue
+        payload = {
+            "short_interest_ratio": (
+                float(short_ratio) if short_ratio is not None else None),
+            "short_pct_float": (
+                float(short_pct_float)
+                if short_pct_float is not None else None),
+            "days_to_cover": (
+                float(days_to_cover) if days_to_cover is not None else None),
+            "as_of": as_of,
+            "unit": "ratio",
+        }
+        rows.append(_bucket_a_known(
+            ts_code, "L7.trade.margin_short", payload, source, now, 0.7))
+    return rows
+
+
+# ── /earnings-calendar + /historical-buyback + /dividends-calendar ────────
+
+
+def _fetch_earnings_calendar_cached(symbol: str) -> list[dict]:
+    rows = _cached_get_list(
+        _EARNINGS_CAL_CACHE, symbol,
+        "/earnings-calendar",
+        {"symbol": symbol, "limit": 20},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def _fetch_buyback_cached(symbol: str) -> list[dict]:
+    # On Starter the "historical buyback" endpoint may 401; cache an empty
+    # list to short-circuit retries within the TTL.
+    rows = _cached_get_list(
+        _BUYBACK_CACHE, symbol,
+        "/historical-buyback",
+        {"symbol": symbol, "limit": 8},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def _fetch_dividends_cached(symbol: str) -> list[dict]:
+    rows = _cached_get_list(
+        _DIVIDENDS_CACHE, symbol,
+        "/dividends",
+        {"symbol": symbol, "limit": 8},
+    )
+    return sorted(rows, key=lambda r: r.get("date") or "", reverse=True)
+
+
+def fetch_earnings_buyback_dividend_batch(
+    api_key: str | None,
+    us_codes: Iterable[tuple[str, str]],
+    sleep_s: float = 0.21,
+) -> list[tuple]:
+    """Emit L5.fcst.guidance_change + L9.company.buyback_dividend +
+    L9.company.earnings_guidance."""
+
+    if not api_key:
+        return []
+
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    now = int(time.time())
+    rows: list[tuple] = []
+    for ts_code, sym in us_codes:
+        if sleep_s:
+            time.sleep(sleep_s)
+
+        # ── L5.fcst.guidance_change — compare last two annual estimates ──
+        est = _cached_get_list(
+            {}, sym,  # not cached separately (cheap, called once per cycle)
+            "/analyst-estimates",
+            {"symbol": sym, "period": "annual"},
+            ttl=_BUCKET_A_FMP_TTL_S,
+        )
+        # est is desc by date by FMP convention; sort defensively.
+        est_sorted = sorted(est, key=lambda r: r.get("date") or "",
+                            reverse=True)
+        forward = [r for r in est_sorted
+                   if (r.get("date") or "") > today_iso]
+        forward.sort(key=lambda r: r.get("date") or "")  # nearest first
+        if len(forward) >= 2:
+            # ``prev`` = nearer forward year (the period closer to "now"),
+            # ``cur``  = next forward year. The delta captures the forward
+            # trajectory of consensus EPS — a positive delta means analysts
+            # see EPS growing y/y → upgraded outlook; negative → downgraded.
+            prev = forward[0]
+            cur = forward[1]
+            cur_eps = _safe(cur, "epsAvg")
+            prev_eps = _safe(prev, "epsAvg")
+            if cur_eps is not None and prev_eps is not None and prev_eps != 0:
+                try:
+                    delta = (float(cur_eps) - float(prev_eps))
+                    delta_pct = (delta / abs(float(prev_eps))) * 100.0
+                except (TypeError, ValueError):
+                    delta_pct = None
+                direction = "unchanged"
+                if delta_pct is not None:
+                    if delta_pct > 1.0:
+                        direction = "upgraded"
+                    elif delta_pct < -1.0:
+                        direction = "downgraded"
+                rows.append(_bucket_a_known(
+                    ts_code, "L5.fcst.guidance_change",
+                    {
+                        "prev_eps_avg": float(prev_eps),
+                        "current_eps_avg": float(cur_eps),
+                        "delta_pct": (
+                            round(delta_pct, 4)
+                            if delta_pct is not None else None),
+                        "change_direction": direction,
+                        "current_period": cur.get("date"),
+                        "prev_period": prev.get("date"),
+                        "source_endpoint": "analyst-estimates.forward_trajectory",
+                    },
+                    "fmp:analyst-estimates.derived", now, 0.75))
+            else:
+                rows.append(_bucket_a_inactive(
+                    ts_code, "L5.fcst.guidance_change",
+                    "fmp:analyst-estimates.derived", now,
+                    "missing_eps_avg_in_estimates"))
+        elif len(forward) == 1:
+            cur = forward[0]
+            rows.append(_bucket_a_known(
+                ts_code, "L5.fcst.guidance_change",
+                {
+                    "prev_eps_avg": None,
+                    "current_eps_avg": _safe(cur, "epsAvg"),
+                    "delta_pct": None,
+                    "change_direction": "new",
+                    "current_period": cur.get("date"),
+                    "prev_period": None,
+                },
+                "fmp:analyst-estimates.derived", now, 0.6))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L5.fcst.guidance_change",
+                "fmp:analyst-estimates.derived", now,
+                "no_forward_estimates"))
+
+        # ── L9.company.buyback_dividend ──
+        buybacks = _fetch_buyback_cached(sym)
+        dividends = _fetch_dividends_cached(sym)
+        # If buyback endpoint locked, fall back to /cash-flow-statement
+        # commonStockRepurchased we already cached above.
+        if not buybacks:
+            cf = _fetch_cf_cached(sym, limit=4)
+            buyback_proxy = []
+            for r in cf:
+                amt = _safe(r, "commonStockRepurchased")
+                if amt is None:
+                    continue
+                try:
+                    buyback_proxy.append({
+                        "date": r.get("date"),
+                        "amount": abs(float(amt)),
+                        "fiscal_period": r.get("date"),
+                        "source": "cash-flow.commonStockRepurchased",
+                    })
+                except (TypeError, ValueError):
+                    continue
+        else:
+            buyback_proxy = [{
+                "date": r.get("date"),
+                "amount": _safe(r, "amount") or _safe(r, "totalCost"),
+                "shares": _safe(r, "shares") or _safe(r, "buybackShares"),
+                "source": "historical-buyback",
+            } for r in buybacks[:4]]
+        div_list = []
+        for r in dividends[:4]:
+            div_list.append({
+                "date": r.get("date") or r.get("declarationDate"),
+                "cash_div_per_share": _safe(r, "dividend") or _safe(r,
+                                                                   "adjDividend"),
+                "pay_date": r.get("paymentDate") or r.get("payDate"),
+                "record_date": r.get("recordDate"),
+            })
+        if not buyback_proxy and not div_list:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L9.company.buyback_dividend",
+                "fmp:buyback+dividends", now,
+                "no_buyback_or_dividend_history"))
+        else:
+            rows.append(_bucket_a_known(
+                ts_code, "L9.company.buyback_dividend",
+                {
+                    "buybacks": buyback_proxy,
+                    "dividends": div_list,
+                    "latest_buyback_date": (
+                        buyback_proxy[0]["date"] if buyback_proxy else None),
+                    "latest_dividend_date": (
+                        div_list[0]["date"] if div_list else None),
+                    "as_of": today_iso,
+                    "unit": "USD",
+                },
+                "fmp:buyback+dividends", now, 0.75))
+
+        # ── L9.company.earnings_guidance — next earnings event ──
+        cal = _fetch_earnings_calendar_cached(sym)
+        upcoming = [r for r in cal
+                    if (r.get("date") or "") > today_iso]
+        upcoming.sort(key=lambda r: r.get("date") or "")
+        past = [r for r in cal
+                if (r.get("date") or "") <= today_iso]
+        past.sort(key=lambda r: r.get("date") or "", reverse=True)
+        if upcoming or past:
+            rec = upcoming[0] if upcoming else past[0]
+            is_upcoming = bool(upcoming)
+            rows.append(_bucket_a_known(
+                ts_code, "L9.company.earnings_guidance",
+                {
+                    "next_earnings_date": rec.get("date"),
+                    "is_upcoming": is_upcoming,
+                    "eps_estimated": _safe(rec, "epsEstimated"),
+                    "eps_actual": _safe(rec, "epsActual"),
+                    "revenue_estimated": _safe(rec, "revenueEstimated"),
+                    "revenue_actual": _safe(rec, "revenueActual"),
+                    "fiscal_period": rec.get("fiscalDateEnding")
+                                     or rec.get("date"),
+                    "unit": "USD",
+                },
+                "fmp:earnings-calendar", now, 0.8))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L9.company.earnings_guidance",
+                "fmp:earnings-calendar", now,
+                "no_earnings_calendar_data"))
+    return rows
+
+
+# ── Price-history derived: state.*, val.*, run_up (6 dp_ids) ──────────────
+
+
+def _fetch_stock_peers_cached(symbol: str) -> list[str]:
+    """Return the list of FMP-suggested peer symbols for ``symbol``. Caches
+    the list with the same 10-min TTL. Falls back to ``[]`` on any error.
+    """
+
+    now_s = int(time.time())
+    cached = _STOCK_PEERS_CACHE.get(symbol)
+    if cached and (now_s - cached[0]) < _BUCKET_A_FMP_TTL_S:
+        return cached[1]
+    data = _get_json("/stock-peers", {"symbol": symbol})
+    peers: list[str] = []
+    if isinstance(data, list):
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            ps = r.get("peersList") or r.get("peers") or []
+            if isinstance(ps, list):
+                for p in ps:
+                    if isinstance(p, str) and p and p != symbol:
+                        peers.append(p)
+            sym = r.get("symbol")
+            if isinstance(sym, str) and sym and sym != symbol:
+                peers.append(sym)
+    elif isinstance(data, dict):
+        ps = data.get("peersList") or data.get("peers") or []
+        if isinstance(ps, list):
+            peers.extend(p for p in ps if isinstance(p, str) and p != symbol)
+    # Dedup keeping order
+    seen = set()
+    unique_peers: list[str] = []
+    for p in peers:
+        if p in seen:
+            continue
+        seen.add(p)
+        unique_peers.append(p)
+    _STOCK_PEERS_CACHE[symbol] = (now_s, unique_peers[:10])
+    return unique_peers[:10]
+
+
+def _percentile_rank(value: float, series: list[float]) -> float | None:
+    """Fraction of ``series`` entries strictly less than ``value``."""
+    if value is None or not series:
+        return None
+    n = len(series)
+    lt = sum(1 for s in series if s < value)
+    return lt / n if n > 0 else None
+
+
+def fetch_price_state_batch(
+    api_key: str | None,
+    us_codes: Iterable[tuple[str, str]],
+    sleep_s: float = 0.21,
+) -> list[tuple]:
+    """Emit the 6 price-history derived dp_ids:
+    L6.state.historical_percentile, L6.state.expansion_compression,
+    L6.state.peer_compare, L10.val.historical_quantile, L10.val.peer,
+    L6.priced.run_up.
+
+    Shares ``_PRICE_HIST_CACHE`` with the preprice/technical fetchers so the
+    per-symbol price pull happens once per cycle. PE/PB history is computed
+    from key-metrics period rows (limited to 5 annual periods). For
+    market-wide quantile we use SPY as a Starter-accessible market proxy
+    (FMP doesn't expose a market-wide PE_ttm endpoint without bulk-EOD).
+    """
+
+    if not api_key:
+        return []
+
+    now = int(time.time())
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+
+    # Pre-pull SPY series once for L10.val.historical_quantile fallback.
+    spy_rows = _fetch_price_history_cached("SPY", lookback_days=260)
+    spy_closes = _close_series_asc(spy_rows)
+
+    rows: list[tuple] = []
+    for ts_code, sym in us_codes:
+        if sleep_s:
+            time.sleep(sleep_s)
+
+        # ── Get current PE/PB from /ratios-ttm cache ──
+        ratios_cached = _cached_get_list(
+            {}, sym, "/ratios-ttm", {"symbol": sym},
+        )
+        cur_pe = cur_pb = None
+        if ratios_cached:
+            r = ratios_cached[0]
+            cur_pe = _safe(r, "priceToEarningsRatioTTM")
+            cur_pb = _safe(r, "priceToBookRatioTTM")
+
+        # ── Build PE/PB history from /key-metrics (5 annual periods) ──
+        # FMP /stable's /key-metrics doesn't always expose peRatio/pbRatio
+        # directly — derive PE from earningsYield (1/PE) and PB from
+        # marketCap / (totalAssets - totalLiabilities) when needed.
+        km = _fetch_key_metrics_cached(sym, limit=5)
+        pe_history: list[float] = []
+        pb_history: list[float] = []
+        for r in km:
+            pe = _safe(r, "peRatio") or _safe(r, "priceToEarningsRatio")
+            pb = _safe(r, "pbRatio") or _safe(r, "priceToBookRatio")
+            if pe is None:
+                ey = _safe(r, "earningsYield")
+                if ey and float(ey) > 0:
+                    try:
+                        pe = 1.0 / float(ey)
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        pe = None
+            if pe is not None:
+                try:
+                    fv = float(pe)
+                    if fv > 0:
+                        pe_history.append(fv)
+                except (TypeError, ValueError):
+                    pass
+            if pb is not None:
+                try:
+                    fv = float(pb)
+                    if fv > 0:
+                        pb_history.append(fv)
+                except (TypeError, ValueError):
+                    pass
+
+        # ── L6.state.historical_percentile + L10.val.historical_quantile ──
+        pe_pct = (_percentile_rank(float(cur_pe), pe_history)
+                  if cur_pe is not None and pe_history else None)
+        pb_pct = (_percentile_rank(float(cur_pb), pb_history)
+                  if cur_pb is not None and pb_history else None)
+        if pe_pct is not None or pb_pct is not None:
+            hist_payload = {
+                "pe_percentile": (
+                    round(pe_pct, 4) if pe_pct is not None else None),
+                "pb_percentile": (
+                    round(pb_pct, 4) if pb_pct is not None else None),
+                "current_pe": (
+                    float(cur_pe) if cur_pe is not None else None),
+                "current_pb": (
+                    float(cur_pb) if cur_pb is not None else None),
+                "history_window_periods": max(len(pe_history),
+                                              len(pb_history)),
+                "as_of": today_iso,
+            }
+            rows.append(_bucket_a_known(
+                ts_code, "L6.state.historical_percentile", hist_payload,
+                "fmp:key-metrics.derived", now, 0.7))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L6.state.historical_percentile",
+                "fmp:key-metrics.derived", now,
+                "insufficient_pe_pb_history"))
+
+        # ── L10.val.historical_quantile — market-wide PE quantile via SPY ──
+        spy_pct = None
+        if spy_closes and len(spy_closes) >= 60:
+            cur_spy = spy_closes[-1]
+            spy_window = spy_closes[-250:] if len(spy_closes) >= 250 else spy_closes
+            spy_pct = _percentile_rank(cur_spy, spy_window)
+        if spy_pct is not None:
+            rows.append(_bucket_a_known(
+                ts_code, "L10.val.historical_quantile",
+                {
+                    "market_proxy": "SPY",
+                    "price_percentile": round(spy_pct, 4),
+                    "current_price": spy_closes[-1] if spy_closes else None,
+                    "history_window_days": (
+                        min(250, len(spy_closes)) if spy_closes else 0),
+                    "as_of": today_iso,
+                    "stock_pe_percentile": (
+                        round(pe_pct, 4) if pe_pct is not None else None),
+                    "method": "spy_price_quantile + stock_pe_percentile",
+                },
+                "fmp:historical-price.derived", now, 0.65))
+        elif pe_pct is not None:
+            # Fall back to stock-level PE percentile only.
+            rows.append(_bucket_a_known(
+                ts_code, "L10.val.historical_quantile",
+                {
+                    "market_proxy": None,
+                    "price_percentile": None,
+                    "stock_pe_percentile": round(pe_pct, 4),
+                    "history_window_days": 0,
+                    "as_of": today_iso,
+                    "method": "stock_pe_only (SPY unavailable)",
+                },
+                "fmp:key-metrics.derived", now, 0.5))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L10.val.historical_quantile",
+                "fmp:historical-price.derived", now,
+                "no_spy_or_pe_history"))
+
+        # ── L6.state.expansion_compression — PE current vs 60d/250d MA ──
+        # FMP doesn't expose daily PE_ttm history per symbol on Starter; we
+        # use price as a proxy (assumes EPS is roughly constant intra-year,
+        # which is good enough as a directional regime classifier).
+        price_rows = _fetch_price_history_cached(sym, lookback_days=260)
+        closes = _close_series_asc(price_rows)
+        if cur_pe is not None and len(closes) >= 60:
+            cur_price = closes[-1]
+            window_60 = closes[-60:]
+            window_250 = closes[-250:] if len(closes) >= 250 else closes
+            ma_60 = sum(window_60) / len(window_60)
+            ma_250 = sum(window_250) / len(window_250)
+            if ma_250 and ma_250 > 0:
+                ratio = cur_price / ma_250
+                if ratio < 0.95:
+                    regime = "compressed"
+                elif ratio > 1.05:
+                    regime = "expanded"
+                else:
+                    regime = "neutral"
+                slope = (cur_price - ma_250) / ma_250
+                rows.append(_bucket_a_known(
+                    ts_code, "L6.state.expansion_compression",
+                    {
+                        "pe_current": float(cur_pe),
+                        "price_current": cur_price,
+                        "price_60d_ma": round(ma_60, 4),
+                        "price_250d_ma": round(ma_250, 4),
+                        "ratio_vs_250d": round(ratio, 4),
+                        "slope": round(slope, 4),
+                        "regime": regime,
+                        "n_days_60d": len(window_60),
+                        "n_days_250d": len(window_250),
+                        "method": "price_proxy_for_pe_ma",
+                    },
+                    "fmp:historical-price.derived", now, 0.65))
+            else:
+                rows.append(_bucket_a_inactive(
+                    ts_code, "L6.state.expansion_compression",
+                    "fmp:historical-price.derived", now,
+                    "ma_250d_zero_or_missing"))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L6.state.expansion_compression",
+                "fmp:historical-price.derived", now,
+                "insufficient_price_history_or_no_pe"))
+
+        # ── L6.state.peer_compare + L10.val.peer ──
+        peers = _fetch_stock_peers_cached(sym)
+        peer_pes: list[float] = []
+        peer_pbs: list[float] = []
+        peer_details: list[dict] = []
+        # Avoid HTTP per-peer if many peers; cap to 5.
+        for p in peers[:5]:
+            pr = _cached_get_list(
+                {}, p, "/ratios-ttm", {"symbol": p},
+            )
+            if not pr:
+                continue
+            pe_p = _safe(pr[0], "priceToEarningsRatioTTM")
+            pb_p = _safe(pr[0], "priceToBookRatioTTM")
+            if pe_p is not None:
+                try:
+                    fv = float(pe_p)
+                    if fv > 0:
+                        peer_pes.append(fv)
+                except (TypeError, ValueError):
+                    pass
+            if pb_p is not None:
+                try:
+                    fv = float(pb_p)
+                    if fv > 0:
+                        peer_pbs.append(fv)
+                except (TypeError, ValueError):
+                    pass
+            peer_details.append({"symbol": p, "pe": pe_p, "pb": pb_p})
+
+        if cur_pe is not None and peer_pes:
+            sorted_pes = sorted(peer_pes)
+            mid = len(sorted_pes) // 2
+            median_pe = (sorted_pes[mid] if len(sorted_pes) % 2 == 1 else
+                         (sorted_pes[mid - 1] + sorted_pes[mid]) / 2.0)
+            median_pb = None
+            if peer_pbs:
+                sorted_pbs = sorted(peer_pbs)
+                mid_b = len(sorted_pbs) // 2
+                median_pb = (sorted_pbs[mid_b] if len(sorted_pbs) % 2 == 1
+                             else (sorted_pbs[mid_b - 1]
+                                   + sorted_pbs[mid_b]) / 2.0)
+            premium_pct = ((float(cur_pe) - median_pe)
+                           / median_pe * 100.0) if median_pe > 0 else None
+            validation = ("convergent"
+                          if premium_pct is not None
+                          and abs(premium_pct) < 15.0
+                          else "divergent")
+            peer_compare = {
+                "stock_pe": float(cur_pe),
+                "peer_pe_median": round(median_pe, 4),
+                "premium_vs_peers_pct": (
+                    round(premium_pct, 4)
+                    if premium_pct is not None else None),
+                "peer_count": len(peer_pes),
+                "peers": [p["symbol"] for p in peer_details],
+            }
+            val_peer = {
+                "stock_pe": float(cur_pe),
+                "stock_pb": float(cur_pb) if cur_pb is not None else None,
+                "peer_pe_median": round(median_pe, 4),
+                "peer_pb_median": (
+                    round(median_pb, 4) if median_pb is not None else None),
+                "premium_vs_peers_pct": (
+                    round(premium_pct, 4)
+                    if premium_pct is not None else None),
+                "validation_signal": validation,
+                "peer_count": len(peer_pes),
+                "peers": [p["symbol"] for p in peer_details],
+                "as_of": today_iso,
+            }
+            rows.append(_bucket_a_known(
+                ts_code, "L6.state.peer_compare", peer_compare,
+                "fmp:stock-peers.derived", now, 0.7))
+            rows.append(_bucket_a_known(
+                ts_code, "L10.val.peer", val_peer,
+                "fmp:stock-peers.derived", now, 0.7))
+        else:
+            reason = ("no_peers" if not peers else
+                      "no_peer_pe_data" if not peer_pes else
+                      "missing_stock_pe")
+            rows.append(_bucket_a_inactive(
+                ts_code, "L6.state.peer_compare",
+                "fmp:stock-peers.derived", now, reason))
+            rows.append(_bucket_a_inactive(
+                ts_code, "L10.val.peer",
+                "fmp:stock-peers.derived", now, reason))
+
+        # ── L6.priced.run_up — 5/20/60d price change relative to SPX ──
+        if len(closes) >= 7:
+            latest = closes[-1]
+            # ``closes`` is ascending; index from the end.
+            out: dict[str, float | None] = {}
+            for window in (5, 20, 60):
+                if len(closes) > window:
+                    ref = closes[-(window + 1)]
+                    if ref and ref != 0:
+                        out[f"d{window}_pct"] = round(
+                            (latest - ref) / ref, 6)
+                    else:
+                        out[f"d{window}_pct"] = None
+                else:
+                    out[f"d{window}_pct"] = None
+            # SPX-relative for 20d window (parallels preprice spx_relative_*).
+            spx_rel_20 = None
+            if len(spy_closes) >= 21:
+                spy_latest = spy_closes[-1]
+                spy_ref = spy_closes[-21]
+                if spy_ref and spy_ref != 0:
+                    spy_d20 = (spy_latest - spy_ref) / spy_ref
+                    if out.get("d20_pct") is not None:
+                        spx_rel_20 = round(
+                            out["d20_pct"] - spy_d20, 6)
+            rows.append(_bucket_a_known(
+                ts_code, "L6.priced.run_up",
+                {
+                    **out,
+                    "spx_relative_20d": spx_rel_20,
+                    "latest_close": latest,
+                    "history_days": len(closes),
+                    "as_of": today_iso,
+                },
+                "fmp:historical-price.derived", now, 0.75))
+        else:
+            rows.append(_bucket_a_inactive(
+                ts_code, "L6.priced.run_up",
+                "fmp:historical-price.derived", now,
+                "insufficient_price_history"))
+    return rows
+
+
+# ── Top-level Bucket-A orchestrator ───────────────────────────────────────
+
+
+def fetch_bucket_a_mirror_batch(
+    constituents: Iterable[dict],
+    tick: int,
+    now: int | None = None,
+) -> list[tuple]:
+    """Emit the 22 Bucket-A mirror dp_ids for every US ts_code.
+
+    Wraps each sub-fetcher in its own try/except so a single endpoint outage
+    (e.g. /short-interest 401 on Starter, /historical-buyback locked) doesn't
+    poison the rest of the batch.
+    """
+
+    api_key = _get_api_key()
+    if not api_key:
+        return []
+
+    us_tickers: list[tuple[str, str]] = []
+    for c in constituents:
+        ts = c.get("ts_code")
+        if ts and is_us(ts):
+            sym = to_fmp_symbol(ts)
+            if sym:
+                us_tickers.append((ts, sym))
+    if not us_tickers:
+        return []
+
+    rows: list[tuple] = []
+
+    try:
+        rows.extend(fetch_segments_batch(api_key, us_tickers))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[fmp] segments batch failed: %s", exc)
+
+    try:
+        rows.extend(fetch_financial_derived_batch(api_key, us_tickers))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[fmp] financial-derived batch failed: %s", exc)
+
+    try:
+        rows.extend(fetch_grades_batch(api_key, us_tickers))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[fmp] grades batch failed: %s", exc)
+
+    try:
+        rows.extend(fetch_short_interest_batch(api_key, us_tickers))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[fmp] short-interest batch failed: %s", exc)
+
+    try:
+        rows.extend(fetch_earnings_buyback_dividend_batch(api_key, us_tickers))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[fmp] earnings/buyback/dividend batch failed: %s", exc)
+
+    try:
+        rows.extend(fetch_price_state_batch(api_key, us_tickers))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[fmp] price-state batch failed: %s", exc)
+
+    return rows
+
+
 def fetch_batch(constituents: Iterable[dict], tick: int) -> list[tuple]:
     """Pull US fundamentals (income / balance sheet / cash flow / key metrics)
     for every ``.US`` ts_code in the universe.
@@ -2188,5 +3893,14 @@ def fetch_batch(constituents: Iterable[dict], tick: int) -> list[tuple]:
         rows.extend(fetch_macro_us_batch(now))
     except Exception as exc:  # noqa: BLE001
         log.warning("[fmp] macro_us batch failed: %s", exc)
+
+    # ── B.6e: Bucket-A mirror — 22 dp_ids cloned from the tushare path ──
+    # See fetch_bucket_a_mirror_batch + Sub-A1..Sub-A5 fetchers above.
+    # Wrapped at the outer level too so any unexpected exception inside any
+    # sub-fetcher doesn't poison the fundamentals pass.
+    try:
+        rows.extend(fetch_bucket_a_mirror_batch(constituents, tick, now))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[fmp] bucket-A mirror batch failed: %s", exc)
 
     return rows
