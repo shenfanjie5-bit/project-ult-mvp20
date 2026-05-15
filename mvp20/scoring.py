@@ -56,14 +56,54 @@ MODE_DISPLAY = {
     MODE_WAIT_FOR_CONFIRMATION: "等待验证",
 }
 
-#: Spec §28 default horizon weight mix.
-#: Short window emphasizes events + capital flow; long window emphasizes
-#: industry space + moat. The default below assumes a balanced mid-cycle
-#: view; callers may override via the ``horizons`` parameter.
+#: Spec §28 default horizon-mix weights — the cross-horizon roll-up used
+#: when ``score_company`` produces a single blended number from the three
+#: per-horizon totals. Each entry weights the *horizon itself* (short /
+#: medium / long); the components inside one horizon are mixed via
+#: :data:`SPEC28_DEFAULT_HORIZON_MIX` below.
 HORIZON_DEFAULT_WEIGHTS = {
     "short": 0.30,
     "medium": 0.45,
     "long": 0.25,
+}
+
+
+#: Spec §28 per-horizon component mix — feeds ``compute_final_score``'s
+#: ``horizons`` parameter. The structure matches the example in
+#: :func:`compute_final_score`'s docstring:
+#:
+#:   * **short** emphasises events + capital flow — ``capital_sentiment``
+#:     dominates because intraday-to-week price action is driven by news +
+#:     money flow, not fundamentals.
+#:   * **medium** rebalances toward fundamentals while keeping expectation-
+#:     gap weight high — 1-3 month moves rotate as the market digests
+#:     earnings revisions.
+#:   * **long** is fundamentals + structural rerating heavy; short-term
+#:     event noise basically vanishes.
+#:
+#: Risk + priced_in are full subtractions at every horizon (the time
+#: dimension does not make them more or less relevant). This is wired
+#: as the default in :func:`score_company` so the BFF / CLI no longer
+#: render 短=中=长 when the caller forgets to pass an explicit mix.
+SPEC28_DEFAULT_HORIZON_MIX: dict[str, dict[str, float]] = {
+    "short":  {
+        "fundamental": 0.20,
+        "expectation_gap": 0.30,
+        "valuation_rerating": 0.10,
+        "capital_sentiment": 0.40,
+    },
+    "medium": {
+        "fundamental": 0.50,
+        "expectation_gap": 0.30,
+        "valuation_rerating": 0.10,
+        "capital_sentiment": 0.10,
+    },
+    "long":   {
+        "fundamental": 0.60,
+        "expectation_gap": 0.05,
+        "valuation_rerating": 0.30,
+        "capital_sentiment": 0.05,
+    },
 }
 
 #: Trading signal thresholds applied to the **mix-weighted final score**.
@@ -422,24 +462,39 @@ def compute_final_score(
         },
         "primary_positive_path": pos,
         "primary_negative_path": neg,
-        "trading_meaning": _describe_trading_meaning(short_total, medium_total, long_total),
+        "trading_meaning": _describe_trading_meaning(
+            short_total, medium_total, long_total, base_score=base,
+        ),
     }
 
 
-def _describe_trading_meaning(short_t: float, medium_t: float, long_t: float) -> str:
+def _describe_trading_meaning(
+    short_t: float,
+    medium_t: float,
+    long_t: float,
+    base_score: float | None = None,
+) -> str:
     """One-line trading-narrative string derived from the three horizons.
 
     Format: ``短:<short>/中:<medium>/长:<long> => <verb>``. The verb is the
     plain-Chinese version of the trading-signal bucket and is intentionally
-    keep short — UI may use this directly in a tooltip.
+    kept short — UI may use this directly in a tooltip.
+
+    The verb is keyed off ``base_score`` (the unweighted sum) when supplied
+    so it stays aligned with ``_trading_signal_from_mix`` (which also runs
+    on the unweighted scale to preserve threshold calibration). When
+    ``base_score`` is None we fall back to the average of the three
+    horizons — kept for back-compat with callers that pre-date the split.
     """
 
-    avg = (short_t + medium_t + long_t) / 3.0
-    if avg >= SIGNAL_BUY_THRESHOLD:
+    pivot = base_score if base_score is not None else (
+        (short_t + medium_t + long_t) / 3.0
+    )
+    if pivot >= SIGNAL_BUY_THRESHOLD:
         verb = "积极介入"
-    elif avg >= SIGNAL_HOLD_THRESHOLD:
+    elif pivot >= SIGNAL_HOLD_THRESHOLD:
         verb = "维持仓位"
-    elif avg >= SIGNAL_WATCH_THRESHOLD:
+    elif pivot >= SIGNAL_WATCH_THRESHOLD:
         verb = "观察等待"
     else:
         verb = "回避"
@@ -1345,6 +1400,15 @@ def score_company(
     path_infos = _collect_path_infos(aggregated_nodes)
     top = _top_paths(path_infos, n=3)
 
+    # Apply spec §28 default per-horizon component mix when the caller
+    # didn't supply one. ``compute_final_score`` itself stays back-compat
+    # (None → unweighted base for all three horizons) so low-level math
+    # callers + the existing test_unweighted_base assertion are unchanged;
+    # the high-level orchestrator is the right place to enforce the
+    # default since this is where "produce a stock view" intent lives.
+    effective_horizons = (
+        horizons if horizons is not None else SPEC28_DEFAULT_HORIZON_MIX
+    )
     final = compute_final_score(
         fundamental_score=fundamental,
         expectation_gap_score=expectation_gap_score,
@@ -1352,7 +1416,7 @@ def score_company(
         capital_sentiment_score=capital_sentiment,
         risk_discount=risk_discount,
         priced_in_discount=priced_in_discount,
-        horizons=horizons,
+        horizons=effective_horizons,
         primary_positive_path=top["positive"],
         primary_negative_path=top["negative"],
     )
@@ -1362,7 +1426,8 @@ def score_company(
             final[key] *= confidence_multiplier
         final["components"]["confidence_multiplier"] = confidence_multiplier
         final["trading_meaning"] = _describe_trading_meaning(
-            final["short_total"], final["medium_total"], final["long_total"]
+            final["short_total"], final["medium_total"], final["long_total"],
+            base_score=final.get("base_score"),
         )
     core_final = dict(final)
     market_adapter = apply_market_adapter(
@@ -1381,8 +1446,16 @@ def score_company(
     )
     mode = classify_mode(final_score=market_final, signals=signals)
 
+    # Trading signal is computed off the **unweighted base** so the
+    # BUY/HOLD/WATCH/AVOID thresholds remain on the same scale they were
+    # calibrated for. The per-horizon totals stay weighted (spec §28) for
+    # the UI time-profile view (短/中/长), but signal is the "overall
+    # bullishness" answer — orthogonal to "when does it show up". Pre-fix
+    # this happened to coincide because horizons defaulted to None and
+    # short=medium=long=base; we now make the contract explicit.
+    base_score = _coerce_float(market_final.get("base_score"), 0.0)
     signal = _trading_signal_from_mix(
-        market_final["short_total"], market_final["medium_total"], market_final["long_total"],
+        base_score, base_score, base_score,
         horizon_weights=horizon_weights,
     )
 
@@ -1411,6 +1484,7 @@ def score_company(
 
 __all__ = [
     "HORIZON_DEFAULT_WEIGHTS",
+    "SPEC28_DEFAULT_HORIZON_MIX",
     "MODE_DE_RATING",
     "MODE_DIGESTION",
     "MODE_DISPLAY",

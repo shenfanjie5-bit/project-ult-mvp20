@@ -16,6 +16,7 @@ from mvp20.scoring import (
     SIGNAL_BUY_THRESHOLD,
     SIGNAL_HOLD_THRESHOLD,
     SIGNAL_WATCH_THRESHOLD,
+    SPEC28_DEFAULT_HORIZON_MIX,
     classify_mode,
     compute_company_score,
     compute_final_score,
@@ -633,6 +634,84 @@ class TestScoreCompany:
 def test_default_horizon_weights_sum_to_one() -> None:
     total = sum(HORIZON_DEFAULT_WEIGHTS.values())
     assert total == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Spec §28 default per-horizon component mix
+# ---------------------------------------------------------------------------
+
+
+def test_spec28_default_horizon_mix_component_weights_sum_to_one() -> None:
+    """Each horizon's 4 component weights must sum to 1.0 (so the mix is
+    a proper convex combination, not an arbitrary scaling)."""
+
+    for horizon, weights in SPEC28_DEFAULT_HORIZON_MIX.items():
+        total = sum(weights.values())
+        assert total == pytest.approx(1.0), (
+            f"horizon={horizon} weights={weights} sum={total}"
+        )
+
+
+def test_spec28_default_horizon_mix_short_emphasises_capital_sentiment() -> None:
+    """Short horizon must weight capital_sentiment > fundamental (intraday
+    moves are flow-driven). Long horizon must invert that ordering."""
+
+    s = SPEC28_DEFAULT_HORIZON_MIX["short"]
+    l = SPEC28_DEFAULT_HORIZON_MIX["long"]
+    assert s["capital_sentiment"] > s["fundamental"]
+    assert l["fundamental"] > l["capital_sentiment"]
+
+
+def test_score_company_horizons_diverge_without_explicit_override() -> None:
+    """Regression for the bug surfaced on 浪潮信息 (000977.SZ) where the
+    UI rendered 短/中/长 all equal because the BFF called ``score_company``
+    without supplying ``horizons``. After wiring SPEC §28 defaults inside
+    ``score_company``, three horizons must differ as long as the input
+    signal is not perfectly symmetric across components."""
+
+    stock_overlay = {"ts_code": "TEST.HORIZON", "industry_id": "TEST"}
+    # Inject only a fundamental signal (industry-driven) so the per-horizon
+    # weight on `fundamental` (short=0.20 vs long=0.60) directly shows up
+    # as a divergent total. No risk / priced-in / capital so the math is
+    # unambiguous.
+    aggregated = {
+        "industry_variables": [],
+        "company_event_score": 0.0,
+        "capital_sentiment_score": 0.0,
+        "risk_discount": 0.0,
+        "valuation_pressure": 0.0,
+        "priced_in_discount": 0.0,
+        "expectation_gap_score": 0.0,
+        "valuation_rerating_score": 0.0,
+        "nodes": {
+            "fund": {
+                "node_id": "fund",
+                "path_score": 0.5,
+                "direction": 1.0,
+                "name": "fundamental",
+            },
+        },
+        # Inject industry_contrib via the company-aggregate shortcut.
+        "company_event_score": 0.0,
+    }
+    # Use the envelope shape so industry_contrib flows through.
+    aggregated["industry_variables"] = [
+        {"score": 0.5, "weight": 1.0, "confidence": 1.0},
+    ]
+
+    result = score_company(
+        stock_overlay=stock_overlay,
+        aggregated_nodes=aggregated,
+    )
+    short_t = result["short_total"]
+    medium_t = result["medium_total"]
+    long_t = result["long_total"]
+    # Fundamental dominates ⇒ long > medium > short (since long has the
+    # heaviest fundamental weight: 0.60 vs 0.50 vs 0.20).
+    assert long_t > medium_t > short_t, (
+        f"expected long > medium > short with fundamental-only signal; "
+        f"got short={short_t} medium={medium_t} long={long_t}"
+    )
 
 
 def test_role_configuration_takes_priority_over_layer_inference() -> None:
