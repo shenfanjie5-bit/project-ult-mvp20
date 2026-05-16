@@ -1457,8 +1457,260 @@ def _fetch_a_share_history(pro, ts_code: str, days: int = 90) -> dict:
     return out
 
 
+def _fetch_a_share_weekly_history(pro, ts_code: str, weeks: int = 120) -> list[dict]:
+    """Pull ``weeks`` of weekly OHLCV bars via ``pro.weekly``.
+
+    Returns ascending (oldest → latest) bar dicts shaped like
+    ``_fetch_a_share_history``'s ``bars`` so the same technicals layer
+    consumes them unchanged. Empty list on any error / missing token.
+
+    Tushare ``pro.weekly`` schema:
+        ts_code / trade_date / open / high / low / close / vol / amount
+    """
+
+    end = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+    # Generous: 120 weeks ≈ 840 days; pad to 870 to absorb non-trading weeks.
+    start = (datetime.now(tz=timezone.utc) - timedelta(days=weeks * 7 + 30)).strftime("%Y%m%d")
+    try:
+        df = pro.weekly(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,open,high,low,close,vol",
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("[derive] weekly history %s failed: %s", ts_code, e)
+        return []
+    if df is None or len(df) == 0:
+        return []
+    df_asc = df.sort_values("trade_date", ascending=True)
+    bars: list[dict] = []
+    for _, row in df_asc.iterrows():
+        try:
+            bars.append({
+                "date": str(row.get("trade_date") or ""),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "vol": float(row["vol"]) if row.get("vol") is not None else 0.0,
+            })
+        except (TypeError, ValueError, KeyError):
+            continue
+    return bars
+
+
+def _fetch_a_share_monthly_history(pro, ts_code: str, months: int = 36) -> list[dict]:
+    """Pull ``months`` of monthly OHLCV bars via ``pro.monthly``.
+
+    Same shape as the weekly fetcher — ascending Bar dicts.
+    """
+
+    end = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+    start = (datetime.now(tz=timezone.utc) - timedelta(days=months * 31 + 30)).strftime("%Y%m%d")
+    try:
+        df = pro.monthly(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,open,high,low,close,vol",
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("[derive] monthly history %s failed: %s", ts_code, e)
+        return []
+    if df is None or len(df) == 0:
+        return []
+    df_asc = df.sort_values("trade_date", ascending=True)
+    bars: list[dict] = []
+    for _, row in df_asc.iterrows():
+        try:
+            bars.append({
+                "date": str(row.get("trade_date") or ""),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "vol": float(row["vol"]) if row.get("vol") is not None else 0.0,
+            })
+        except (TypeError, ValueError, KeyError):
+            continue
+    return bars
+
+
+def _derive_technicals_for_period(
+    bars: list[dict],
+    period_suffix: str,
+    conf_factor: float = 1.0,
+) -> list[tuple[str, dict, str]]:
+    """Compute the 5 weekly/monthly tech sub-dicts on ``bars`` and return
+    emit specs ready to UPSERT.
+
+    ``period_suffix`` ∈ ``("_weekly", "_monthly")``. Produces ``L11.tech.{name}{suffix}``
+    dp_ids for the indicators that carry useful information at lower
+    frequency — **MA / MACD / RSI / KDJ / BOLL**. ATR / OBV / VOL_MA are
+    intentionally skipped because their interpretation depends on the
+    daily-trading frequency they were calibrated for (周线 ATR ≈ daily
+    ATR×√5, but the absolute scalar loses meaning to consumers wired up
+    against the daily product).
+
+    ``conf_factor`` lets callers gently down-weight (e.g. ~0.93 for weekly
+    → ~0.88 effective vs 0.95 daily) to reflect data-update latency at
+    week / month closes.
+
+    Returns a list of ``(dp_id, payload, source)``. Sub-payloads that are
+    wholly-None (e.g. MACD on <35 weekly bars) are skipped. The source
+    string is ``derived:technical_indicators_weekly`` or
+    ``..._monthly`` depending on ``period_suffix``.
+    """
+
+    from mvp20 import technicals
+
+    if not bars:
+        return []
+    tech = technicals.compute_all(bars)
+    source = (
+        "derived:technical_indicators_weekly"
+        if period_suffix == "_weekly"
+        else "derived:technical_indicators_monthly"
+    )
+
+    # Same base confidences as daily (see ``derive_all`` daily emit
+    # specs), multiplied by ``conf_factor`` — weekly ≈ 0.93, monthly ≈
+    # 0.84, giving roughly 0.88 / 0.80 effective on the MA/MACD tier.
+    emit_specs = (
+        ("ma",   0.95),
+        ("macd", 0.90),
+        ("rsi",  0.90),
+        ("kdj",  0.85),
+        ("boll", 0.90),
+    )
+
+    out: list[tuple[str, dict, str]] = []
+    for key, base_conf in emit_specs:
+        sub = tech.get(key) if isinstance(tech, dict) else None
+        if sub is None:
+            continue
+        if isinstance(sub, dict) and all(v is None for v in sub.values()):
+            continue
+        wrapped = dict(sub) if isinstance(sub, dict) else {"scalar": sub}
+        wrapped["as_of"] = tech.get("as_of") if isinstance(tech, dict) else None
+        wrapped["n_bars"] = tech.get("n_bars") if isinstance(tech, dict) else None
+        wrapped["confidence"] = max(0.0, min(1.0, base_conf * conf_factor))
+        dp_id = f"L11.tech.{key}{period_suffix}"
+        out.append((dp_id, wrapped, source))
+    return out
+
+
+def _fmp_rows_to_bars(rows: list[dict]) -> list[dict]:
+    """Convert FMP /historical-price-eod/light rows (desc by date) into
+    ascending OHLCV bars compatible with ``technicals.compute_all``.
+
+    The light endpoint returns ``{symbol, date, price, volume}`` — no real
+    OHLC. For technicals that consume only close (MA / EMA / MACD / RSI /
+    OBV) this is fine; for KDJ / BOLL / ATR which read high/low we fall
+    back to ``open=high=low=close=price`` so those still produce values
+    (slightly degraded but non-crashing). When FMP ships full OHLC fields
+    (``open`` / ``high`` / ``low`` / ``close``) we honour them.
+    """
+
+    asc = sorted(rows, key=lambda r: r.get("date") or "")
+    bars: list[dict] = []
+    for r in asc:
+        close_v = r.get("close")
+        if close_v is None:
+            close_v = r.get("price")
+        try:
+            c = float(close_v)
+        except (TypeError, ValueError):
+            continue
+        try:
+            o = float(r["open"]) if r.get("open") is not None else c
+            h = float(r["high"]) if r.get("high") is not None else c
+            lo = float(r["low"]) if r.get("low") is not None else c
+            v = float(r["volume"]) if r.get("volume") is not None else 0.0
+        except (TypeError, ValueError):
+            o = h = lo = c
+            v = 0.0
+        bars.append({
+            "date": str(r.get("date") or ""),
+            "open": o, "high": h, "low": lo, "close": c, "vol": v,
+        })
+    return bars
+
+
+def _fetch_us_share_history(ts_code: str, days: int = 90) -> dict:
+    """Pull last N days of OHLCV for a US stock via FMP's price-history
+    light endpoint. ``ts_code`` is the canonical ``NVDA.US`` form; we
+    strip the ``.US`` suffix before calling FMP. Returns the same shape
+    as ``_fetch_a_share_history``; PE / PB / turnover_rate stay empty
+    here (FMP source already emits its own snapshot derives for those).
+    """
+
+    out: dict[str, list] = {
+        "close": [], "turnover_rate": [], "pe_ttm": [], "pb": [],
+        "bars": [],
+    }
+    if not ts_code.endswith(".US"):
+        return out
+    symbol = ts_code[:-3]
+    try:
+        from mvp20.sources.fmp_source import _fetch_price_history_cached
+        rows = _fetch_price_history_cached(symbol, lookback_days=max(days, 80))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[derive] US history %s failed: %s", ts_code, e)
+        return out
+    if not rows:
+        return out
+    bars = _fmp_rows_to_bars(rows)
+    out["bars"] = bars
+    out["close"] = [b["close"] for b in reversed(bars)]
+    return out
+
+
+def _fetch_hk_share_history(ts_code: str, days: int = 90) -> dict:
+    """Pull last N days of OHLCV for a HK stock via FMP. ``ts_code`` is
+    the canonical ``00700.HK`` form; FMP expects ``0700.HK`` (leading
+    zero stripped to four digits). Futu has no kline helper in this
+    codebase, so FMP is the only option — if FMP returns nothing we
+    return empty bars and the caller skips technical emits.
+
+    TODO: switch to Futu ``request_history_kline`` once a helper is
+    wired into ``mvp20/sources/futu_source.py``.
+    """
+
+    out: dict[str, list] = {
+        "close": [], "turnover_rate": [], "pe_ttm": [], "pb": [],
+        "bars": [],
+    }
+    if not ts_code.endswith(".HK"):
+        return out
+    base = ts_code[:-3]
+    # HK tickers are stored as 5-digit zero-padded (e.g. ``00700``). FMP
+    # uses 4-digit form (``0700.HK``); strip a leading zero when present.
+    if base.startswith("0") and len(base) == 5:
+        symbol = base[1:] + ".HK"
+    else:
+        symbol = base + ".HK"
+    try:
+        from mvp20.sources.fmp_source import _fetch_price_history_cached
+        rows = _fetch_price_history_cached(symbol, lookback_days=max(days, 80))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[derive] HK history %s failed: %s", ts_code, e)
+        return out
+    if not rows:
+        return out
+    bars = _fmp_rows_to_bars(rows)
+    out["bars"] = bars
+    out["close"] = [b["close"] for b in reversed(bars)]
+    return out
+
+
 def is_a_share(ts_code: str) -> bool:
     return ts_code.endswith((".SH", ".SZ", ".BJ"))
+
+
+def is_us_share(ts_code: str) -> bool:
+    return ts_code.endswith(".US")
+
+
+def is_hk_share(ts_code: str) -> bool:
+    return ts_code.endswith(".HK")
 
 
 # ---------------------------------------------------------------------------
@@ -1481,7 +1733,10 @@ def derive_all(
 
     from .storage import upsert_realtime
 
-    pro = _get_pro_api() if a_share_only else None
+    # Always try Tushare init — returns None if no token. With
+    # ``a_share_only=False`` we still need it for any A-share that lives
+    # in the universe alongside US / HK.
+    pro = _get_pro_api()
     if pro is None and a_share_only:
         log.warning("[derive] no Tushare token — skipping A-share derives")
         return {"companies_processed": 0, "derived_rows": 0}
@@ -1496,6 +1751,13 @@ def derive_all(
 
     if a_share_only:
         all_ts = [t for t in all_ts if is_a_share(t)]
+    else:
+        # Keep only ts_codes we have a fetcher for (A / US / HK). Avoids
+        # wasted iterations on sentinel rows (e.g. INDUSTRY:* / MARKET:*).
+        all_ts = [
+            t for t in all_ts
+            if is_a_share(t) or is_us_share(t) or is_hk_share(t)
+        ]
     if limit_companies:
         all_ts = all_ts[:limit_companies]
 
@@ -1519,8 +1781,18 @@ def derive_all(
             if isinstance(volume_turnover_payload, dict) else None
         )
 
-        # Pull history
-        hist = _fetch_a_share_history(pro, ts_code, days=history_days) if pro else {}
+        # Pull history — dispatch by market suffix so US/HK use FMP while
+        # A-share continues to use Tushare. Each fetcher returns the same
+        # shape (``{"bars": [...], "close": [...], ...}``) so the rest of
+        # the loop is source-agnostic.
+        if is_a_share(ts_code):
+            hist = _fetch_a_share_history(pro, ts_code, days=history_days) if pro else {}
+        elif is_us_share(ts_code):
+            hist = _fetch_us_share_history(ts_code, days=history_days)
+        elif is_hk_share(ts_code):
+            hist = _fetch_hk_share_history(ts_code, days=history_days)
+        else:
+            hist = {}
 
         # Derive Tier 0 only
         run_up = derive_run_up(hist.get("close", []))
@@ -1558,6 +1830,15 @@ def derive_all(
             ("L10.val.historical_quantile", quantile, "derived:pe_pb_history"),
             ("L8.val.overvalued", overvalued, "derived:from_quantile"),
         ]
+        # OHLCV bar history — capped to the most recent 90 bars so the
+        # ``/api/project-ult/technicals?return_series=N`` endpoint can return
+        # K-line + 均线叠加 data without an extra Tushare round-trip.
+        if bars:
+            emit.append((
+                "L11.tech.bars",
+                {"bars": bars[-90:], "as_of": tech.get("as_of"), "n_bars": len(bars)},
+                "derived:technical_indicators",
+            ))
         for dp_id, key, conf in tech_emit_specs:
             sub = tech.get(key) if isinstance(tech, dict) else None
             if sub is None:
@@ -1575,6 +1856,29 @@ def derive_all(
             wrapped["n_bars"] = tech.get("n_bars") if isinstance(tech, dict) else None
             wrapped["confidence"] = conf
             emit.append((dp_id, wrapped, "derived:technical_indicators"))
+
+        # Pattern recognition — translate the raw indicator pack above into
+        # named, structured signals (golden/death cross, MACD divergence,
+        # double top/bottom, RSI/KDJ zones, BOLL breakout, volume-price).
+        # Reuses ``tech`` so MA / EMA / RSI / KDJ are not recomputed. Wrapped
+        # in try/except so a defect in pattern detection cannot break the
+        # core technical-indicator emit pipeline above.
+        try:
+            from mvp20 import patterns as _patterns
+            patterns_result = _patterns.detect_all(bars, indicators=tech) if bars else None
+            if patterns_result and (
+                patterns_result.get("patterns") or patterns_result.get("current_signals")
+            ):
+                patterns_payload = dict(patterns_result)
+                patterns_payload.setdefault("confidence", 0.75)
+                emit.append((
+                    "L11.tech.patterns",
+                    patterns_payload,
+                    "derived:pattern_detection",
+                ))
+        except Exception as _pat_err:  # noqa: BLE001
+            log.warning("[derive] patterns %s failed: %s", ts_code, _pat_err)
+
         for dp_id, payload, src in emit:
             if payload is None:
                 continue
@@ -1590,6 +1894,150 @@ def derive_all(
                      idx + 1, len(all_ts), len(derived_rows))
 
     # Bulk UPSERT
+    n = upsert_realtime(db_path, derived_rows)
+    return {"companies_processed": len(all_ts), "derived_rows": n}
+
+
+# ---------------------------------------------------------------------------
+# Weekly / monthly periodic technical-indicator drivers
+# ---------------------------------------------------------------------------
+#
+# These are siblings of ``derive_all`` but only compute the
+# longer-timeframe ``L11.tech.*_weekly`` / ``L11.tech.*_monthly`` dp_ids.
+# They reuse the same ``technicals`` library — the bars are weekly /
+# monthly OHLCV rather than daily, but the formulas (MA / MACD / RSI /
+# KDJ / BOLL) are identical.
+#
+# Only A-share is supported today because Tushare ``pro.weekly`` /
+# ``pro.monthly`` cover SH / SZ / BJ. HK / US weekly+monthly is a TODO
+# pending an FMP / Futu equivalent (FMP has /historical-chart/4hour and
+# adjustable timeframes, but no native weekly/monthly aggregate that
+# matches Tushare's calendar).
+
+
+def derive_all_weekly(
+    db_path: Path,
+    history_weeks: int = 120,
+    limit_companies: int | None = None,
+    a_share_only: bool = True,
+    conf_factor: float = 0.93,
+) -> dict[str, int]:
+    """Compute ``L11.tech.*_weekly`` for every ts_code in the snapshot.
+
+    Pulls ``history_weeks`` of weekly OHLCV bars (Tushare ``pro.weekly``)
+    per stock and writes 5 dp_ids back per stock with
+    ``source="derived:technical_indicators_weekly"``.
+
+    The default ``conf_factor=0.93`` decays the daily-equivalent base
+    confidences (0.95/0.90/...) to roughly ``0.88`` on MA — a deliberate
+    nudge to reflect that weekly bars only fully refresh on Friday close
+    and may lag during the week.
+
+    Returns counters identical in shape to ``derive_all``::
+
+        {"companies_processed": N, "derived_rows": M}
+    """
+
+    from .storage import upsert_realtime
+
+    pro = _get_pro_api() if a_share_only else None
+    if pro is None and a_share_only:
+        log.warning("[derive] no Tushare token — skipping A-share weekly derives")
+        return {"companies_processed": 0, "derived_rows": 0}
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        all_ts = [r[0] for r in conn.execute(
+            "SELECT DISTINCT ts_code FROM realtime_current ORDER BY ts_code"
+        ).fetchall()]
+    finally:
+        conn.close()
+
+    if a_share_only:
+        all_ts = [t for t in all_ts if is_a_share(t)]
+    if limit_companies:
+        all_ts = all_ts[:limit_companies]
+
+    derived_rows: list[tuple] = []
+    now = int(time.time())
+
+    for idx, ts_code in enumerate(all_ts):
+        bars = _fetch_a_share_weekly_history(pro, ts_code, weeks=history_weeks)
+        specs = _derive_technicals_for_period(
+            bars, period_suffix="_weekly", conf_factor=conf_factor,
+        )
+        for dp_id, payload, src in specs:
+            derived_rows.append((
+                ts_code, dp_id,
+                json.dumps(payload, ensure_ascii=False),
+                "Known", payload.get("confidence", 0.6),
+                src, now,
+            ))
+        if (idx + 1) % 20 == 0:
+            log.info("[derive-weekly] %d/%d processed (%d rows so far)",
+                     idx + 1, len(all_ts), len(derived_rows))
+
+    n = upsert_realtime(db_path, derived_rows)
+    return {"companies_processed": len(all_ts), "derived_rows": n}
+
+
+def derive_all_monthly(
+    db_path: Path,
+    history_months: int = 36,
+    limit_companies: int | None = None,
+    a_share_only: bool = True,
+    conf_factor: float = 0.84,
+) -> dict[str, int]:
+    """Compute ``L11.tech.*_monthly`` for every ts_code in the snapshot.
+
+    Pulls ``history_months`` of monthly OHLCV bars (Tushare
+    ``pro.monthly``) per stock and writes 5 dp_ids back per stock with
+    ``source="derived:technical_indicators_monthly"``.
+
+    The default ``conf_factor=0.84`` decays daily-equivalent base
+    confidences to roughly ``0.80`` on MA — monthly bars refresh once
+    per month and are the most stale of the three timeframes.
+    """
+
+    from .storage import upsert_realtime
+
+    pro = _get_pro_api() if a_share_only else None
+    if pro is None and a_share_only:
+        log.warning("[derive] no Tushare token — skipping A-share monthly derives")
+        return {"companies_processed": 0, "derived_rows": 0}
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        all_ts = [r[0] for r in conn.execute(
+            "SELECT DISTINCT ts_code FROM realtime_current ORDER BY ts_code"
+        ).fetchall()]
+    finally:
+        conn.close()
+
+    if a_share_only:
+        all_ts = [t for t in all_ts if is_a_share(t)]
+    if limit_companies:
+        all_ts = all_ts[:limit_companies]
+
+    derived_rows: list[tuple] = []
+    now = int(time.time())
+
+    for idx, ts_code in enumerate(all_ts):
+        bars = _fetch_a_share_monthly_history(pro, ts_code, months=history_months)
+        specs = _derive_technicals_for_period(
+            bars, period_suffix="_monthly", conf_factor=conf_factor,
+        )
+        for dp_id, payload, src in specs:
+            derived_rows.append((
+                ts_code, dp_id,
+                json.dumps(payload, ensure_ascii=False),
+                "Known", payload.get("confidence", 0.6),
+                src, now,
+            ))
+        if (idx + 1) % 20 == 0:
+            log.info("[derive-monthly] %d/%d processed (%d rows so far)",
+                     idx + 1, len(all_ts), len(derived_rows))
+
     n = upsert_realtime(db_path, derived_rows)
     return {"companies_processed": len(all_ts), "derived_rows": n}
 

@@ -515,12 +515,73 @@ def _latest_date(bars: Sequence[Bar]) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Series helper — bars + per-bar SMA overlays for FrontEnd K-line chart
+# ---------------------------------------------------------------------------
+
+
+def compute_series_with_ma(
+    bars: Sequence[Bar],
+    periods: Sequence[int] = (5, 10, 20, 60),
+) -> list[dict[str, float | str | None]]:
+    """Return a flat list of per-bar dicts with OHLCV + MAs for each requested
+    period, aligned 1:1 with ``bars`` (ascending by date).
+
+    Each entry is shaped::
+
+        {"date": "20260301", "open": 10.1, "high": 10.5, "low": 9.8,
+         "close": 10.3, "vol": 12345,
+         "ma5": null | float, "ma10": null | float,
+         "ma20": null | float, "ma60": null | float}
+
+    ``ma{p}`` keys mirror ``periods`` — extend by passing e.g.
+    ``periods=(5, 10, 20, 60, 120)``. Entries before index ``p - 1`` carry
+    ``ma{p} = None`` because SMA needs a full window of closes. This shape is
+    what the FrontEnd K-line + 均线叠加图 consumes directly.
+    """
+
+    closes = _to_close_list(bars)
+    ma_lookup: dict[int, list[float | None]] = {
+        p: sma_series(closes, p) for p in periods
+    }
+
+    out: list[dict[str, float | str | None]] = []
+    for i, bar in enumerate(bars):
+        if not isinstance(bar, Mapping):
+            continue
+        date_v = bar.get("date") or bar.get("trade_date")
+        row: dict[str, float | str | None] = {
+            "date": str(date_v) if date_v is not None else None,
+            "open": _coerce_float(bar.get("open")),
+            "high": _coerce_float(bar.get("high")),
+            "low": _coerce_float(bar.get("low")),
+            "close": _coerce_float(bar.get("close")),
+            "vol": _coerce_float(bar.get("vol") if bar.get("vol") is not None
+                                  else bar.get("volume")),
+        }
+        for p in periods:
+            series = ma_lookup[p]
+            row[f"ma{p}"] = series[i] if i < len(series) else None
+        out.append(row)
+    return out
+
+
+def _coerce_float(v: object) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 __all__ = [
     "DEFAULT_MA_WINDOWS",
     "Bar",
     "atr",
     "boll",
     "compute_all",
+    "compute_series_with_ma",
     "ema_series",
     "kdj",
     "macd",

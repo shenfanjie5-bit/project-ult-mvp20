@@ -98,7 +98,8 @@ def check_akshare_command() -> None:
 )
 @click.option(
     "--history-days", type=int, default=90, show_default=True,
-    help="Days of history to pull from Tushare for derived calculations.",
+    help="Days of history to pull for derived calculations (Tushare for "
+         "A-share, FMP for US/HK).",
 )
 @click.option(
     "--limit", "limit_companies", type=int, default=None,
@@ -106,13 +107,16 @@ def check_akshare_command() -> None:
 )
 @click.option(
     "--a-share-only/--all-markets", default=True, show_default=True,
-    help="Restrict derives to A-share (Tushare history only for now).",
+    help="With --a-share-only (default) only A-share ts_codes are processed "
+         "via Tushare. --all-markets also iterates US (.US) via FMP and HK "
+         "(.HK) via FMP, emitting the same L11.tech.* technical pack.",
 )
 def derive_command(db_path: Path, history_days: int, limit_companies: int | None,
                    a_share_only: bool) -> None:
-    """Compute L6.priced / L8 / L10 / L11 derived dp_ids using Tushare
-    historical windows + realtime_current snapshots. UPSERTs back with
-    source ``derived:*``."""
+    """Compute L6.priced / L8 / L10 / L11 derived dp_ids using historical
+    price windows + realtime_current snapshots. UPSERTs back with source
+    ``derived:*``. With ``--all-markets`` US and HK universes are also
+    processed (Tushare for A-share, FMP for US/HK)."""
 
     load_dotenv()
     from mvp20.derive import derive_all
@@ -120,6 +124,84 @@ def derive_command(db_path: Path, history_days: int, limit_companies: int | None
     stats = derive_all(db_path, history_days=history_days,
                        limit_companies=limit_companies,
                        a_share_only=a_share_only)
+    for k, v in stats.items():
+        click.echo(f"{k}: {v}")
+
+
+@main.command("derive-weekly")
+@click.option(
+    "--db", "db_path", type=click.Path(path_type=Path),
+    default=Path("runtime/hot.sqlite"), show_default=True,
+)
+@click.option(
+    "--history-weeks", type=int, default=120, show_default=True,
+    help="Weeks of history to pull from Tushare pro.weekly (≥35 needed for MACD).",
+)
+@click.option(
+    "--limit", "limit_companies", type=int, default=None,
+    help="Process at most N companies (smoke test).",
+)
+@click.option(
+    "--a-share-only/--all-markets", default=True, show_default=True,
+    help="Restrict to A-share. HK/US weekly is TODO (Tushare pro.weekly only).",
+)
+def derive_weekly_command(
+    db_path: Path, history_weeks: int, limit_companies: int | None,
+    a_share_only: bool,
+) -> None:
+    """Compute ``L11.tech.*_weekly`` (5 dp_ids) from Tushare pro.weekly OHLCV.
+
+    Emits ma / macd / rsi / kdj / boll on weekly bars with
+    ``source="derived:technical_indicators_weekly"`` and base confidence
+    ≈0.88 (lower than daily ≈0.95 to reflect weekly close lag).
+    """
+
+    load_dotenv()
+    from mvp20.derive import derive_all_weekly
+
+    stats = derive_all_weekly(
+        db_path, history_weeks=history_weeks,
+        limit_companies=limit_companies, a_share_only=a_share_only,
+    )
+    for k, v in stats.items():
+        click.echo(f"{k}: {v}")
+
+
+@main.command("derive-monthly")
+@click.option(
+    "--db", "db_path", type=click.Path(path_type=Path),
+    default=Path("runtime/hot.sqlite"), show_default=True,
+)
+@click.option(
+    "--history-months", type=int, default=36, show_default=True,
+    help="Months of history to pull from Tushare pro.monthly (≥26 needed for MACD).",
+)
+@click.option(
+    "--limit", "limit_companies", type=int, default=None,
+    help="Process at most N companies (smoke test).",
+)
+@click.option(
+    "--a-share-only/--all-markets", default=True, show_default=True,
+    help="Restrict to A-share. HK/US monthly is TODO (Tushare pro.monthly only).",
+)
+def derive_monthly_command(
+    db_path: Path, history_months: int, limit_companies: int | None,
+    a_share_only: bool,
+) -> None:
+    """Compute ``L11.tech.*_monthly`` (5 dp_ids) from Tushare pro.monthly OHLCV.
+
+    Emits ma / macd / rsi / kdj / boll on monthly bars with
+    ``source="derived:technical_indicators_monthly"`` and base confidence
+    ≈0.80 (the most-stale tier, refreshes once per month).
+    """
+
+    load_dotenv()
+    from mvp20.derive import derive_all_monthly
+
+    stats = derive_all_monthly(
+        db_path, history_months=history_months,
+        limit_companies=limit_companies, a_share_only=a_share_only,
+    )
     for k, v in stats.items():
         click.echo(f"{k}: {v}")
 

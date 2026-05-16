@@ -370,6 +370,11 @@ def handle_technicals(cfg: ServerConfig, query: dict) -> HandlerResult:
         Defaults to all 8 (``ma`` / ``macd`` / ``rsi`` / ``kdj`` / ``boll``
         / ``vol_ma`` / ``atr`` / ``obv``). Unknown keys are silently
         ignored.
+      * ``return_series`` (optional int) — when > 0, also returns the most
+        recent N OHLCV bars (capped at 250) with per-bar MA5/MA10/MA20/MA60
+        overlays under ``data.series`` so the FrontEnd can render a K-line
+        + 均线叠加图 in a single round-trip. Reads ``L11.tech.bars`` emitted
+        by the derive layer.
 
     Response shape (``data`` key inside the envelope)::
 
@@ -413,6 +418,23 @@ def handle_technicals(cfg: ServerConfig, query: dict) -> HandlerResult:
             if t:
                 include.add(t)
 
+    # `?return_series=N` — opt-in K-line + 均线序列. Clamp to [0, 250].
+    return_series_raw = (query.get("return_series") or [None])[0]
+    return_series_n: int = 0
+    if return_series_raw is not None:
+        try:
+            return_series_n = int(return_series_raw)
+        except (TypeError, ValueError):
+            return 400, _error_envelope(
+                "BAD_PARAM",
+                "return_series must be an integer",
+                status=400,
+            )
+        if return_series_n < 0:
+            return_series_n = 0
+        if return_series_n > 250:
+            return_series_n = 250
+
     # dp_id ↔ short-name mapping used by the response.
     indicator_dp_ids = {
         "ma":     "L11.tech.ma",
@@ -454,8 +476,31 @@ def handle_technicals(cfg: ServerConfig, query: dict) -> HandlerResult:
         if isinstance(age, int):
             max_age = age if max_age is None else max(max_age, age)
 
+    # Optional series payload — read L11.tech.bars, compute MAs, slice to N.
+    series: list[dict] | None = None
+    if return_series_n > 0:
+        bars_row = snapshot.get("L11.tech.bars")
+        bars_value = bars_row.get("value") if bars_row else None
+        raw_bars: list = []
+        if isinstance(bars_value, dict):
+            candidate = bars_value.get("bars")
+            if isinstance(candidate, list):
+                raw_bars = candidate
+            if latest_as_of is None and isinstance(bars_value.get("as_of"), str):
+                latest_as_of = bars_value["as_of"]
+            if latest_n_bars is None and isinstance(bars_value.get("n_bars"), int):
+                latest_n_bars = bars_value["n_bars"]
+            age = bars_row.get("age_seconds") if bars_row else None
+            if isinstance(age, int):
+                max_age = age if max_age is None else max(max_age, age)
+
+        from mvp20.technicals import compute_series_with_ma
+        full_series = compute_series_with_ma(raw_bars) if raw_bars else []
+        # Tail-slice to the most recent N bars (ascending by date already).
+        series = full_series[-return_series_n:] if full_series else []
+
     stale = max_age is not None and max_age > 86400  # > 1 day
-    return 200, _ok_envelope({
+    payload: dict[str, Any] = {
         "ts_code": ts_code,
         "as_of": latest_as_of,
         "n_bars": latest_n_bars,
@@ -464,7 +509,10 @@ def handle_technicals(cfg: ServerConfig, query: dict) -> HandlerResult:
             "max_age_seconds": max_age,
             "stale": stale,
         },
-    })
+    }
+    if series is not None:
+        payload["series"] = series
+    return 200, _ok_envelope(payload)
 
 
 def handle_market_events(cfg: ServerConfig, query: dict) -> HandlerResult:
