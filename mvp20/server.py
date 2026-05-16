@@ -355,6 +355,118 @@ def handle_history(cfg: ServerConfig, query: dict) -> HandlerResult:
     })
 
 
+def handle_technicals(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """Per-stock technical-indicator pack.
+
+    Reads the 8 ``L11.tech.*`` dp_ids written by the derive layer
+    (``mvp20.derive._fetch_a_share_history`` → ``mvp20.technicals.compute_all``)
+    out of the SQLite hot snapshot and returns them as one structured
+    payload so the frontend can render a K-line + 均线 + MACD/RSI panel
+    in a single network round-trip.
+
+    Query params:
+      * ``ts_code`` (required) — e.g. ``000977.SZ``
+      * ``include`` (optional, repeat-OK) — subset of indicator keys.
+        Defaults to all 8 (``ma`` / ``macd`` / ``rsi`` / ``kdj`` / ``boll``
+        / ``vol_ma`` / ``atr`` / ``obv``). Unknown keys are silently
+        ignored.
+
+    Response shape (``data`` key inside the envelope)::
+
+        {
+          "ts_code": "000977.SZ",
+          "as_of": "20260515",
+          "n_bars": 60,
+          "indicators": {
+            "ma":     {"ma5": ..., "ma10": ..., "ma20": ..., ...},
+            "macd":   {"dif": ..., "dea": ..., "hist": ..., "cross": "bull"},
+            "rsi":    {"rsi6": ..., "rsi12": ..., "rsi24": ...},
+            "kdj":    {"k": ..., "d": ..., "j": ...},
+            "boll":   {"mid": ..., "upper": ..., "lower": ..., ...},
+            "vol_ma": {"vol5": ..., "vol10": ..., "vol_ratio_today": ...},
+            "atr":    {"scalar": ...},
+            "obv":    {"scalar": ...}
+          },
+          "freshness": {
+            "max_age_seconds": 1234,
+            "stale": false
+          }
+        }
+
+    A dp_id missing from SQLite (e.g. derive layer didn't run for that
+    stock yet) shows as ``null`` under ``indicators.<key>``. The
+    frontend should render a "暂无数据" placeholder rather than crash.
+    """
+
+    ts_code = (query.get("ts_code") or [None])[0]
+    if not ts_code:
+        return 400, _error_envelope(
+            "MISSING_PARAM", "ts_code query parameter required", status=400,
+        )
+
+    requested_raw = query.get("include") or []
+    # `?include=ma,macd` → ["ma,macd"] needs flattening; also `?include=ma&include=macd`
+    include: set[str] = set()
+    for entry in requested_raw:
+        for token in (entry or "").split(","):
+            t = token.strip().lower()
+            if t:
+                include.add(t)
+
+    # dp_id ↔ short-name mapping used by the response.
+    indicator_dp_ids = {
+        "ma":     "L11.tech.ma",
+        "macd":   "L11.tech.macd",
+        "rsi":    "L11.tech.rsi",
+        "kdj":    "L11.tech.kdj",
+        "boll":   "L11.tech.boll",
+        "vol_ma": "L11.tech.vol_ma",
+        "atr":    "L11.tech.atr",
+        "obv":    "L11.tech.obv",
+    }
+    if not include:
+        include = set(indicator_dp_ids.keys())
+
+    from mvp20.storage import read_hot_snapshot
+    snapshot = read_hot_snapshot(cfg.hot_db_path, ts_code)
+
+    indicators: dict[str, Any] = {}
+    max_age: int | None = None
+    latest_as_of: str | None = None
+    latest_n_bars: int | None = None
+    for short_name, dp_id in indicator_dp_ids.items():
+        if short_name not in include:
+            continue
+        row = snapshot.get(dp_id)
+        if not row:
+            indicators[short_name] = None
+            continue
+        value = row.get("value")
+        if isinstance(value, dict):
+            indicators[short_name] = value
+            if isinstance(value.get("as_of"), str):
+                latest_as_of = latest_as_of or value["as_of"]
+            if isinstance(value.get("n_bars"), int):
+                latest_n_bars = latest_n_bars or value["n_bars"]
+        else:
+            indicators[short_name] = {"scalar": value}
+        age = row.get("age_seconds")
+        if isinstance(age, int):
+            max_age = age if max_age is None else max(max_age, age)
+
+    stale = max_age is not None and max_age > 86400  # > 1 day
+    return 200, _ok_envelope({
+        "ts_code": ts_code,
+        "as_of": latest_as_of,
+        "n_bars": latest_n_bars,
+        "indicators": indicators,
+        "freshness": {
+            "max_age_seconds": max_age,
+            "stale": stale,
+        },
+    })
+
+
 def handle_market_events(cfg: ServerConfig, query: dict) -> HandlerResult:
     """Cross-stock real-time event stream from SQLite.
 
@@ -957,6 +1069,8 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/project-ult/stock-overlay$"), handle_stock_overlay),
         # Cross-stock real-time event stream (MarketOverview "实时事件流")
         (re.compile(r"^/api/project-ult/market-events$"), handle_market_events),
+        # Per-stock technical-indicator pack (MA / MACD / RSI / KDJ / BOLL / VOL / ATR / OBV)
+        (re.compile(r"^/api/project-ult/technicals$"), handle_technicals),
         # Phase-2 data-layer: Parquet minute history replay
         (re.compile(r"^/api/project-ult/history$"), handle_history),
         # Derived layers — A1 / A2 / A3 (spec §23 / §27 / §29 / §30)

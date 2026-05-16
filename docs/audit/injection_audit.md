@@ -6,9 +6,9 @@
 ## Summary
 
 - Total companies: **328**
-- Average effective dp_ids: **102.0 / 250** = **40.8%**
+- Average effective dp_ids: **102.1 / 250** = **40.8%**
 - Per-layer averages:
-  - overlay Known: **1.0** (LLM/codex 填; per-stock)
+  - overlay Known: **1.1** (LLM/codex 填; per-stock)
   - overlay Optionality: **5.0**
   - realtime injected: **96.0** (Tushare/FMP/Futu/akshare)
   - L0 inherit (Known industry rows): **0.0**
@@ -32,7 +32,7 @@
 
 | Industry | Stocks | overlay K avg | overlay Opt avg | realtime avg | L0 inherit | effective avg | best (ts, eff) | worst (ts, eff) |
 |---|---:|---:|---:|---:|---:|---:|---|---|
-| AI_COMPUTE | 32 | 1.0 | 5.0 | 97.9 | 0.0 | 103.9 | `000977.SZ` (134) | `00728.HK` (55) |
+| AI_COMPUTE | 32 | 2.3 | 5.0 | 98.0 | 0.0 | 105.3 | `000977.SZ` (177) | `00728.HK` (55) |
 | ANTI_INVOLUTION_CYCLICAL | 29 | 1.0 | 5.0 | 95.2 | 0.0 | 101.2 | `002648.SZ` (134) | `00323.HK` (55) |
 | CONSUMER_ELECTRONICS | 23 | 1.0 | 5.0 | 102.7 | 0.0 | 108.7 | `002938.SZ` (135) | `00285.HK` (55) |
 | DOMESTIC_CONSUMPTION | 33 | 1.0 | 5.0 | 93.6 | 0.0 | 99.6 | `300144.SZ` (133) | `00027.HK` (55) |
@@ -54,26 +54,26 @@
 | `fmp:income-statement` | 1033 | 9 | `L5.is.cogs` |
 | `tushare:income.derived` | 680 | 6 | `L4.cost.raw_material` |
 | `tushare:income` | 579 | 5 | `L5.is.eps` |
-| `fmp:ratios-ttm` | 575 | 5 | `L6.mult.mcap_fcf` |
 | `fmp:cash-flow` | 575 | 5 | `L5.cf.buyback_dividend` |
 | `tushare:cashflow` | 563 | 5 | `L5.cf.buyback_dividend` |
 | `tushare:balancesheet` | 547 | 5 | `L5.bs.ar_ap` |
-| `mock:tushare` | 1197 | 4 | `L7.flow.margin_balance` |
-| `mock:akshare` | 848 | 4 | `L7.mood.media_social` |
+| `mock:tushare` | 1312 | 4 | `L7.flow.margin_balance` |
+| `mock:akshare` | 1312 | 4 | `L7.mood.media_social` |
 | `tushare:report_rc` | 464 | 4 | `L5.surprise.sell_side` |
-| `tushare:daily_basic` | 460 | 4 | `L6.mult.pb` |
 | `fmp:balance-sheet` | 460 | 4 | `L5.bs.ar_ap` |
-| `mock:futu` | 772 | 3 | `L6.priced.crowdedness` |
+| `mock:futu` | 984 | 3 | `L6.priced.crowdedness` |
 | `futu:option_chain` | 487 | 3 | `L6.priced.iv` |
-| `futu:snapshot` | 406 | 3 | `L6.mult.pb` |
 | `tushare:stk_holdertrade` | 348 | 3 | `L9.event.holder_trade_signal` |
 | `tushare:fina_mainbz` | 348 | 3 | `L2.segment.gross_margin` |
 | `fmp:revenue-product-segmentation` | 345 | 3 | `L2.segment.gross_margin` |
+| `fmp:ratios-ttm` | 345 | 3 | `L6.mult.mcap_fcf` |
 | `fmp:historical-price.derived` | 345 | 3 | `L10.val.historical_quantile` |
 | `fmp:analyst-estimates.derived` | 345 | 3 | `L5.fcst.guidance_change` |
 | `fmp:grades-historical` | 127 | 3 | `L6.priced.analyst_revision` |
 | `tushare:shibor_lpr` | 3 | 3 | `L0.cost.capital` |
 | `akshare:stock_info_global_cls` | 3 | 3 | `L9.industry.compete_risk` |
+| `mock:tushare/futu/fmp` | 656 | 2 | `L6.mult.pb` |
+| `mock:tushare/futu` | 656 | 2 | `L7.flow.active_inflow` |
 | `mock:mvp20-bff` | 656 | 2 | `L11.short_term` |
 | `tushare:stk_managers` | 232 | 2 | `L8.gov.management_table` |
 | `tushare:margin_detail.history` | 232 | 2 | `L8.cap.short_increase` |
@@ -106,20 +106,18 @@
 | `derive:l11_mid_score` | 328 | 1 | `L11.mid.score` |
 | `derive:l11_long_score` | 328 | 1 | `L11.long.score` |
 | `derive:l10_val_expansion_compression` | 328 | 1 | `L10.val.expansion_compression` |
-| `futu` | 212 | 1 | `L7.market.l2_quote` |
 | `derive:l8_val_overvalued` | 212 | 1 | `L8.val.overvalued` |
-| `mock:tushare/futu` | 182 | 1 | `L7.flow.active_inflow` |
 | `futu:option_chain.cp` | 149 | 1 | `L7.trade.options_cp` |
 | `tushare:stock_company` | 116 | 1 | `L1.company.main_business` |
 | `tushare:stk_managers|alias→L8.gov.management_change` | 116 | 1 | `L8.gov.management_change` |
 | `tushare:stk_holdertrade|alias→L8.gov.insider_sell` | 116 | 1 | `L8.gov.insider_sell` |
-| `tushare:moneyflow` | 116 | 1 | `L7.flow.active_inflow` |
 | `tushare:margin_detail` | 116 | 1 | `L7.trade.margin_short` |
 | `tushare:forecast.derived` | 116 | 1 | `L8.fin.eps_downward` |
 | `tushare:express+forecast.derived` | 116 | 1 | `L8.fin.revenue_profit_miss` |
 | `tushare:express+forecast` | 116 | 1 | `L5.surprise.beat_miss` |
 | `tushare:dividend` | 116 | 1 | `L9.company.buyback_dividend` |
 | `tushare:daily_basic.history_long` | 116 | 1 | `L6.state.expansion_compression` |
+| `tushare:daily_basic` | 116 | 1 | `L6.mult.ps` |
 | `tushare:daily.history` | 116 | 1 | `L8.cap.liquidity_short` |
 | `tushare:cashflow+income.derived` | 116 | 1 | `L4.cost.labor` |
 | `tushare:cashflow+income+balancesheet.derived` | 116 | 1 | `L8.fin.cash_ar` |
@@ -127,12 +125,8 @@
 | `derived:price_history` | 116 | 1 | `L6.priced.run_up` |
 | `derived:pe_pb_history` | 116 | 1 | `L10.val.historical_quantile` |
 | `derived:from_quantile` | 116 | 1 | `L8.val.overvalued` |
-| `akshare:xq_hot` | 116 | 1 | `L9.media.social_buzz` |
-| `akshare:stock_hot_rank_em+keyword` | 116 | 1 | `L7.mood.media_social` |
-| `akshare:stock_hot_keyword_em` | 116 | 1 | `L7.mood.theme` |
 | `akshare:stock_fund_flow_individual.5d` | 116 | 1 | `L8.cap.outflow_cut` |
 | `akshare:stock_dzjy_mrmx` | 116 | 1 | `L9.capital.etf_block` |
-| `akshare:em_news` | 116 | 1 | `L9.event.intraday_news` |
 | `fmp:short-interest` | 115 | 1 | `L7.trade.margin_short` |
 | `fmp:sec-filings` | 115 | 1 | `L9.event.recent_filings` |
 | `fmp:news.derived` | 115 | 1 | `L6.priced.news_age` |
@@ -146,14 +140,12 @@
 | `fmp:cash-flow.derived` | 115 | 1 | `L8.fin.cash_ar` |
 | `fmp:buyback+dividends` | 115 | 1 | `L9.company.buyback_dividend` |
 | `fmp:beneficial-ownership` | 115 | 1 | `L7.holders.institutional` |
-| `akshare:stock_individual_notice_report` | 115 | 1 | `L9.event.intraday_announcement` |
 | `fmp:grades-historical.derived` | 109 | 1 | `L9.media.analyst_action` |
 | `fmp:analyst-stock-recommendations` | 109 | 1 | `L7.mood.analyst_rating` |
 | `tushare:daily_basic+cashflow` | 108 | 1 | `L6.mult.mcap_fcf` |
 | `derive:l6_priced_run_up` | 97 | 1 | `L6.priced.run_up` |
 | `tushare:irm_qa_sh` | 62 | 1 | `L9.disclosure.qa_recent` |
 | `tushare:irm_qa_sz` | 54 | 1 | `L9.disclosure.qa_recent` |
-| `futu:capital_flow` | 30 | 1 | `L7.flow.active_inflow` |
 | `tushare:block_trade` | 15 | 1 | `L7.flow.block_trade` |
 | `tushare:top10_holders` | 12 | 1 | `L0.sentiment.institutional` |
 | `tushare:daily_basic.industry_pe` | 12 | 1 | `L8.industry.valuation_compression` |
@@ -163,7 +155,6 @@
 | `tushare:moneyflow_ind_ths` | 8 | 1 | `L10.industry.fund_flow` |
 | `akshare:futures_main_sina` | 7 | 1 | `L0.cost.raw_material` |
 | `tushare:top_list` | 4 | 1 | `L9.capital.inst_buy_sell` |
-| `mock:tushare/futu/fmp` | 4 | 1 | `L6.mult.pe` |
 | `tushare:top_list|alias→L7.flow.institutional` | 2 | 1 | `L7.flow.institutional` |
 | `tushare:moneyflow_hsgt` | 1 | 1 | `L7.flow.passive_northbound` |
 | `tushare:fund_share` | 1 | 1 | `L7.flow.etf_inflow` |
@@ -177,21 +168,30 @@
 | `fmp:historical-price-eod` | 1 | 1 | `L7.env.fx` |
 | `fmp:historical-index` | 1 | 1 | `L7.env.market_trend` |
 | `fmp:economic-calendar` | 1 | 1 | `L9.macro.cpi_employment` |
+| `annual_report:cninfo:2025` | 1 | 1 | `L9.disclosure.annual_report` |
 | `akshare:futures_main_sina+macro_shipping_bdi` | 1 | 1 | `L0.cost.energy_logistics` |
 
-## Layer 1: overlay schema dp_ids (59 unique across all companies)
+## Layer 1: overlay schema dp_ids (112 unique across all companies)
 
 LLM-derived slots — codex fills these; data sources cannot. Each company has ~33 of these in its primary overlay.
 
 - `L0.compete.new_entrant`
 - `L0.compete.price_war`
+- `L0.compete.share_concentration`
 - `L0.cost.cac`
+- `L0.cost.energy_logistics`
+- `L0.cost.labor`
+- `L0.cost.raw_material`
 - `L0.cost.rent`
 - `L0.demand.frequency`
 - `L0.demand.penetration`
 - `L0.demand.replacement`
 - `L0.demand.terminal`
 - `L0.demand.user_count`
+- `L0.policy.access_license`
+- `L0.policy.regulation`
+- `L0.policy.subsidy`
+- `L0.policy.tax_trade`
 - `L0.price.contract_spot`
 - `L0.price.discount`
 - `L0.price.pricing_power`
@@ -201,13 +201,21 @@ LLM-derived slots — codex fills these; data sources cannot. Each company has ~
 - `L0.supply.chain_eff`
 - `L0.supply.channel_service`
 - `L0.supply.inventory`
+- `L0.tech.ai_automation`
+- `L0.tech.breakthrough`
+- `L0.tech.substitute_tech`
+- `L1.moat.tags`
+- `L1.model.tag`
 - `L1.position.brand`
 - `L1.position.channel_edge`
 - `L1.position.cost_edge`
+- `L1.position.growth_rank`
 - `L1.position.market_share`
 - `L1.position.pricing_power`
 - `L1.position.stickiness`
 - `L1.position.tech_barrier`
+- `L1.role.tag`
+- `L1.stock_attr.tags`
 - `L2.newbiz.commercialization`
 - `L2.newbiz.revenue_contrib`
 - `L2.newbiz.tam`
@@ -217,14 +225,24 @@ LLM-derived slots — codex fills these; data sources cannot. Each company has ~
 - `L2.segment.cash_contrib`
 - `L2.segment.compete_landscape`
 - `L2.segment.industry_exposure`
+- `L2.segment.opex_ratio`
+- `L2.segment.profit_share`
+- `L3.channel.cost`
+- `L3.channel.efficiency`
 - `L3.channel.mix`
 - `L3.channel.overseas`
+- `L3.customer.concentration`
 - `L3.customer.segment_mix`
 - `L3.customer.solvency`
 - `L3.delivery.capacity_supply`
 - `L3.delivery.csat`
+- `L3.delivery.fulfillment_cost`
 - `L3.delivery.lead_time`
 - `L3.product.lifecycle`
+- `L3.product.margin_mix`
+- `L3.product.portfolio`
+- `L3.region.domestic_overseas`
+- `L3.region.fx_geo`
 - `L3.region.key_risk`
 - `L3.region.tier_mix`
 - `L4.cost.cac_production`
@@ -238,12 +256,39 @@ LLM-derived slots — codex fills these; data sources cannot. Each company has ~
 - `L4.price.pricing_power`
 - `L4.price.subscription`
 - `L4.share.customer_channel`
+- `L4.share.market`
+- `L4.share.substitution`
 - `L4.volume.foot_traffic`
 - `L4.volume.frequency`
+- `L4.volume.orders`
+- `L4.volume.sales`
+- `L4.volume.shipments`
+- `L4.volume.users`
+- `L5.fcst.beat_probability`
 - `L5.surprise.buy_whisper`
+- `L8.gov.fraud_control`
+- `L8.gov.litigation`
+- `L8.industry.demand_supply`
+- `L8.industry.price_war`
+- `L8.industry.substitute`
+- `L8.op.customer_channel`
+- `L8.op.order_miss`
+- `L8.op.product_fail`
+- `L8.reg.license_risk`
+- `L8.reg.subsidy_off`
+- `L8.reg.tax_trade`
+- `L8.reg.tighten`
+- `L8.shock.black_swan`
+- `L8.shock.crisis`
+- `L8.shock.supply_break`
+- `L9.company.ma`
+- `L9.company.product_order`
+- `L9.industry.data_price`
+- `L9.macro.geo`
+- `L9.media.short_report`
 - `company`
 
-## Layer 2: realtime dp_ids (146 unique across all companies)
+## Layer 2: realtime dp_ids (147 unique across all companies)
 
 Data points actually written by collector (`realtime_current`). Exposed via the `realtime` field of `/api/project-ult/stock-overlay`.
 
@@ -381,6 +426,7 @@ Data points actually written by collector (`realtime_current`). Exposed via the 
 - `L9.company.buyback_dividend`
 - `L9.company.earnings_guidance`
 - `L9.company.mgmt_litigation`
+- `L9.disclosure.annual_report`
 - `L9.disclosure.qa_recent`
 - `L9.event.holder_trade_signal`
 - `L9.event.insider_trades`
@@ -413,7 +459,7 @@ Data points actually written by collector (`realtime_current`). Exposed via the 
 | `000725.SZ` | 京东方A | A | CONSUMER_ELECTRONICS | 1 | 5 | 127 | 0 | 133 | 53.2% |
 | `000786.SZ` | 北新建材 | A | ANTI_INVOLUTION_CYCLICAL | 1 | 5 | 127 | 0 | 133 | 53.2% |
 | `000932.SZ` | 华菱钢铁 | A | ANTI_INVOLUTION_CYCLICAL | 1 | 5 | 127 | 0 | 133 | 53.2% |
-| `000977.SZ` | 浪潮信息 | A | AI_COMPUTE | 1 | 5 | 128 | 0 | 134 | 53.6% |
+| `000977.SZ` | 浪潮信息 | A | AI_COMPUTE | 43 | 5 | 129 | 0 | 177 | 70.8% |
 | `00175.HK` | 吉利汽车 | HK | EXPORT_MFG | 1 | 5 | 49 | 0 | 55 | 22.0% |
 | `002008.SZ` | 大族激光 | A | ROBOTICS | 1 | 5 | 129 | 0 | 135 | 54.0% |
 | `002050.SZ` | 三花智控 | A | ROBOTICS | 1 | 5 | 127 | 0 | 133 | 53.2% |

@@ -1397,18 +1397,53 @@ def _get_pro_api():
 
 
 def _fetch_a_share_history(pro, ts_code: str, days: int = 90) -> dict:
-    """Pull last N days of close + turnover_rate + PE + PB from Tushare."""
+    """Pull last N days of OHLCV + turnover_rate + PE + PB from Tushare.
+
+    Returns a dict with:
+
+    * ``close``         — desc list of close prices (latest first; used by
+      legacy tier-0 derives)
+    * ``turnover_rate`` — desc list (used for crowdedness)
+    * ``pe_ttm`` / ``pb`` — desc lists (used for historical_quantile)
+    * ``bars``          — **asc** list of full OHLCV Bar dicts ready to
+      feed ``technicals.compute_all`` (oldest → latest)
+
+    Splits the call into ``pro.daily`` (OHLCV) and ``pro.daily_basic``
+    (turnover / valuation) — two calls but cheap with the existing 90-day
+    cap and ``_BUCKET_A_SLEEP_S`` rate-limit.
+    """
 
     end = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
     start = (datetime.now(tz=timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
-    out: dict[str, list] = {"close": [], "turnover_rate": [], "pe_ttm": [], "pb": []}
+    out: dict[str, list] = {
+        "close": [], "turnover_rate": [], "pe_ttm": [], "pb": [],
+        "bars": [],
+    }
     try:
-        # pro.daily for close prices
-        df_p = pro.daily(ts_code=ts_code, start_date=start, end_date=end,
-                          fields="ts_code,trade_date,close")
+        # pro.daily for full OHLCV — we now use high/low/vol too.
+        df_p = pro.daily(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,open,high,low,close,vol",
+        )
         if df_p is not None and len(df_p) > 0:
-            df_p = df_p.sort_values("trade_date", ascending=False)
-            out["close"] = [float(x) for x in df_p["close"].dropna().tolist()]
+            df_desc = df_p.sort_values("trade_date", ascending=False)
+            out["close"] = [float(x) for x in df_desc["close"].dropna().tolist()]
+            # technicals.compute_all expects ascending bars (oldest → latest).
+            df_asc = df_p.sort_values("trade_date", ascending=True)
+            bars: list[dict] = []
+            for _, row in df_asc.iterrows():
+                try:
+                    bars.append({
+                        "date": str(row.get("trade_date") or ""),
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "vol": float(row["vol"]) if row.get("vol") is not None else 0.0,
+                    })
+                except (TypeError, ValueError, KeyError):
+                    continue
+            out["bars"] = bars
         # pro.daily_basic for PE/PB/turnover_rate
         df_b = pro.daily_basic(ts_code=ts_code, start_date=start, end_date=end,
                                 fields="ts_code,trade_date,turnover_rate,pe_ttm,pb")
@@ -1496,12 +1531,50 @@ def derive_all(
         )
         overvalued = derive_overvalued(quantile)
 
-        emit = [
+        # Technical-indicator pack — MA / EMA / MACD / RSI / KDJ / BOLL /
+        # VOL_MA / ATR / OBV. Emits seven independent L11.tech.* dp_ids so
+        # downstream callers (BFF / FrontEnd) can subscribe to any subset
+        # without pulling the whole pack. Each sub-payload is None when
+        # input is too short for that indicator (see ``compute_all``).
+        from mvp20 import technicals
+        bars = hist.get("bars", [])
+        tech = technicals.compute_all(bars) if bars else {}
+
+        tech_emit_specs = (
+            # (output_dp_id, payload-key, confidence)
+            ("L11.tech.ma",     "ma",     0.95),
+            ("L11.tech.macd",   "macd",   0.90),
+            ("L11.tech.rsi",    "rsi",    0.90),
+            ("L11.tech.kdj",    "kdj",    0.85),
+            ("L11.tech.boll",   "boll",   0.90),
+            ("L11.tech.vol_ma", "vol_ma", 0.90),
+            ("L11.tech.atr",    "atr14",  0.85),
+            ("L11.tech.obv",    "obv",    0.80),
+        )
+
+        emit: list[tuple[str, Any, str]] = [
             ("L6.priced.run_up", run_up, "derived:price_history"),
             ("L6.priced.crowdedness", crowd, "derived:turnover_history"),
             ("L10.val.historical_quantile", quantile, "derived:pe_pb_history"),
             ("L8.val.overvalued", overvalued, "derived:from_quantile"),
         ]
+        for dp_id, key, conf in tech_emit_specs:
+            sub = tech.get(key) if isinstance(tech, dict) else None
+            if sub is None:
+                continue
+            if isinstance(sub, dict) and all(v is None for v in sub.values()):
+                # Whole sub-dict empty (e.g. <35 bars for MACD) — skip emit.
+                continue
+            wrapped: dict[str, Any]
+            if isinstance(sub, dict):
+                wrapped = dict(sub)
+            else:
+                # scalar (atr / obv) → wrap so the value_json is uniform.
+                wrapped = {"scalar": sub}
+            wrapped["as_of"] = tech.get("as_of") if isinstance(tech, dict) else None
+            wrapped["n_bars"] = tech.get("n_bars") if isinstance(tech, dict) else None
+            wrapped["confidence"] = conf
+            emit.append((dp_id, wrapped, "derived:technical_indicators"))
         for dp_id, payload, src in emit:
             if payload is None:
                 continue
