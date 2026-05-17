@@ -232,10 +232,11 @@ def test_derive_all_monthly_emits_5_periodic_technicals(
 def test_derive_all_monthly_too_few_bars_skips_macd(
     hot_db: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With <26 monthly bars MACD can't compute. The helper should silently
-    skip MACD emit rather than upsert all-None garbage."""
+    """With <35 monthly bars MACD can't compute (needs slow=26 + signal=9
+    Wilder smoothing buffer). The helper should silently skip MACD emit
+    rather than upsert all-None garbage."""
 
-    bars = _synthetic_bars(20, day_step=28)  # 20 < 26 → no MACD
+    bars = _synthetic_bars(20, day_step=28)  # 20 < 35 (slow=26 + signal=9) → no MACD
     monkeypatch.setattr(derive, "_get_pro_api", lambda: object())
     monkeypatch.setattr(
         derive, "_fetch_a_share_monthly_history",

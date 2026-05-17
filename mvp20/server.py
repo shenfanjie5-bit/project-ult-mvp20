@@ -98,6 +98,58 @@ def _error_envelope(code: str, message: str, *, status: int = 500,
     }
 
 
+# ---------------------------------------------------------------------------
+# Input validators — security hardening (review #2 P1-A / P1-B)
+# ---------------------------------------------------------------------------
+#
+# Two attack vectors closed here:
+#
+# 1. ``industry_id`` was concatenated into ``industry_overlays_dir /
+#    f"{industry_id}.yaml"`` with no sanitization, allowing path-traversal
+#    (``../stock_overlays/AI_COMPUTE/X.yaml``). A double-coincidence with
+#    the stock-overlay lookup currently prevents successful arbitrary-file
+#    reads, but the gap is one file rename away from being exploitable.
+#
+# 2. ``ts_code`` was accepted as any string and echoed verbatim in the JSON
+#    response. SQLite queries are parameterized so injection is blocked,
+#    but downstream consumers that ``innerHTML``-render the field would be
+#    XSS-vulnerable, and a 10K-char ``ts_code`` is bounced back unbounded
+#    (DoS amplification).
+
+#: Allowlist regex for ts_code — matches the ``constituents[].ts_code`` shape
+#: used across config/mvp20.universe.yaml: A股 (.SH/.SZ/.BJ 6-digit), HK
+#: (.HK 4-5 digit), US (.US 1-5 alpha). Length capped at 16 chars total.
+_TS_CODE_RE = re.compile(r"^[A-Z0-9]{1,10}\.(SH|SZ|BJ|HK|US)$")
+
+#: Allowlist regex for industry_id — uppercase + underscores only, length
+#: capped, no path separators / dots. Matches AI_COMPUTE / STORAGE_GRID etc.
+_INDUSTRY_ID_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,31}$")
+
+
+def _validate_ts_code(value: str | None) -> str | None:
+    """Return canonical ``ts_code`` or None if input fails the allowlist.
+    Use the return value as a pre-flight before any DB / file access."""
+
+    if not value:
+        return None
+    if len(value) > 16:
+        return None
+    return value if _TS_CODE_RE.match(value) else None
+
+
+def _validate_industry_id(value: str | None) -> str | None:
+    """Return canonical ``industry_id`` or None. Rejects anything with
+    path separators (``/`` ``..`` ``.``) or non-uppercase chars to prevent
+    arbitrary-file reads via the ``cfg.industry_overlays_dir /
+    f"{industry_id}.yaml"`` path-build pattern."""
+
+    if not value:
+        return None
+    if len(value) > 32:
+        return None
+    return value if _INDUSTRY_ID_RE.match(value) else None
+
+
 def _upstream_unavailable(module: str, path: str) -> dict:
     return _error_envelope(
         code="UPSTREAM_NOT_RUNNING",
@@ -710,15 +762,18 @@ def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
     # 2. Fallback path — YAML authoring files.
     static_path = _find_stock_overlay_path(cfg, ts_code, requested_industry_id)
     if static_path is None:
+        # Use logical "config/..." path in the error message — don't leak
+        # the server's absolute filesystem path (review #2 P1-A).
         looked_at = (
-            cfg.stock_overlays_dir / requested_industry_id / f"{ts_code}.yaml"
-            if requested_industry_id else cfg.stock_overlays_dir / f"*/{ts_code}.yaml"
+            f"config/stock_overlays/{requested_industry_id}/{ts_code}.yaml"
+            if requested_industry_id
+            else f"config/stock_overlays/*/{ts_code}.yaml"
         )
         return 404, _error_envelope(
             "OVERLAY_NOT_FOUND",
-            f"no stock_overlay for {ts_code} under {cfg.stock_overlays_dir}",
+            f"no stock_overlay for {ts_code}",
             status=404,
-            details={"ts_code": ts_code, "industry_id": requested_industry_id, "looked_at": str(looked_at)},
+            details={"ts_code": ts_code, "industry_id": requested_industry_id, "looked_at": looked_at},
         )
     try:
         static = yaml.safe_load(static_path.read_text(encoding="utf-8")) or {}
@@ -769,6 +824,15 @@ def _find_stock_overlay_path(
     ts_code: str,
     industry_id: str | None,
 ) -> Path | None:
+    # Path-traversal hardening: reject ts_code / industry_id values that
+    # don't match the allowlist regex. Without this, callers can ask for
+    # ``?ts_code=../../../etc/passwd`` and either trigger a yaml.safe_load
+    # on an unintended file or leak its absolute path in the 404 details.
+    if not _validate_ts_code(ts_code):
+        return None
+    if industry_id is not None and not _validate_industry_id(industry_id):
+        return None
+
     if industry_id:
         path = cfg.stock_overlays_dir / industry_id / f"{ts_code}.yaml"
         return path if path.exists() else None
@@ -803,14 +867,19 @@ def _load_stock_overlay_payload(
 
     path = _find_stock_overlay_path(cfg, ts_code, requested_industry_id)
     if path is None:
+        # Error details intentionally omit the absolute filesystem path —
+        # leaking ``/Users/<user>/...`` in 404 responses gives attackers
+        # free recon (review #2 P1-A). Use a logical "config/..." prefix
+        # so operators still see what was looked up without leaking the
+        # server's filesystem layout.
         looked_at = (
-            str(cfg.stock_overlays_dir / requested_industry_id / f"{ts_code}.yaml")
+            f"config/stock_overlays/{requested_industry_id}/{ts_code}.yaml"
             if requested_industry_id
-            else str(cfg.stock_overlays_dir / f"*/{ts_code}.yaml")
+            else f"config/stock_overlays/*/{ts_code}.yaml"
         )
         return None, 404, _error_envelope(
             "OVERLAY_NOT_FOUND",
-            f"no stock_overlay for {ts_code} under {cfg.stock_overlays_dir}",
+            f"no stock_overlay for {ts_code}",
             status=404,
             details={
                 "ts_code": ts_code,
@@ -840,6 +909,12 @@ def _load_industry_overlay_payload(
     industry_id: str | None,
 ) -> dict | None:
     if not industry_id:
+        return None
+    # Path-traversal hardening — reject anything that isn't a clean
+    # ALL_CAPS_UNDERSCORES industry id. Prevents
+    # ``?industry_id=../stock_overlays/X`` from resolving outside
+    # ``industry_overlays_dir``.
+    if not _validate_industry_id(industry_id):
         return None
     path = cfg.industry_overlays_dir / f"{industry_id}.yaml"
     if not path.exists():
@@ -1049,6 +1124,9 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
 
 def _read_industry_overlay(cfg: ServerConfig, industry_id: str | None) -> dict:
     if not industry_id:
+        return {}
+    # Path-traversal hardening (see _validate_industry_id docstring).
+    if not _validate_industry_id(industry_id):
         return {}
     ind_path = cfg.industry_overlays_dir / f"{industry_id}.yaml"
     if not ind_path.exists():

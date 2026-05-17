@@ -58,44 +58,54 @@ _MIN_BARS_FOR_PATTERNS = 30
 
 
 # ---------------------------------------------------------------------------
-# Bar helpers — mirrored from technicals.py so we stay decoupled.
+# Bar helpers — reuse technicals.py's close/volume extractors so the two
+# modules stay byte-for-byte aligned (previously duplicated, drifted-silently
+# risk noted in P2 review).
+#
+# IMPORTANT: ``_dates`` must use the SAME filter as ``_closes`` / ``_volumes``
+# so the three index together 1:1. Otherwise, when ``bars`` contains a
+# non-Mapping entry (e.g. legacy fixture row, malformed SQLite payload), the
+# three lists drift in length and pattern detectors emit signal_date pointing
+# at the wrong bar. The shared ``_aligned_dates_closes_volumes`` helper
+# below guarantees alignment by walking the input once.
 # ---------------------------------------------------------------------------
 
+from mvp20.technicals import _to_close_list as _closes  # re-export (DRY)
+from mvp20.technicals import _to_volume_list as _volumes
 
-def _closes(bars: Sequence[Bar]) -> list[float]:
-    out: list[float] = []
+
+def _aligned_bars(bars: Sequence[Bar]) -> list[Mapping]:
+    """Filter ``bars`` to entries that are ``Mapping`` AND have a numeric
+    close. The returned list is the canonical reference frame against which
+    every pattern detector indexes — date[i], close[i], volume[i] all refer
+    to the same bar."""
+
+    out: list[Mapping] = []
     for b in bars:
         if not isinstance(b, Mapping):
             continue
         v = b.get("close")
         if v is None:
-            continue
-        try:
-            out.append(float(v))
-        except (TypeError, ValueError):
-            continue
-    return out
-
-
-def _volumes(bars: Sequence[Bar]) -> list[float]:
-    out: list[float] = []
-    for b in bars:
-        if not isinstance(b, Mapping):
-            continue
-        v = b.get("vol")
-        if v is None:
-            v = b.get("volume")
+            v = b.get("price")
         if v is None:
             continue
         try:
-            out.append(float(v))
+            float(v)
         except (TypeError, ValueError):
             continue
+        out.append(b)
     return out
 
 
 def _dates(bars: Sequence[Bar]) -> list[str]:
-    return [str(b.get("date") or b.get("trade_date") or "") for b in bars if isinstance(b, Mapping)]
+    """Dates aligned 1:1 with ``_closes(bars)``. Both filter on the same
+    "is Mapping + has numeric close" predicate via ``_aligned_bars`` so
+    indices match across detectors."""
+
+    return [
+        str(b.get("date") or b.get("trade_date") or "")
+        for b in _aligned_bars(bars)
+    ]
 
 
 def _sma_at(closes: Sequence[float], idx: int, period: int) -> float | None:
@@ -164,26 +174,21 @@ def detect_ma_cross(
 # ---------------------------------------------------------------------------
 
 
-def _ema_full(closes: Sequence[float], period: int) -> list[float | None]:
-    """Return aligned EMA series matching ``technicals.ema_series``."""
-
-    out: list[float | None] = [None] * len(closes)
-    if len(closes) < period:
-        return out
-    k = 2.0 / (period + 1.0)
-    seed = sum(closes[:period]) / period
-    out[period - 1] = seed
-    prev = seed
-    for i in range(period, len(closes)):
-        cur = closes[i] * k + prev * (1.0 - k)
-        out[i] = cur
-        prev = cur
-    return out
+# EMA full series — reuse technicals.ema_series rather than re-implement
+# (was previously duplicated; ~15 LOC drift risk). Aliased as ``_ema_full``
+# for back-compat with existing call sites in this module.
+from mvp20.technicals import ema_series as _ema_full
 
 
 def _macd_hist_series(closes: Sequence[float]) -> list[float | None]:
-    """Aligned MACD hist series — ``(dif - dea) * 2``. None where input
-    is too short."""
+    """Aligned MACD hist series — ``(dif - dea) * 2`` (A-股 convention).
+    None where input is too short.
+
+    Uses ``technicals.ema_series`` for EMA12 / EMA26 / DEA so the formula
+    stays byte-for-byte aligned with ``technicals.macd``'s single-point
+    output. Previously this re-implemented EMA inline; if technicals.macd
+    ever changed its seed or recurrence the two would silently disagree.
+    """
 
     n = len(closes)
     if n < 35:

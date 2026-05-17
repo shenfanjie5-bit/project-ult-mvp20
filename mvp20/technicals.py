@@ -308,16 +308,18 @@ def kdj(
     for b in bars:
         if not isinstance(b, Mapping):
             continue
+        # Note: ``lo`` not ``l`` — ``l`` is visually ambiguous with the
+        # digit 1 and is flagged by lints (PEP 8 E741).
         try:
             h = float(b["high"]) if b.get("high") is not None else None
-            l = float(b["low"]) if b.get("low") is not None else None
+            lo = float(b["low"]) if b.get("low") is not None else None
             c = float(b["close"]) if b.get("close") is not None else None
         except (TypeError, ValueError, KeyError):
             continue
-        if h is None or l is None or c is None:
+        if h is None or lo is None or c is None:
             continue
         highs.append(h)
-        lows.append(l)
+        lows.append(lo)
         closes.append(c)
 
     if len(closes) < period:
@@ -419,13 +421,15 @@ def atr(bars: Sequence[Bar], period: int = 14) -> float | None:
         if not isinstance(b, Mapping):
             continue
         try:
-            h = float(b["high"]); l = float(b["low"]); c = float(b["close"])
+            h = float(b["high"])
+            lo = float(b["low"])
+            c = float(b["close"])
         except (TypeError, ValueError, KeyError):
             continue
         if prev_close is None:
-            tr = h - l
+            tr = h - lo
         else:
-            tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
+            tr = max(h - lo, abs(h - prev_close), abs(lo - prev_close))
         trs.append(tr)
         prev_close = c
     if len(trs) < period + 1:
@@ -446,11 +450,27 @@ def obv(bars: Sequence[Bar]) -> float | None:
     """On-balance volume (cumulative, latest value).
 
     OBV[t] = OBV[t-1] + sign(close[t] - close[t-1]) * vol[t]
+
+    Returns ``None`` when too few bars (<2) OR when the close-list and
+    volume-list lengths diverge (which happens if some bars have close but
+    no volume, or vice versa). The current FMP fetcher fills missing vol
+    with 0.0 so this rarely trips, but the guard is intentional — silently
+    falling back to a partial OBV would mislead callers.
     """
 
     closes = _to_close_list(bars)
     vols = _to_volume_list(bars)
-    if len(closes) < 2 or len(closes) != len(vols):
+    if len(closes) < 2:
+        return None
+    if len(closes) != len(vols):
+        # Mismatch is silently swallowed by returning None — log it so an
+        # operator running ``mvp20 derive --all-markets`` can spot bad
+        # data sources.
+        import logging  # local import to avoid pulling logging on cold path
+        logging.getLogger("mvp20.technicals").debug(
+            "obv: close/vol length mismatch (closes=%d, vols=%d) — returning None",
+            len(closes), len(vols),
+        )
         return None
     total = 0.0
     for i in range(1, len(closes)):
@@ -469,8 +489,17 @@ def obv(bars: Sequence[Bar]) -> float | None:
 def compute_all(
     bars: Sequence[Bar],
     ma_windows: Sequence[int] = DEFAULT_MA_WINDOWS,
-) -> dict[str, dict | None]:
+) -> dict[str, Any]:
     """Compute the standard battery of technicals from a single bar series.
+
+    The return type is widened to ``dict[str, Any]`` because the value
+    side is heterogeneous: ``ma`` / ``macd`` / ``rsi`` / ``kdj`` / ``boll``
+    / ``vol_ma`` are sub-dicts, ``atr14`` / ``obv`` are floats (or None),
+    ``as_of`` is a string (or None), ``n_bars`` is an int. The previous
+    declared type ``dict[str, dict | None]`` was a lie — callers in the
+    derive layer have to ``isinstance(sub, dict)``-guard because of it.
+    A future refactor could expose a ``TechnicalsResult`` TypedDict for
+    stricter callers; ``dict[str, Any]`` is the honest minimum.
 
     Returns a dict shaped for direct emission as multiple SQLite dp_ids::
 
