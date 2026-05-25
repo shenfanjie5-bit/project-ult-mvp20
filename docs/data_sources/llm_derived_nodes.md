@@ -69,9 +69,9 @@ X5 之后所有 codex 衍生填充须遵守 closed-loop 规则；Z1c 在此基�
 
 ---
 
-## 3. 行业级 14 条（每行业一份，行业内复用）
+## 3. 行业级 overlay（每行业一份，行业内复用）
 
-> codex 处理：对每个 `industry_id`（12 个行业），跑一次 LLM 调用拿 14 条结构化输出，落到 `config/industry_overlays/<industry_id>.yaml`。所有该行业公司的数据 overlay 通过 `inherit_from` 引用这份。
+> codex 处理：对每个 `industry_id`（12 个 present 行业），跑一次 LLM 调用拿行业结构化输出，落到 `config/industry_overlays/<industry_id>.yaml`。当前每个 industry overlay 文件有 31 个 graph nodes；下方 14 条是早期核心 L0 子集，不代表完整文件结构。所有该行业公司的数据 overlay 通过 `inherit_from` 引用这份。
 
 ### 通用 prompt 模板
 
@@ -80,7 +80,7 @@ Industry: {industry_name_cn}
 Period: {YYYY-Q?}
 Data sources to consult: 行业研报、券商月度/季度行业报告、PMI/产销数据、龙头公司业绩会纪要
 
-For each of the 14 fields below, output JSON with:
+For each industry overlay field, output JSON with:
 - value: structured per-field schema
 - yoy_pct: float | null
 - trend: enum[up, flat, down, mixed] | null
@@ -92,7 +92,7 @@ For each of the 14 fields below, output JSON with:
 - notes: short rationale
 ```
 
-### 14 条清单
+### 早期核心 L0 子集清单
 
 | data_point_id | label_cn | spec category | required_level | output_format | 频率 |
 |---|---|---|---|---|---|
@@ -281,7 +281,7 @@ the table above. For each field, additionally include:
 Company: {ts_code} {name}
 Industry: {industry_id} ({industry_name_cn})
 Period: {YYYY-Q?}
-Industry context: {引用对应行业的 14 条 L0 数据点 from industry_overlays/<industry_id>.yaml}
+Industry context: {引用对应行业 overlay 的 31 个 graph nodes from industry_overlays/<industry_id>.yaml}
 
 For each of the 18 fields below, output JSON. Each field schema is fixed (see fields).
 For each field, additionally include:
@@ -301,7 +301,9 @@ For each field, additionally include:
 
 ## 5. schema slot 必须留好（即使未填）
 
-每只股票的数据 overlay 包含完整 32 条 slot——节点存在不代表已填，参考 spec 第 二节"批量建图落地原则"和第 23 节"缺失节点的汇总规则"。
+每个 company-industry stock overlay 现在包含 112 个 graph nodes（111
+个治理 dp_id 加 `company` root）。节点存在不代表已填；历史文档中的
+"32 slot" 只对应早期 X5 缺失字段子集。参考 spec 第二节"批量建图落地原则"和第 23 节"缺失节点的汇总规则"。
 
 ```yaml
 # config/stock_overlays/STORAGE_GRID/300750.SZ.yaml（codex 生成）
@@ -313,7 +315,7 @@ available_industries: [STORAGE_GRID]
 schema_version: 1
 
 nodes:
-  # === L0 行业级 14 条（引用 industry_overlays/<primary_industry>.yaml）===
+  # === 行业继承节点（引用 industry_overlays/<primary_industry>.yaml；当前每个 industry overlay 31 nodes）===
   - dp_id: L0.demand.terminal
     node_id: 300750.SZ:L0.demand.terminal
     inherit_from_industry: true
@@ -325,9 +327,9 @@ nodes:
     alert_policy: warn_if_material
     materiality: 0.8           # codex 按行业静态打
   
-  # ...其他 13 条 L0 ...
+  # ...其他行业继承节点 ...
   
-  # === L1-L5 公司级 18 条 ===
+  # === 公司级治理节点（stock overlay 总计 112 graph nodes，含 company root）===
   - dp_id: L1.position.channel_edge
     node_id: 300750.SZ:L1.position.channel_edge
     required_level: conditional_required
@@ -362,7 +364,7 @@ nodes:
 ```
 Phase A: 行业级填充（12 个 active 行业）
   for industry_id in 12_industries:
-    call LLM with industry prompt → 14 条结构化输出
+    call LLM with industry prompt → industry overlay structured output
     write to config/industry_overlays/<industry_id>.yaml
     set data_status: Known + data_source: llm_derived for filled fields
     set data_status: Inactive for fields that LLM determined "no event currently"

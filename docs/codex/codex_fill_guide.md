@@ -124,19 +124,19 @@ verifier `scripts/verify_overlay_closed_loop.py` 按此 tier 决定允许哪些 
 - 这 14 条**只填一次**，所有该行业公司通过 `inherit_from_industry: true` 共享
 - L0 字段例：`L0.demand.terminal`（终端需求变化）/ `L0.supply.capacity`（产能变化）/ `L0.price.pricing_power`（提价能力）
 
-**`stock_overlays/<industry_id>/<ts_code>.yaml`** 由本指南填 18 条 L1-L5 公司字段：
+**`stock_overlays/<industry_id>/<ts_code>.yaml`** 现在是 112-node company-industry overlay；本指南覆盖其中需要 LLM 补充的公司字段子集：
 - 同一公司跨多个行业（如 胜宏科技-H 跨 AI_COMPUTE/SEMI_EQUIPMENT/CONSUMER_ELECTRONICS）需要每个 overlay 都填，但 L1-L5 应当**一致**（公司本质不会因行业视图变）
 
 ---
 
 ## 6. 执行步骤（codex CLI 推荐工作流）
 
-### Phase 1: 行业 overlay 14 字段（一次性）
+### Phase 1: 行业 overlay 字段（一次性）
 
 对每个 industry_overlay YAML：
 
 ```bash
-# 由 mvp20 助手脚本生成 per-industry prompt（含已填行业图谱节点 + spec 14 条任务）
+# 由 mvp20 助手脚本生成 per-industry prompt（含已填行业图谱节点 + 当前 industry overlay 任务）
 .venv/bin/python scripts/codex_prompt_gen.py \
     --industry AI_COMPUTE \
     --out /tmp/codex_AI_COMPUTE.md
@@ -260,10 +260,10 @@ codex --prompt-file /tmp/codex_300750_SZ.md
 |---|---|
 | `图谱设计.md` | spec v2 完整版，字段定义、状态机权威 |
 | `docs/data_sources/coverage_audit.md` | spec 250 数据点覆盖矩阵 |
-| `docs/data_sources/llm_derived_nodes.md` | 32 LLM 衍生节点的 prompt 模板 + output_schema |
+| `docs/data_sources/llm_derived_nodes.md` | LLM 衍生节点的 prompt 模板 + output_schema；历史 32-slot 仅为早期子集 |
 | `docs/audit/injection_audit.csv` | 当前每公司已填字段，避免重复 |
-| `config/industry_overlays/<id>.yaml` | 行业级 overlay（14 L0 字段，编辑此处）|
-| `config/stock_overlays/<id>/<ts>.yaml` | 公司 overlay（18 L1-L5 字段，编辑此处）|
+| `config/industry_overlays/<id>.yaml` | 行业级 overlay（当前 31 graph nodes，编辑此处）|
+| `config/stock_overlays/<id>/<ts>.yaml` | 公司 overlay（当前 112 graph nodes，编辑此处）|
 | `scripts/codex_prompt_gen.py` | 生成 per-overlay 具体 prompt |
 
 ---

@@ -39,7 +39,8 @@ providers:
       - market_index          # /historical-index
       - trading_calendar      # /market-hours / /holiday-calendar
       - ipo_calendar          # /ipo_calendar
-      - treasury_rates        # /treasury (US yield curve)
+      - treasury_rates        # /stable/treasury-rates (US yield curve)
+      - macro                 # /stable/economic-calendar - US CPI / employment events
       - corporate_actions     # /historical-stock-split (M&A history needs Premium)
       - peer_comparison       # /stock_peers
       - analyst_estimates     # /stable/analyst-estimates - FMP Starter verified working 2026-05 (user)
@@ -62,8 +63,9 @@ providers:
     notes: >-
       Primary provider for the ~98 US-listed constituents (NVDA, AAPL,
       AMZN, AMD, etc.) plus the four customer-only Hyperscalers (META,
-      MSFT, GOOGL, AMZN). FMP also surfaces options chain and IV data
-      that feeds the future option-signal epic.
+      MSFT, GOOGL, AMZN). FMP's options chain and IV endpoints are kept
+      tier-locked on the current Starter plan; Futu is the active options
+      source until FMP Premium is enabled.
 
   # ===== US fallback =====
   - id: yfinance
@@ -99,7 +101,6 @@ providers:
       # ===== Existing (round 1 + round 2) =====
       - price_daily
       - fundamentals
-      - news
       - earnings_calendar
       - institutional_holdings
       - macro
@@ -112,7 +113,7 @@ providers:
       - block_trade
       - share_unlock
       - holder_count
-      # ===== Round 3 (138-endpoint reconciliation 2026-04-28) =====
+      # ===== Round 3 (138-endpoint reconciliation + code-path additions) =====
       - ipo_calendar           # new_share (IPO 新股上市)
       - company_profile        # stock_company / stk_managers / stock_basic
       - trading_calendar       # trade_cal / bse_mapping / namechange / bak_basic
@@ -227,8 +228,8 @@ providers:
       uses to connect to OpenD. gateway.host / gateway.port describe
       where data-platform reaches OpenD — override locally if you run
       OpenD on a different machine (e.g. NAS at 192.168.1.x:11111).
-      Provides deeper HK coverage than AKShare and a second source of
-      options chain / IV data alongside FMP.
+      Provides deeper HK coverage than AKShare and the active options
+      chain / IV source while FMP options remain Premium-tier locked.
 
   # ===== Macro / Fed data (US-side macro context) =====
   - id: fred

@@ -7,11 +7,11 @@ https://site.financialmodelingprep.com/developer/docs/pricing for current).
 
 > **CURRENT SUBSCRIPTION: Starter** ($14/mo, 300 req/min, 5+ years history)
 >
-> The 18 Starter-accessible capabilities are declared as `active` on FMP in
-> `config/data_providers.yaml`. The 5 capabilities behind Premium / Ultimate
+> The 20 Starter-accessible capabilities are declared as `active` on FMP in
+> `config/data_providers.yaml`. The 6 capabilities behind Premium / Ultimate
 > tiers are listed in `tier_locked_premium` / `tier_locked_ultimate` blocks
 > there but **not** in the active capability list — calls to them would
-> return `401 Subscription Required`. One of those five has NO fallback
+> return `401 Subscription Required`. One of those six has NO fallback
 > provider: `earnings_transcripts`. Two Ultimate-tier ones (`esg_score`,
 > `government_trading`) also have no fallback. The remaining tier-locked
 > capabilities have working fallbacks on Tushare / Futu OpenD (see Fallback
@@ -19,9 +19,8 @@ https://site.financialmodelingprep.com/developer/docs/pricing for current).
 >
 > **Update 2026-05** — user empirically verified that `sec_filings`,
 > `dcf_valuation`, and `analyst_estimates` are reachable on Starter
-> (see Changelog at bottom). The pricing-page-derived tier table below
-> still shows them as `P` for the documented-policy lineage but the active
-> catalog now treats them as Starter-accessible.
+> (see Changelog at bottom). The table below now follows the active catalog;
+> pricing-page-derived historical notes remain in the Changelog.
 
 ## Tier ladder
 
@@ -45,22 +44,24 @@ https://site.financialmodelingprep.com/developer/docs/pricing for current).
 | `dividends` | S | `/historical-stock-dividend` | |
 | `buyback` | S | `/historical/buyback` | |
 | `market_index` | S | `/historical-index` | Full risk-premium needs P |
-| `treasury_rates` | S | `/treasury` | Round 4 — DCF discount rate |
+| `treasury_rates` | S | `/stable/treasury-rates` | Round 4 — DCF discount rate |
+| `macro` | S | `/stable/economic-calendar` | US CPI / employment calendar used by `fetch_macro_us_batch` |
 | `corporate_actions` | S | `/historical-stock-split` | M&A history needs P |
 | `trading_calendar` | S | `/market-hours` | |
 | `ipo_calendar` | S | `/ipo_calendar` | |
 | `peer_comparison` | S | `/stock_peers` | Round 4 |
 | `insider_trading` (basic) | S | `/insider-trading` | Daily updates need P |
 | `price_intraday` (1h/4h) | S | `/historical-chart/1hour` | Minute bars need P |
+| `analyst_estimates` | S | `/stable/analyst-estimates` | Starter verified 2026-05; also dual-sourced by Tushare `report_rc` |
+| `dcf_valuation` | S | `/stable/discounted-cash-flow` | Starter verified 2026-05 |
+| `sec_filings` | S | `/stable/sec-filings-search/symbol` | Starter verified 2026-05; FMP single-source |
+| `forex` | S | `/stable/historical-price-eod` | EURUSD / DXY style macro inputs |
 | **⚠ Need P (Premium $29/mo)** | | | |
 | `price_intraday` (1min/5min/15min/30min) | **P** | `/historical-chart/1min` | High-frequency only on Premium |
 | `earnings_transcripts` | **P** | `/earning_call_transcript` | NLP fuel for core-pool LLM |
-| `sec_filings` | **P** | `/sec_filings` | 10-K / 10-Q / 8-K / Form 4 |
-| `analyst_estimates` | **P** | `/analyst-estimates` | Tushare also covers (報r_rc) — check there first |
 | `institutional_holdings` (13F) | **P** | `/13F` | Tushare covers basic top10 holders on its own; 13F is US-specific |
 | `options_chain` | **P** | `/historical-chain` | Futu also covers (deeper; via OpenD) |
 | `options_iv` | **P** | `/historical-volatility` | Futu also covers via Greeks |
-| `dcf_valuation` | **P** | `/discounted-cash-flow` | Round 4 — direct DCF intrinsic value |
 | `fundamentals` (full historical 30Y) | P | `/income-statement?limit=120` | Basic history is on S |
 | **⚠ Need U (Ultimate $49/mo)** | | | |
 | `esg_score` | **U** | `/esg-environmental-social-governance-data` | Round 4 |
@@ -73,19 +74,17 @@ You get out-of-the-box:
 - All baseline US price / fundamentals / news / calendar capabilities
 - Round 3 + Round 4 starter additions (treasury_rates, corp_actions, dividends,
   buyback, market_index, peer_comparison, ipo_calendar, trading_calendar)
+- Empirically verified 2026-05 additions: SEC filing index, analyst estimates,
+  DCF valuation, macro calendar, and forex/DXY-style macro inputs
 - Hourly intraday bars (good enough for daily-cycle scoring)
 
 You **cannot** access (these will return 401 / `Subscription Required`):
 - Earnings call transcripts → `earnings_transcripts` capability dead
-- SEC filings → `sec_filings` capability dead
-- Analyst estimates → `analyst_estimates` from FMP dead, but **Tushare
-  `report_rc` still works** (dual-source — see fallback below)
 - 13F filings → `institutional_holdings` falls back to Tushare's basic
   `top10_holders` (less granular)
 - Options chain / IV → falls back to Futu OpenD (better coverage anyway)
 - Minute-bar intraday → `price_intraday` for sub-hourly will not work;
   hourly+ still fine
-- DCF intrinsic values → `dcf_valuation` capability dead
 - ESG / Senate trading → both dead (Ultimate only)
 
 ### If you have **Premium** ($29/mo) — *recommended for mvp20 round-3+ scope*
@@ -93,10 +92,10 @@ You unlock everything mvp20 declares except:
 - ESG screening
 - Senate/House trading
 
-This is the minimum tier where **all FMP-only capabilities work end-to-end**
-(transcripts, SEC, options, DCF). The two remaining gaps (`esg_score` and
-`government_trading`) are nice-to-have but not central to the 13-industry
-graph priors.
+This tier mainly adds transcripts, FMP-native options, FMP-native 13F /
+institutional endpoints, and minute bars. The two remaining Ultimate gaps
+(`esg_score` and `government_trading`) are nice-to-have but not central to the
+13-industry graph priors.
 
 ### If you have **Free** tier
 Severely limited — only `price_daily` and basic `company_profile` work in
@@ -111,42 +110,37 @@ silently fall back when FMP returns a tier-mismatch error:
 
 | Capability | FMP tier | Fallback provider(s) | Notes |
 |---|:---:|---|---|
-| `analyst_estimates` | P | tushare (`report_rc`) | Tushare covers A-share + select US |
 | `institutional_holdings` | P | tushare (`top10_*`), futu (`get_holding_change_list`) | Tushare for A; Futu for HK |
 | `options_chain` / `options_iv` | P | futu | Futu OpenD via local gateway, deeper |
 | `dividends` | S | tushare (`dividend`), akshare, yfinance | 4 sources total |
 | `market_index` | S | All 4 other providers | 5-source redundancy |
 | `price_intraday` (1min) | P | futu (`get_cur_kline`) | Futu OpenD includes minute bars |
 | `earnings_transcripts` | P | — | **No fallback** — single-sourced |
-| `sec_filings` | P | — | **No fallback** — single-sourced |
 | `esg_score` | U | — | **No fallback** — single-sourced |
 | `government_trading` | U | — | **No fallback** — single-sourced |
 
-The four single-sourced FMP capabilities (`earnings_transcripts`, `sec_filings`,
+The tier-locked single-sourced FMP capabilities (`earnings_transcripts`,
 `esg_score`, `government_trading`) become **hard dependencies** if your epic
-needs them. If your FMP plan doesn't include them, plan to either upgrade
-FMP, drop the dependent epic feature, or find an alternative provider.
+needs them. `sec_filings` is also FMP-single-source, but it is active on the
+current Starter plan.
 
 ## Action items by current FMP plan
 
 | Your plan | Action |
 |---|---|
 | **Free** | Upgrade to Starter — Free is too restrictive for 328-constituent daily refresh |
-| **Starter** | OK for round-1 / round-2 features. If you need transcripts / SEC / options / DCF / minute bars, upgrade to Premium |
-| **Premium** | Sufficient for everything mvp20 round-3 declares except ESG / Senate trading |
+| **Starter** | Current default. OK for active mvp20 FMP capabilities including SEC filing index, analyst estimates, DCF, macro calendar, and forex. Upgrade only for transcripts / FMP-native 13F / FMP-native options / minute bars |
+| **Premium** | Sufficient for everything except ESG / Senate trading |
 | **Ultimate** | Full coverage; nothing is gated |
 
 ## How mvp20 enforces this
 
-`config/data_providers.yaml` declares each capability *abstractly* — it does
-not encode tier requirements. The actual tier check happens at runtime in
-upstream `data-platform` when an FMP HTTP call comes back 401 with
-`Subscription Required` and the data-platform client logs an
-`provider_unavailable_reason: insufficient_tier` evidence record.
-
-The best place to act on this document is at `data-platform` ingest time:
-read this MD, decide which capabilities to attempt, and route to fallback
-providers when a capability isn't subscribed at the FMP tier you have.
+`config/data_providers.yaml` now encodes the operator-curated split between
+the current Starter `capabilities` list and the `tier_locked_premium` /
+`tier_locked_ultimate` blocks. Runtime still needs to handle provider truth:
+if an FMP HTTP call comes back 401 with `Subscription Required`, the ingest
+client should log `provider_unavailable_reason: insufficient_tier` and route
+to fallback providers where available.
 
 ## Changelog
 

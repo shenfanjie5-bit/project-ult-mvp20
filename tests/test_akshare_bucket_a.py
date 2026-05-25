@@ -309,9 +309,12 @@ def test_block_aggregates_events_across_trade_days(
     monkeypatch.setattr(ak, "stock_dzjy_mrmx", _fake_dzjy)
 
     rows = akshare_source.fetch_l9_capital_etf_block(
-        ["300750.SZ", "600519.SH"], now=1_700_000_000,
+        ["300750.SZ", "600519.SH"],
+        now=1_700_000_000,
+        reference_date="20260513",
     )
     assert len(rows) == 2
+    assert call_log[:3] == ["20260513", "20260512", "20260511"]
     by_code = {r[0]: r for r in rows}
 
     p1 = json.loads(by_code["300750.SZ"][2])

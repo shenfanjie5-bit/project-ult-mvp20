@@ -1,28 +1,21 @@
-"""Minimal HTTP server exposing mvp20 manifest data as JSON for the frontend.
+"""Stdlib HTTP BFF exposing mvp20 data and skeleton adapter routes.
 
-Stdlib-only (no new deps). Serves a curated subset of `/api/project-ult/*`
-endpoints that the FrontEnd Vite app expects:
+Stdlib-only (no new deps). The server is read-only: every handler is GET,
+while POST/PUT/DELETE return 405.
 
-* /api/health                              → service liveness
-* /api/project-ult/health                  → mvp20 module count + lock status
-* /api/project-ult/compat                  → schema versions / build stamp
-* /api/project-ult/manifests/latest        → industries.yaml + universe.yaml
-* /api/project-ult/modules                 → modules.lock.yaml as JSON
-* /api/project-ult/reasoner/providers      → data_providers.yaml as JSON
-* /api/project-ult/profiles                → universe constituents shaped as profiles
-* /api/project-ult/cycles                  → empty list (mvp20 doesn't run cycles)
-* /api/project-ult/cycles/<id>             → 503 (upstream main-core / orchestrator)
-* /api/project-ult/graph/<...>             → 503 (upstream graph-engine)
-* /api/project-ult/audit/<...>             → 503 (upstream audit-eval)
-* /api/project-ult/backtests[/<id>]        → 503
-* /api/project-ult/data/canonical/<table>  → 503 (upstream data-platform)
-* /api/project-ult/entities[/<id>]         → 503 (upstream entity-registry)
-* anything else under /api/project-ult/    → 503 envelope
+Core mvp20 routes include health, compat, manifests, modules, providers,
+profiles, industry graphs, stock overlays, market events, technicals,
+history, aggregate, coverage, score, and the realtime SSE stream. Vendored
+upstream route families are wired through ``mvp20.adapters`` for graph,
+data-platform canonical/raw data, entity-registry, reasoner-runtime,
+main-core cycles/stocks/pool/world-state, and audit/backtest surfaces.
+Legacy frontend-api admin/alerts paths are local BFF stubs.
 
-503 endpoints return a structured ApiErrorEnvelope so the frontend can
-surface "this needs upstream module X to be running" rather than crashing.
-
-Read-only: every handler is GET. POST/PUT/DELETE return 405.
+Adapter routes normally return 200 fixture envelopes when the vendored
+package imports. If a vendor package fails at adapter import time, they
+return a structured 503 UPSTREAM_UNAVAILABLE envelope so the frontend can
+surface the missing module/dependency rather than crashing. Unmatched
+``/api/*`` paths return a 404 envelope.
 """
 
 from __future__ import annotations

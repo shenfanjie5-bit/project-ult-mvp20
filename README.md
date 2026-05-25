@@ -3,8 +3,33 @@
 Public orchestration shell for the Project ULT 13-industry MVP.
 
 This repository owns the MVP manifest, module lock, runbooks, fixture evidence,
-and CI checks. It does not copy module implementation code and does not replace
-the existing `project-ult-*` repositories.
+runtime BFF, frontend shell, and CI checks. It vendors a bounded snapshot of
+selected upstream `project-ult-*` source directories under `upstream/` for
+skeleton wiring, but the lock file still records the broader upstream module
+set as pinned SHAs.
+
+## Repository Map
+
+- `mvp20/` — Python package for manifest validation, provider validation,
+  overlay generation/compilation, scoring/coverage helpers, data-source
+  adapters, and the read-only stdlib HTTP BFF (`mvp20 serve`).
+- `config/` — auditable source of truth for the 13-industry universe,
+  provider catalog, market adapters, field governance, industry graphs,
+  industry overlays, and company-industry stock overlays.
+- `runtime/` — local runtime artifacts: `hot.sqlite` for compiled graph
+  snapshots / current realtime values and `history/` for optional Parquet
+  minute replay. Treat this as local state, not canonical source.
+- `scripts/` — collector, SQLite initialization, compaction, prompt
+  generation, overlay verification, and audit utilities.
+- `docs/` — operator runbooks, data-source audits, industry-graph docs,
+  and generated audit reports.
+- `FrontEnd/` — Vite + React + TypeScript + Tauri frontend. In
+  `projectUlt` mode it targets the mvp20 BFF at `http://127.0.0.1:8701`
+  or a compatible `/api` backend.
+- `upstream/` — vendored source snapshots for `contracts`,
+  `audit-eval`, `data-platform`, `entity-registry`, `graph-engine`,
+  `main-core`, and `reasoner-runtime`. The full 14-module pin set is in
+  `locks/modules.lock.yaml`.
 
 ## MVP Boundary
 
@@ -45,10 +70,11 @@ the existing `project-ult-*` repositories.
 - External market-data providers are catalogued in
   `config/data_providers.yaml` and certified by `mvp20 validate-providers`.
   Active providers: Financial Modeling Prep (FMP, US primary —
-  price / fundamentals / news / insider / options / SEC), Tushare
+  price / fundamentals / news / insider / SEC / analyst / DCF / macro / forex), Tushare
   (A-share primary), AKShare (A/HK free fallback), yfinance (US/HK free
   fallback), and Futu OpenAPI via the OpenD local gateway (HK / US
-  deep data plus a second source of options chain / IV alongside FMP).
+  deep data plus active options chain / IV; FMP options remain
+  Premium-tier fallback).
   FRED stays planned for the macro epic. Secrets stay in env vars
   referenced by `secret_env_var`; the catalog rejects any inline
   `api_key` / `secret` / `token` fields. `mvp20 plan-backfill`
@@ -74,8 +100,10 @@ the existing `project-ult-*` repositories.
 
 ## Data Provider Capability Coverage
 
-mvp20 declares **51 capability slugs** across 5 active providers (and 1
-planned: FRED). Per-provider endpoint inventories live under
+The provider vocabulary contains **51 capability slugs** when active,
+tier-locked, and planned entries are counted together. The current active
+5-provider catalog declares **47 active capability slugs**; FRED is still
+planned. Per-provider endpoint inventories live under
 [`docs/data_sources/`](docs/data_sources/) — these CSVs are the audit trail
 proving every market and every important capability is covered.
 
@@ -96,22 +124,23 @@ coverage:
 | Permanently unhandled | 0 | No spec field is impossible to handle, but not every field is a structured hard-data feed. |
 
 Current local runtime snapshot
-(`runtime/hot.sqlite:realtime_current`) has **25 531 rows**,
-**166 distinct dp_id**, and **328 stocks**. **136 / 250 (54.4%)** of the
+(`runtime/hot.sqlite:realtime_current`) has **31 612 rows**,
+**181 distinct dp_id**, **328 stock tickers**, and **14 sentinel
+market/industry entities**. **136 / 250 (54.4%)** of the
 spec data points are now present in SQLite (intersection of distinct
 dp_id with `config/data_point_roles.yaml`). **105 sentinel rows**
 (`MARKET:CN` × 14, `MARKET:US` × 7, `INDUSTRY:<id>` × 5–8) cover
 market-level and industry-level macro / policy / sector fields. The
-current injection audit reports an average of **83.5 / 250 (33.4%)**
-effective dp_ids per company and **77.5** realtime-injected dp_ids
+current injection audit reports an average of **102.1 / 250 (40.8%)**
+effective dp_ids per company and **96.0** realtime-injected dp_ids
 (the per-stock count includes sentinel rows merged via
 `read_hot_snapshot`'s `MARKET:<market>` and `INDUSTRY:<id>` fallback).
-**110 distinct `source` labels** are written by adapters (Tushare /
+**123 distinct `source` labels** are written by adapters (Tushare /
 FMP / Futu / AKShare / derive). Recheck with:
 
 ```bash
 sqlite3 runtime/hot.sqlite \
-  'select count(*), count(distinct dp_id), count(distinct ts_code) from realtime_current;'
+  'select count(*), count(distinct dp_id), count(distinct ts_code), count(distinct source) from realtime_current;'
 ```
 
 Coverage audit baseline:
@@ -140,14 +169,14 @@ Avoid over-claiming proxy fields:
 
 | Provider | mvp20 capabilities | Real endpoints / methods | Coverage notes |
 |---|---:|---:|---|
-| **Tushare** | 30 | 99 / 138 in-account endpoints | 100% in-universe; 39 out-of-scope (HK/US/期货/转债/基金/ETF/期权/外汇/黄金现货 — handled by other providers or asset-class外) |
-| **FMP** *(Starter $14/mo)* | 15 active / 8 tier-locked | 45 / 80 currently-subscribed endpoints | Premium ($29/mo) unlocks `earnings_transcripts`/`sec_filings`/`dcf_valuation`/`options_*`/`analyst_estimates`/`institutional_holdings` (13F)/minute bars; Ultimate ($49/mo) adds `esg_score`/`government_trading`. See [FMP_TIER_REQUIREMENTS.md](docs/data_sources/FMP_TIER_REQUIREMENTS.md) |
-| **Futu OpenD** | 19 | 29 / 35 read-only SDK methods | All read-only data covered; trading methods deliberately excluded (mvp20 is read-only); operational methods (subscription quota etc.) skipped |
+| **Tushare** | 29 | 107 / 145 in-account endpoint rows | 100% in-universe; 38 out-of-scope (HK/US/期货/转债/基金/ETF/期权/外汇/黄金现货 except ETF-flow proxy rows — handled by other providers or asset-class外) |
+| **FMP** *(Starter $14/mo)* | 20 active / 6 tier-locked | 48 / 80 Starter-accessible endpoint rows | Starter currently declares `analyst_estimates`, `dcf_valuation`, `sec_filings`, `macro`, and `forex`; Premium unlocks `earnings_transcripts`, minute bars, options endpoints, and FMP-specific 13F/institutional endpoints; Ultimate adds `esg_score`/`government_trading`. See [FMP_TIER_REQUIREMENTS.md](docs/data_sources/FMP_TIER_REQUIREMENTS.md) |
+| **Futu OpenD** | 20 | 34 covered data mappings / 40 non-trading SDK rows | Trading/account methods deliberately excluded (mvp20 is read-only); 5 operational rows skipped; `get_security_filter` is a future screener/universe-expansion hook |
 | **AKShare** | 27 | many | Free fallback; covers most A-share microstructure as Tushare cross-check |
 | **yfinance** | 7 | many | Free fallback for US/HK base data |
 | FRED (planned) | — | — | Activated when macro epic lands |
 
-### 51 capabilities (vocabulary)
+### Capability vocabulary (51 total, 47 active)
 
 Grouped by purpose:
 - **Price / quote**: `price_daily`, `price_intraday`, `quote_l2`, `tick_trades`,
@@ -166,7 +195,7 @@ Grouped by purpose:
 - **Market structure**: `sector_constituents`, `market_index`,
   `index_futures`, `warrants`, `ipo_calendar`, `ah_premium`,
   `risk_warning`, `equity_pledge`, `technical_factors`
-- **Macro / rates**: `macro`, `treasury_rates`
+- **Macro / rates**: `macro`, `treasury_rates`, `forex`, `commodities`
 - **Reference / context**: `company_profile`, `trading_calendar`,
   `options_chain`, `options_iv`, `news`, `alternative_data`,
   `investor_relations_qa`
@@ -176,9 +205,11 @@ Grouped by purpose:
 | Capability | Sole provider | Why it matters |
 |---|---|---|
 | `quote_l2` / `tick_trades` / `broker_queue_hk` / `realtime_push` / `warrants` / `index_futures` | **Futu OpenD** | HK / cross-market microstructure |
-| `sec_filings` / `earnings_transcripts` / `insider_trading` | **FMP** | US monitoring |
-| `dcf_valuation` / `treasury_rates` / `corporate_actions` / `peer_comparison` | **FMP** | US valuation utilities (S tier+) |
-| `esg_score` / `government_trading` | **FMP** | US alternative data (Ultimate tier) |
+| `sec_filings` / `insider_trading` | **FMP** | Active US monitoring fields |
+| `earnings_transcripts` | **FMP** | Tier-locked on current Starter plan; no active fallback |
+| `dcf_valuation` / `treasury_rates` / `corporate_actions` / `peer_comparison` / `forex` | **FMP** | Active US valuation / macro utilities |
+| `esg_score` / `government_trading` | **FMP** | Tier-locked Ultimate alternative data |
+| `commodities` | **FRED** | Planned macro/commodity context |
 | `investor_relations_qa` | **Tushare** | 上证 e 互动 / 深证易互动 — LLM training corpus |
 | `alternative_data` | **AKShare** | Misc Chinese-source aggregates |
 
@@ -239,8 +270,10 @@ The accompanying pieces:
 ## Bucket A: 31 hard-data dp_id extension
 
 Bucket A (data-driven hard fields outside Phase X's 4-source baseline)
-added **31 dp_ids** (SQLite ∩ spec 105 → 136, avg_realtime per stock
-66.7 → 77.5):
+added **31 dp_ids**. At the Bucket A baseline, SQLite ∩ spec moved
+105 → 136 and avg_realtime per stock moved 66.7 → 77.5. The current
+runtime snapshot has moved further; use the "Spec data-point coverage"
+section above for current numbers.
 
 - **Tushare A (14)** — financial-report derived: balance-sheet ratios
   (asset-turnover, debt-to-equity, current ratio), cash-flow quality
@@ -407,8 +440,9 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 
 # Install vendored upstream modules (no-deps to skip heavy transitive deps;
-# adapters auto-fall-back to 503 if runtime deps missing — see Runtime services
-# section below). Order matters: contracts first (others depend on it).
+# adapter routes return 503 only when the vendored package fails its
+# adapter import availability check — see Runtime services below.
+# Order matters: contracts first (others depend on it).
 for d in contracts audit-eval data-platform entity-registry graph-engine main-core reasoner-runtime; do
   .venv/bin/pip install -e "./upstream/$d" --no-deps --ignore-requires-python
 done
@@ -450,8 +484,9 @@ The server now sits on top of **four storage layers** wired together by
 
 1. **Static overlay source** — YAML under
    `config/stock_overlays/<industry_id>/<ts_code>.yaml` and
-   `config/industry_overlays/<industry_id>.yaml` (agent-generated,
-   git-tracked, quarterly cadence). `SPACE_ECONOMY` has pending industry
+   `config/industry_overlays/<industry_id>.yaml` (31 graph nodes per
+   industry, agent-generated, git-tracked, quarterly cadence).
+   `SPACE_ECONOMY` has pending industry
    graph/overlay stubs but no stock overlays.
 2. **Compiled graph snapshot** — SQLite WAL file `runtime/hot.sqlite` stores
    `overlay_manifest`, `company_node_instance`, `company_edge_instance`,
@@ -476,7 +511,7 @@ series stay in Parquet for replay and analysis.
 | Data / information type | Storage location | Update mode | Purpose |
 |---|---|---|---|
 | Industry graph templates | `config/industry_graphs/<industry_id>.yaml` | authored / quarterly | Base causal graph and industry priors |
-| Industry overlay slots | `config/industry_overlays/<industry_id>.yaml` | agent / quarterly | 14 L0 industry-derived fields; inherited by stock overlays |
+| Industry overlay nodes | `config/industry_overlays/<industry_id>.yaml` | agent / quarterly | 31 industry graph nodes; inherited by stock overlays |
 | Stock overlay source | `config/stock_overlays/<industry_id>/<ts_code>.yaml` | agent / quarterly | Full company graph slots, missing policies, calculation types, edges, scores, views |
 | Field governance config | `config/data_point_roles.yaml`, `config/schema_field_roles.yaml` | authored / reviewed | 250 dp_id roles, score targets, missing fallback, proxy candidates, neutral values |
 | Market adapter config | `config/market_adapters.yaml` | authored / reviewed | CN_A / US / HK local multipliers, scores, and discounts applied outside the core graph |
@@ -525,7 +560,8 @@ curl "http://127.0.0.1:8701/api/project-ult/history?ts_code=300750.SZ&dp_id=L7.f
 curl -N "http://127.0.0.1:8701/api/project-ult/stream/realtime?ts_code=300750.SZ&industry_id=STORAGE_GRID"
 ```
 
-The server is **read-only** and only exposes routes mvp20 owns:
+The server is **read-only**. The table below lists the core route examples;
+`mvp20/server.py` is the source of truth for the full route regex list.
 
 | Route | Returns |
 |---|---|
@@ -536,13 +572,25 @@ The server is **read-only** and only exposes routes mvp20 owns:
 | `/api/project-ult/modules` | modules.lock.yaml as JSON |
 | `/api/project-ult/reasoner/providers` | data_providers.yaml + validation summary |
 | `/api/project-ult/profiles` | universe constituents (filterable by `industry` / `pool` / `role` / `market` query strings) |
-| `/api/project-ult/industry-graphs` | list of 12 industry graphs (or `?industry_id=X` for one) |
+| `/api/project-ult/industry-graphs` | list of 12 strict-valid industry graphs (or `?industry_id=X` for one; `SPACE_ECONOMY` is a pending stub) |
 | `/api/project-ult/cycles` | empty list (cycles are produced by upstream main-core) |
 | `/api/project-ult/stock-overlay?ts_code=X` | compiled primary-industry overlay + realtime + scores + coverage + alerts |
 | `/api/project-ult/stock-overlay?ts_code=X&industry_id=Y` | compiled overlay for a specific company-industry view |
 | `/api/project-ult/stream/realtime?ts_code=X&industry_id=Y` | Server-Sent Events stream emitting `snapshot` / `delta` / `heartbeat` frames |
 | `/api/project-ult/history?ts_code=X&dp_id=Y` | time-ordered minute history points (Parquet + DuckDB) |
 | `/api/subsystems/status` | per-module unknown/locked status |
+| `/api/project-ult/market-events` | latest cross-stock realtime event stream payload |
+| `/api/project-ult/technicals?ts_code=X` | MA / MACD / RSI / KDJ / BOLL / VOL / ATR / OBV pack |
+| `/api/project-ult/aggregate`, `/api/project-ult/coverage`, `/api/project-ult/score` | derived layer aggregate, coverage, and score envelopes |
+| `/api/admin/*`, `/api/alerts/*` | local mvp20 BFF empty-state stubs |
+
+Adapter-backed route families include
+`/api/project-ult/graph/*`, `/api/project-ult/data/canonical/*`,
+`/api/project-ult/data/raw/*`, `/api/project-ult/entities*`,
+`/api/project-ult/reasoner/*` except `/reasoner/providers`,
+`/api/project-ult/cycles/<id>`, `/api/stocks/*`, `/api/pool/*`,
+`/api/world-state/*`, `/api/project-ult/audit/*`, `/api/audit/*`,
+`/api/project-ult/backtests*`, and `/api/backtest/*`.
 
 Six upstream `project-ult-*` modules (graph-engine, audit-eval, main-core,
 data-platform, entity-registry, reasoner-runtime) plus `contracts` (their
@@ -552,15 +600,18 @@ sources). Routes formerly returning 503 are now **skeleton-wired** via
 `mvp20/adapters/<module>.py` — handlers call the vendored package's
 `__version__` then return a 200 envelope with `fixture: true` and
 `wire_depth: skeleton`. If a vendor package fails to import at adapter
-load time (missing runtime deps like Neo4j / DuckDB / LLM SDK), the adapter
+load time (for example because a top-level Python package is missing), the adapter
 returns a 503 `UPSTREAM_UNAVAILABLE` envelope with the import error in
 `details.import_error` — UI still shows a clean banner, no crash.
 
-**No routes return 503 anymore.** `frontend-api` is intentionally NOT vendored
-under `upstream/` — `FrontEnd/` is the sole frontend in this repo and mvp20
-`server.py` acts as its BFF directly. Legacy `/api/admin/*` and `/api/alerts/*`
-paths are handled by mvp20 with empty stub envelopes (`module: mvp20-bff,
-fixture: true`) so the UI shows clean empty states instead of error banners.
+There are no deliberately 503-only placeholder routes in the normal mvp20
+surface anymore. Adapter routes can still return `503 UPSTREAM_UNAVAILABLE`
+when a vendored package cannot import because an optional runtime dependency
+is missing. `frontend-api` is intentionally NOT vendored under `upstream/` —
+`FrontEnd/` is the sole frontend in this repo and mvp20 `server.py` acts as
+its BFF directly. Legacy `/api/admin/*` and `/api/alerts/*` paths are handled
+by mvp20 with empty stub envelopes (`module: mvp20-bff, fixture: true`) so the
+UI shows clean empty states instead of error banners.
 
 ### Runtime services (optional, for deeper-than-skeleton wire)
 
@@ -576,9 +627,11 @@ installed by `pip install -e ".[dev]"`:
 | `main-core` | (none for skeleton) | only needs pydantic, already installed |
 | `audit-eval` | DuckDB + evidently | `pip install duckdb evidently` |
 
-Without these, adapters still return 200 fixture data — only deeper API
-calls would surface a runtime ImportError caught by the adapter, downgrading
-to 503.
+Without these backing services, skeleton adapters still return 200 fixture
+data as long as their vendored package imports. If a missing Python package
+prevents that top-level import, the adapter availability check returns
+`503 UPSTREAM_UNAVAILABLE`; unexpected handler exceptions are surfaced by the
+HTTP layer as `500 HANDLER_ERROR`.
 
 ### Start the frontend
 

@@ -5,8 +5,8 @@
 > 来源交叉：
 >
 > - **spec source of truth**: `config/data_point_roles.yaml`（250 dp_id）+ `docs/data_sources/coverage_audit.md` §7 完整覆盖矩阵
-> - **实测 SQLite**: `runtime/hot.sqlite` `realtime_current` 表 distinct dp_id（132 个；105 在 spec 250 内）
-> - **实测 overlay yaml**: `config/{industry_overlays,stock_overlays}/**/*.yaml` 节点 `data_status ∈ {Known, Optionality}`（30 个在 spec 250 内 / X5 候选）
+> - **实测 SQLite**: `runtime/hot.sqlite` `realtime_current` 表 distinct dp_id（181 个；136 在 spec 250 内；123 distinct source）
+> - **实测 overlay yaml**: `config/{industry_overlays,stock_overlays}/**/*.yaml` 节点 `data_status ∈ {Known, Optionality}`（48 total / 47 在 spec 250 内）
 >
 > 用户提出的架构原则（来自任务上下文）：
 >
@@ -65,18 +65,18 @@
 
 | Bucket | SQLite 已 emit | OverlayKnown | 都没（missing） | 小计 |
 |---|---:|---:|---:|---:|
-| A | 73 | 0 | 33 | 106 |
+| A | 104 | 0 | 2 | 106 |
 | B | 24 | 0 | 4 | 28 |
-| C | 6 | 21 | 76 | 103 |
-| D | 0 | 8 | 0 | 8 |
+| C | 6 | 42 | 55 | 103 |
+| D | 0 | 4 | 4 | 8 |
 | E | 2 | 1 | 2 | 5 |
-| **合计** | **105** | **30** | **115** | **250** |
+| **合计** | **136** | **47** | **67** | **250** |
 
 **关键观察**：
 
-- A bucket 106 个中 33 个还没 emit（fetcher 没接全 / dp_id alias 不匹配 / 行业级未实例化）— X4 hot snapshot 主战场
-- C bucket 103 个中 76 个尚未填（X5 工作流核心 KPI；现在只填了 21 个 + 6 个 SQLite 误标）
-- D bucket 8 个全在 overlay 试填阶段（实际产物质量待评估，可能其中部分要重判到 C）
+- A bucket 106 个中仅 2 个还没 emit（`L10.industry.inventory_orders`、`L10.industry.sales_price`）— X4 hot snapshot 主战场已大幅收敛
+- C bucket 103 个中 55 个尚未填（X5 工作流核心 KPI；现在 42 个 overlay + 6 个 SQLite 近似/误标）
+- D bucket 8 个中 4 个已在 overlay 试填阶段，4 个仍 missing（实际产物质量待评估，可能其中部分要重判到 C）
 - B bucket 28 个中 4 个 missing 是因为下游派生未触发（L11.long.* / L11.mode 等待 X4 contribution chain）
 
 ---
@@ -245,7 +245,7 @@
 
 | dp_id | 标签 | spec 覆盖 | 实测状态 | Bucket | 决策依据 |
 |---|---|---|---|:-:|---|
-| `L6.mult.dcf` | DCF估值 | ○ 仅 partial | SQLite | **E** | FMP Premium ($) 才解锁; 无其他源 full |
+| `L6.mult.dcf` | DCF估值 | ○ 仅 partial | SQLite | **A** | FMP Starter `/stable/discounted-cash-flow` 已可用，runtime 已由 `fmp:discounted-cash-flow` 落库 |
 | `L6.mult.ev_ebitda` | EV/EBITDA | ✓ 单源覆盖 | SQLite | **A** | spec 已 ✓ — 多源/单源 full 直取硬数据 |
 | `L6.mult.forward_pe` | Forward PE | ○ 仅 partial | missing | **E** | FMP Premium ($) 才解锁; 无其他源 full |
 | `L6.mult.mcap_fcf` | 市值/FCF | ✓✓ 多源覆盖 | SQLite | **A** | spec 已 ✓ — 多源/单源 full 直取硬数据 |
@@ -401,60 +401,23 @@
 
 > **定义**：spec coverage_audit §7 总评 ✓ 单源 full 或 ✓✓ 多源 full；现接 5 源（FMP / Tushare / AKShare / yfinance / Futu）任一源能直接出值。
 
-**实测**：106 个中 73 个已在 SQLite `realtime_current` 落库（69%）；33 个 spec ✓ 但 SQLite 还没 emit。
+**实测**：106 个中 104 个已在 SQLite `realtime_current` 落库（98%）；2 个 spec ✓ / partial 但 SQLite 还没 emit。
 
-**33 个 spec ✓ 但还没 emit 的 dp_id**：
+**当前仍未 emit 的 A bucket dp_id**：
 
-- `L0.cost.capital` — 行业资金成本 (spec: ✓ 单源覆盖)
-- `L0.sentiment.institutional` — 机构配置 (spec: ✓ 单源覆盖)
-- `L0.sentiment.leader_drag` — 龙头带动 (spec: ✓✓ 多源覆盖)
-- `L0.sentiment.social` — 社媒/主题热度 (spec: ✓✓ 多源覆盖)
-- `L10.industry.inventory_orders` — 行业库存/订单验证 (spec: ○ 仅 partial)
-- `L10.industry.sales_price` — 行业销量/价格验证 (spec: ○ 仅 partial)
-- `L10.val.peer` — 同业估值 (spec: ✓ 单源覆盖)
-- `L2.segment.gross_margin` — 业务线毛利率 (spec: ✓ 单源覆盖)
-- `L2.segment.growth` — 业务线增速 (spec: ✓ 单源覆盖)
-- `L2.segment.revenue_share` — 业务线收入占比 (spec: ✓ 单源覆盖)
-- `L5.fcst.guidance_change` — 公司指引变化 (spec: ✓ 单源覆盖)
-- `L5.surprise.beat_miss` — 超预期/低于预期幅度 (spec: ✓ 单源覆盖)
-- `L6.priced.analyst_revision` — 分析师上修程度 (spec: ✓ 单源覆盖)
-- `L6.priced.discussion` — 市场讨论热度 (spec: ✓✓ 多源覆盖)
-- `L6.priced.iv` — 期权隐含波动 (spec: ✓ 单源覆盖)
-- `L6.state.expansion_compression` — 估值扩张/压缩空间 (spec: ✓ 单源覆盖)
-- `L6.state.industry_center` — 行业估值中枢 (spec: ✓ 单源覆盖)
-- `L6.state.peer_compare` — 同业估值对比 (spec: ✓ 单源覆盖)
-- `L7.mood.analyst_rating` — 分析师评级分布 (spec: ✓ 单源覆盖)
-- `L7.trade.iv` — 隐含波动率 (spec: ✓ 单源覆盖)
-- `L7.trade.options_cp` — 期权Call/Put (spec: ✓ 单源覆盖)
-- `L8.cap.crowdedness` — 资金拥挤 (spec: ✓✓ 多源覆盖)
-- `L8.cap.liquidity_short` — 流动性不足 (spec: ✓✓ 多源覆盖)
-- `L8.cap.outflow_cut` — ETF流出/机构减仓 (spec: ✓ 单源覆盖)
-- `L8.cap.short_increase` — 空头增加 (spec: ✓ 单源覆盖)
-- `L8.fin.eps_downward` — EPS下修 (spec: ✓ 单源覆盖)
-- `L8.fin.goodwill_impairment` — 商誉减值 (spec: ✓ 单源覆盖)
-- `L8.fin.revenue_profit_miss` — 收入/利润低于预期 (spec: ✓ 单源覆盖)
-- `L8.industry.valuation_compression` — 行业估值压缩 (spec: ✓✓ 多源覆盖)
-- `L8.op.cost_overrun` — 成本失控 (spec: ✓ 单源覆盖)
-- `L9.capital.etf_block` — ETF调整/大宗交易 (spec: ✓ 单源覆盖)
-- `L9.capital.margin_anomaly` — 融资/期权/空头异动 (spec: ✓ 单源覆盖)
-- `L9.media.analyst_action` — 分析师评级/研报变动 (spec: ✓ 单源覆盖)
+- `L10.industry.inventory_orders` — 行业库存/订单验证
+- `L10.industry.sales_price` — 行业销量/价格验证
 
 **A 没 emit 的根因（按现状推断）**：
 
-- **行业级 L0.*** 部分字段（如 `L0.cost.capital`、`L0.sentiment.*`）— 行业级 fetcher 还没全接，需要按 industry_id 实例化
-- **L2.segment.*** 三个 ✓ 字段（Tushare 分部数据）— Tushare `fina_indicator` 已抓但 dp_id 没 alias 到这三个字段
-- **L4.cost.raw_material / labor / eff.turnover / eff.cycle** — `L4.cost.*` 已 emit（去重不算），但 alias 表可能漏映射
-- **L5.fcst.*** 单源 ✓ 全部依赖 Tushare 分析师预期接口（`forecast` / `report_rc`），fetcher 尚未实现
-- **L8.gov.management_change / insider_sell** 多源 full 但需要 alias 到 disclosure / insider trades 接口
-- **L9.media.report / L9.macro.cpi_employment / L9.company.earnings_guidance** — 多源 full 但 alias 链不完整
-- **L11.short.technical** — Futu/FMP K 线 + 指标都全，需要 derive 层算 RSI/MA 等再回写
+- 剩余两项是行业验证类字段，当前 provider 侧已有若干行业/板块和宏观代理，但还没有把库存/订单、销量/价格验证结果以这两个精确 dp_id 落库。
+- 早期报告中列出的 L0 sentiment、L2 segment、L5 forecast、L6 IV、L8/L9 事件类缺口已经在当前 runtime 中落库或经 alias/derive 收敛，不再作为 33 个缺口跟踪。
 
 **推荐 next action**（A bucket，X4 主线）：
 
-1. 跑 `scripts/audit_dp_alias.py`（如不存在则建一个）：对 A bucket 33 个 missing 跑 reverse-mapping 检查现有 fetcher 是否产值但 dp_id 没正确 alias
-2. 补 Tushare 分析师预期 fetcher（5 个 L5.fcst.* + L5.surprise.sell_side / beat_miss）
-3. 行业级 dp_id 批量实例化（L0.sentiment.* / L0.cost.capital）— 按 industry_id 12 个分别 emit
-4. derive 层补 L11.short.technical 与 L9 媒体/宏观字段
+1. 为 `L10.industry.inventory_orders` 和 `L10.industry.sales_price` 补明确 derive / alias 规则，避免继续用近似行业字段隐式覆盖。
+2. 保留 `scripts/audit_dp_alias.py` 类反向映射检查，防止 fetcher 已有值但 dp_id 未落库。
+3. 对新增 provider endpoint 或 alias，先写入 CSV catalog，再更新调度和 provider capability 文档。
 
 ### 3.B bucket B — closed-derived（28 个，11.2%）
 
@@ -526,9 +489,9 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 
 > **定义**：spec ✗ 完全缺失 或 ○ partial，且字段语义是文本叙事/分类/定性判断；LLM 用本地材料（IR 问答库、年报章节、业绩会纪要、行业 prior）即可填。
 
-**实测状态**：21 已在 overlay yaml Known / 6 误标在 SQLite（可能是占位）/ 76 完全未填。
+**实测状态**：42 已在 overlay yaml Known/Optionality，6 个已在 SQLite 以近似/alias 形式出现，55 个完全未填。当前 overlay Known/Optionality 总计 48 个 dp_id，其中 47 个在 spec 250 内。
 
-**已在 overlay 试填的 21 个**（验证 X5 prompt 可行性的 trial）：
+**已在 overlay 试填的代表性字段**（早期 trial 清单；完整集合为 42 个 C bucket 字段）：
 
 - `L0.cost.cac` — 行业获客成本
 - `L0.cost.rent` — 行业租金成本
@@ -552,7 +515,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 - `L4.price.discount` — 折扣率
 - `L4.price.subscription` — 订阅价格
 
-**已知 SQLite emit 误标 6 个**（应该是占位/alias，可能 dp_id 命名相似）：
+**已知 SQLite emit 近似/alias 6 个**（建议 X5 复填或校验）：
 
 - `L0.cost.energy_logistics` — 行业能源/物流成本（可能是 partial fetcher 落库的近似值，需 X5 复填）
 - `L0.cost.raw_material` — 原材料价格（可能是 partial fetcher 落库的近似值，需 X5 复填）
@@ -561,7 +524,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 - `L9.industry.compete_risk` — 行业竞争/风险事件（可能是 partial fetcher 落库的近似值，需 X5 复填）
 - `L9.industry.policy_change` — 行业政策变化（可能是 partial fetcher 落库的近似值，需 X5 复填）
 
-**完全未填 76 个**（X5 之后扩展空间）：按 layer 分组：
+**完全未填 55 个**（X5 之后扩展空间）：以下是早期按 layer 维护的代表性清单；完整集合应由 `config/data_point_roles.yaml`、runtime distinct dp_id 和 overlay Known/Optionality 集合实时生成，避免手写清单再次漂移。
 
 **L0**（14）：
 - `L0.supply.inventory` — 行业库存变化
@@ -661,7 +624,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 |---|---|:-:|---|
 | **年报 / 半年报全文** | L1 position, L2 segment, L3 customer/channel/region | ⚠ | 公司公告 raw 文本可批量爬到本地，但当前流程缺一步 RAG 索引 |
 | **业绩会纪要 / 调研纪要** | L1 stickiness, L4 capacity/discount, L8 op risk | ✗ | 通常付费源或券商内部材料；闭环最难 |
-| **行业 prior（codex 内置）** | L0.* 14 条行业字段 | ✓ | 已在 `industry_overlays/*.yaml` 实践 |
+| **行业 prior（codex 内置）** | 当前每个 industry overlay 31 个 graph nodes | ✓ | 已在 `industry_overlays/*.yaml` 实践 |
 | **公开 IR 问答库** | L1, L3, L4 软指标 | ⚠ | 巨潮/SSE/SZSE 互动易已可抓，需 fetcher |
 | **L9 新闻流原始文本** | L8.industry/shock/reg, L9 events | ⚠ | SQLite `realtime_current` 有 L9.event.news_flow，可作输入 |
 
@@ -675,7 +638,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 **推荐 next action**（C bucket，X5 战场）：
 
 1. **先跑 trial**：X5 已并行的 26 个新字段（Group A 公司画像 + B 行业补 + C L4 软指标）跑完后，看 Known 率分布
-2. **Known 率 > 60%** → 把 C bucket 76 个 missing 字段批量扩 prompt
+2. **Known 率 > 60%** → 把 C bucket 55 个 missing 字段批量扩 prompt
 3. **Known 率 < 40%** → 先补 IR 问答库 fetcher（接巨潮/SSE 互动易）再回跑
 4. **每字段 evidence_quality 阈值**：< low 不接受落 Known（保持 Unknown + 触发人工 review）
 
@@ -763,7 +726,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 2. **`L6.mult.forward_pe`** — Tushare 分析师预期能算 forward EPS，再除股价即得 Forward PE → 升 B bucket（派生）
 3. **`L7.trade.gamma`** — Futu LV2 期权链可推（已 ○ partial），需要 derive 层算 → 升 B（前提：Futu 期权链字段稳定）
 4. **`L5.surprise.buy_whisper`** — 接受永久 Unknown，或长期接付费 alt-data（Bloomberg/Refinitiv whisper）— ROI 低，推迟
-5. **FMP Premium 升级 ROI**：仅 `L6.mult.forward_pe`+`L6.mult.dcf` 严格属于 Premium 解锁；其余 spec 标 $ 的字段都能通过其他源 ✓ 满足 → 不建议升级（$29/mo for 2 fields）
+5. **FMP Premium 升级 ROI**：`L6.mult.dcf`、`analyst_estimates`、`sec_filings`、`macro`、`forex` 已在 Starter active catalog；Premium 主要解锁 transcripts、FMP-native 13F/institutional、FMP options 和 minute bars，不再把 DCF/analyst 当作 Premium-only。
 
 ---
 
@@ -771,7 +734,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 
 ### M1（X5 完成月）：closed-llm 收敛
 
-**目标**：C bucket 21 → 50+ Known
+**目标**：C bucket 48 total overlay Known/Optionality → 60+，并优先清掉 55 个 missing 中的高权重字段
 
 - X5 跑完 26 字段 trial（Group A 公司画像 + B 行业补 + C L4 软指标）
 - 监控 Known 率 / evidence_quality / 同一字段跨公司方差
@@ -779,8 +742,8 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 
 **输出指标**：
 
-- C bucket Known 率 ≥ 60%（21 个已填 + 30 个新填 = 51/103 ≈ 50%）
-- A bucket missing 33 → 10（X4 alias 修补）
+- C bucket Known 率 ≥ 60%（以脚本生成的 C bucket 103 字段交叉统计为准）
+- A bucket missing 2 → 0（补 `L10.industry.inventory_orders` / `L10.industry.sales_price`）
 
 ### M2（M1+1 ~ M1+2）：B 派生加速 + D 试点 2 字段
 
@@ -861,7 +824,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 
 **未知**：本报告无法看到 X5 工作流的 26 个字段精确列表（任务上下文说 Group A 公司画像 + B 行业补 + C L4 软指标）。本报告基于：
 
-- overlay yaml 实测有 30 个 spec-内字段 data_status=Known（推断这是 X5 trial 已填的部分）
+- overlay yaml 实测有 48 个 data_status=Known/Optionality 的 distinct dp_id，其中 47 个在 spec 250 内
 - 32 missing + 部分 partial 的 C 类（如 L1.position.brand / L4.eff.* 等）应当是 X5 候选
 
 **若 X5 26 字段中包含 D 类**（如 `L2.newbiz.tam`）→ 应识别并按 D 流程对待（开 web search），不强行闭环
@@ -880,8 +843,8 @@ sqlite_dps = set(r[0] for r in conn.execute(
     'SELECT DISTINCT dp_id FROM realtime_current'))
 spec = set(yaml.safe_load(
     open('config/data_point_roles.yaml'))['data_points'].keys())
-print('SQLite ∩ spec:', len(sqlite_dps & spec))  # 105
-print('SQLite − spec:', len(sqlite_dps - spec))  # 27 (out of spec)
+print('SQLite ∩ spec:', len(sqlite_dps & spec))  # 136
+print('SQLite − spec:', len(sqlite_dps - spec))  # 45 (out of spec)
 
 # B. overlay yaml 已填字段
 import glob
@@ -892,10 +855,10 @@ for f in glob.glob('config/stock_overlays/*/*.yaml') + \
     for n in y.get('nodes', []) or []:
         if n.get('data_status') in ('Known', 'Optionality') and n.get('dp_id'):
             overlay_known.add(n['dp_id'])
-print('Overlay Known:', len(overlay_known))  # 31, 30 in spec
+print('Overlay Known:', len(overlay_known))  # 48 total, 47 in spec
 ```
 
-### 6.2 SQLite emit 但不在 spec 250 的 27 个 dp_id
+### 6.2 SQLite emit 但不在 spec 250 的 45 个 dp_id
 
 （这些是 fetcher 落库的 alias / 内部字段，不是 spec 字段，本报告不分类）
 
@@ -952,8 +915,8 @@ print('Overlay Known:', len(overlay_known))  # 31, 30 in spec
 
 - `config/data_point_roles.yaml` — spec 250 dp_id 与 field role
 - `docs/data_sources/coverage_audit.md` Section 4 + 7 — 5 源覆盖矩阵（真相源）
-- `docs/data_sources/llm_derived_nodes.md` — 32 缺失字段 LLM 衍生设计
-- `runtime/hot.sqlite` 表 `realtime_current` — 实测 132 dp_id（105 在 spec）
-- `config/industry_overlays/*.yaml` + `config/stock_overlays/*/*.yaml` — overlay 已填字段 30 个在 spec 内
+- `docs/data_sources/llm_derived_nodes.md` — 112-node stock overlay / 31-node industry overlay 口径
+- `runtime/hot.sqlite` 表 `realtime_current` — 实测 181 distinct dp_id（136 在 spec）
+- `config/industry_overlays/*.yaml` + `config/stock_overlays/*/*.yaml` — overlay Known/Optionality 48 total / 47 in spec
 - `图谱设计.md` — 12 层 spec 图谱设计
 - `docs/data_sources/FMP_TIER_REQUIREMENTS.md` — FMP Premium 升级映射

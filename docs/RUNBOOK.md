@@ -57,8 +57,10 @@ specific tickers.
 8. Run `mvp20 plan-backfill` and review provider coverage / gaps. The
    plan auto-loads `data_providers.yaml` when it sits next to the
    manifest and surfaces per-market provider lists.
-9. Verify the 6 vendored upstream modules (under `upstream/`) are
-   importable through their skeleton adapters:
+9. Verify the 6 adapter-backed vendored upstream modules (under `upstream/`)
+   are importable through their skeleton adapters. The `contracts` directory
+   is vendored as their shared schema dependency, while
+   `locks/modules.lock.yaml` pins the broader 14-module Project ULT set:
    `python -c "from mvp20.adapters import audit_eval, data_platform,
    entity_registry, graph_engine, main_core, reasoner_runtime;
    all_avail = all(m._AVAILABLE for m in [audit_eval, data_platform,
@@ -78,7 +80,7 @@ specific tickers.
 
     | Layer | Location | Responsibility |
     |---|---|---|
-    | YAML source | `config/industry_overlays/<industry_id>.yaml` | 14 L0 industry-derived slots |
+    | YAML source | `config/industry_overlays/<industry_id>.yaml` | 31 industry overlay graph nodes |
     | YAML source | `config/stock_overlays/<industry_id>/<ts_code>.yaml` | company-industry overlay source |
     | SQLite compiled | `runtime/hot.sqlite:company_graph_snapshot` | frontend main graph payload |
     | SQLite compiled | `runtime/hot.sqlite:overlay_alert` | missing/low-confidence overlay alerts |
@@ -213,7 +215,7 @@ spec = set(yaml.safe_load(open('config/data_point_roles.yaml'))['data_points'].k
 sdps = set(r[0] for r in conn.execute('SELECT DISTINCT dp_id FROM realtime_current').fetchall())
 print('spec_intersect:', len(sdps & spec), '/ 250')
 "
-# Current baseline: 166 distinct_dp / 136 spec_intersect.
+# Current baseline: 181 distinct_dp / 136 spec_intersect.
 ```
 
 ## Q4 — Z4 LLM run preparation

@@ -31,11 +31,15 @@ caches are reset between tests.
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from mvp20.sources import fmp_source
+
+_UPCOMING_EARNINGS_DATE = (
+    datetime.now(timezone.utc).date() + timedelta(days=30)
+).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +330,8 @@ def _short_interest_payload(symbol: str = "NVDA") -> list[dict]:
 
 def _earnings_cal_payload(symbol: str = "NVDA") -> list[dict]:
     return [
-        {"symbol": symbol, "date": "2026-05-20", "epsActual": None,
+        {"symbol": symbol, "date": _UPCOMING_EARNINGS_DATE,
+         "epsActual": None,
          "epsEstimated": 1.76, "revenueActual": None,
          "revenueEstimated": 78_000_000_000.0,
          "fiscalDateEnding": "2026-04-30"},
@@ -737,7 +742,7 @@ def test_l9_company_earnings_guidance_picks_upcoming(monkeypatch,
     eg = next(r for r in rows if r[1] == "L9.company.earnings_guidance")
     assert eg[3] == "Known"
     payload = json.loads(eg[2])
-    assert payload["next_earnings_date"] == "2026-05-20"
+    assert payload["next_earnings_date"] == _UPCOMING_EARNINGS_DATE
     assert payload["is_upcoming"] is True
 
 

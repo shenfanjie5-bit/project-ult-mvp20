@@ -83,14 +83,19 @@
 
 ## 5. FMP Premium ($29/mo) 升级 ROI
 
-升级 Premium 后从 premium_locked 解锁 **4** 个数据点（之前没有 full 源覆盖的）：
+当前 FMP Starter catalog 已把 `analyst_estimates`、`dcf_valuation`,
+`sec_filings`、`macro` 和 `forex` 纳入 active capabilities；`L6.mult.dcf`
+也已在 runtime 中由 `fmp:discounted-cash-flow` 落库。因此 Premium 不再
+应被描述为解锁 DCF / analyst 的必要条件。升级 Premium 的主要收益是：
+业绩会 transcript、FMP-native 13F / institutional 持仓、FMP options 和
+分钟级 intraday bars；Ultimate 才解锁 ESG 与政府交易。
 
-| data_point_id | layer | label | FMP endpoint |
+| Unlock area | Layer / usage | Label | FMP endpoint |
 |---|---|---|---|
-| `L6.mult.forward_pe` | L6_valuation | Forward PE | /analyst-estimates |
-| `L6.mult.dcf` | L6_valuation | DCF估值 | /discounted-cash-flow |
 | `L7.flow.institutional` | L7_capital_sentiment | 机构/对冲基金持仓 | /13F, /institutional-holder |
 | `L7.trade.gamma` | L7_capital_sentiment | Gamma暴露 | /historical-chain |
+| earnings transcripts | L9 catalyst / LLM inputs | 业绩会 transcript 事件 | /earning_call_transcript |
+| minute bars | L7 / technical derived inputs | 分钟级盘面结构 | /historical-chart/1min |
 
 ## 6. 多源 full 覆盖（67 个安全数据点）
 

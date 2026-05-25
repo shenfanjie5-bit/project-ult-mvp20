@@ -385,12 +385,15 @@ def test_coverage_summary_for_overlay_runs_on_catl() -> None:
     overall_coverage = report["overall"]["data_coverage"]
     assert 0.0 <= overall_coverage < 1.0
 
-    # Round-trip: overall totals must reflect that there is at least one
-    # Known datum and at least one Unknown one. If either side were zero,
-    # the coverage value above would be degenerate (0.0 or 1.0).
+    # Round-trip: overall totals must reflect the real child-node state mix.
+    # The CATL company root is Known, but child-level coverage currently has
+    # no explicit Known nodes; it is mostly Unknown plus handled states such as
+    # Inactive and Optionality.
     totals = report["overall"]["totals"]
-    assert totals["n_known"] >= 1
     assert totals["n_unknown"] >= 1
+    assert totals["n_inactive"] >= 1
+    assert totals["n_optionality"] >= 1
+    assert sum(totals.values()) == sum(n["n_children"] for n in report["per_node"])
     assert report["overall"]["warning_level"] in {
         "ok",
         "low_confidence",

@@ -60,7 +60,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
 log = logging.getLogger("mvp20.sources.akshare")
@@ -1559,6 +1559,7 @@ def fetch_l8_cap_outflow_cut(a_codes: list[str], now: int) -> list[tuple]:
 def _fetch_dzjy_events_last5(
     max_trade_days: int = 5,
     max_calendar_days: int = 12,
+    reference_date: date | datetime | str | None = None,
 ) -> dict[str, list[dict]]:
     """Aggregate last ``max_trade_days`` of 大宗交易 events keyed by
     6-digit 证券代码.
@@ -1577,9 +1578,10 @@ def _fetch_dzjy_events_last5(
         return {}
 
     events: dict[str, list[dict]] = {}
+    base_date = _normalise_dzjy_reference_date(reference_date)
     trade_days_seen = 0
     for d_back in range(0, max_calendar_days + 1):
-        date_str = (datetime.now() - timedelta(days=d_back)).strftime("%Y%m%d")
+        date_str = (base_date - timedelta(days=d_back)).strftime("%Y%m%d")
         try:
             df = ak.stock_dzjy_mrmx(start_date=date_str, end_date=date_str)
         except Exception:  # noqa: BLE001
@@ -1613,7 +1615,30 @@ def _fetch_dzjy_events_last5(
     return events
 
 
-def fetch_l9_capital_etf_block(a_codes: list[str], now: int) -> list[tuple]:
+def _normalise_dzjy_reference_date(
+    reference_date: date | datetime | str | None,
+) -> datetime:
+    if reference_date is None:
+        return datetime.now()
+    if isinstance(reference_date, datetime):
+        return reference_date
+    if isinstance(reference_date, date):
+        return datetime.combine(reference_date, datetime.min.time())
+    value = str(reference_date).strip()
+    for fmt in ("%Y%m%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return datetime.fromisoformat(value)
+
+
+def fetch_l9_capital_etf_block(
+    a_codes: list[str],
+    now: int,
+    *,
+    reference_date: date | datetime | str | None = None,
+) -> list[tuple]:
     """``L9.capital.etf_block`` — per A-share, count + total amount of
     大宗交易 events in the last 5 trade days.
 
@@ -1626,7 +1651,8 @@ def fetch_l9_capital_etf_block(a_codes: list[str], now: int) -> list[tuple]:
 
     if not a_codes:
         return []
-    cache_key = ",".join(sorted(a_codes))
+    base_date = _normalise_dzjy_reference_date(reference_date)
+    cache_key = f"{','.join(sorted(a_codes))}|{base_date:%Y%m%d}"
     cached_ts = int(_LAST_BLOCK_FETCH.get("ts") or 0)
     cached_key = str(_LAST_BLOCK_FETCH.get("key") or "")
     cached_rows = _LAST_BLOCK_FETCH.get("rows") or []
@@ -1634,7 +1660,7 @@ def fetch_l9_capital_etf_block(a_codes: list[str], now: int) -> list[tuple]:
             and cached_rows and cached_key == cache_key):
         return list(cached_rows)
 
-    block_by_code = _fetch_dzjy_events_last5()
+    block_by_code = _fetch_dzjy_events_last5(reference_date=base_date)
     as_of = _as_of_iso()
     rows: list[tuple] = []
     for ts_code in a_codes:

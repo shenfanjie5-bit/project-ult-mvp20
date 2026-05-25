@@ -2331,7 +2331,9 @@ codex_decision:
 ### 3.2 X5 新增 26 字段（已加 SLOT_DEFS）
 
 > 默认建议：`route=llm_close`。
-> 这 26 字段是 X5 工作流已上 overlays.py 的新槽位，schema 已扩到 59 slot。
+> 这 26 字段是 X5 工作流已上 overlays.py 的新槽位；当前治理 schema
+> 注册 111 个 dp_id，compiled stock overlay 为 112 个 graph nodes（含
+> `company` root）。历史 "59 slot" 只保留为 X5-only 子集口径。
 > codex 关注：frequency 决策（公司画像 → static_picture; 经营 → quarterly）。
 
 | dp_id | bucket | label | 默认 route | 默认 frequency |
@@ -2493,6 +2495,6 @@ codex 处理完后回写本文件：
 - spec 250 dp_id: `config/data_point_roles.yaml`
 - bucket 分类: `docs/data_sources/field_strategy_v1.md` §2 完整决策表（已校验全 250 字段映射）
 - 5 源覆盖: `docs/data_sources/coverage_audit.md` §7
-- SQLite 实测: `runtime/hot.sqlite` `realtime_current` (135 distinct dp_id, 105 在 spec 内)
-- overlay 实测: `config/{industry,stock}_overlays/**/*.yaml` (59 slot, 6 Known/Optionality)
+- SQLite 实测: `runtime/hot.sqlite` `realtime_current` (181 distinct dp_id, 136 在 spec 250 内)
+- overlay 实测: `config/{industry,stock}_overlays/**/*.yaml` (stock overlay 每文件 112 graph nodes；Known/Optionality 48 total / 47 in spec)
 - 历史 32 / X5 26: prompt context（已在 §3.1 / §3.2 单独列出）
