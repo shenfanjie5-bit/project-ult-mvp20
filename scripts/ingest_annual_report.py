@@ -39,7 +39,13 @@ sys.path.insert(0, str(ROOT))
 from mvp20.storage import upsert_realtime  # noqa: E402
 
 
-EXCERPT_MAXLEN = 1200
+# Per-section cap on stored excerpt length. Raised from 1200 → 3500 so the
+# full multi-risk ``risk_disclosure`` block (issuers routinely list 5-7 numbered
+# risks — FX, supply-chain, trade-barrier paragraphs often fall past the first
+# 1200 chars) lands in SQLite. Without this, codex correctly quotes verbatim
+# risk language from the local PDF that the truncated section cannot
+# self-validate, producing spurious ``--check-excerpt`` mis-cite warnings.
+EXCERPT_MAXLEN = 3500
 
 
 def extract_pdf_text(pdf_path: Path) -> str:
@@ -116,7 +122,7 @@ def extract_sections(full_text: str) -> dict[str, str]:
             "风险因素",
         ],
     )
-    sections["risk_disclosure"] = _slice(full_text, pos, 1800)[:EXCERPT_MAXLEN]
+    sections["risk_disclosure"] = _slice(full_text, pos, 3600)[:EXCERPT_MAXLEN]
 
     return sections
 

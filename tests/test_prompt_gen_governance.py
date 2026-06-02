@@ -860,6 +860,8 @@ def test_render_evidence_rules_pure_closed_loop_uses_closed_rules() -> None:
     block = codex_prompt_gen._render_evidence_rules(nodes, governance)
     assert "禁止访问外部网络" in block
     assert "web_analysis 字段 — 允许 web" not in block
+    assert "Tushare" in block
+    assert "不能写 `url` 字段" in block
 
 
 def test_render_evidence_rules_pure_web_analysis_uses_web_rules_only() -> None:
@@ -934,3 +936,30 @@ def test_build_company_prompt_web_analysis_tier_no_closed_loop_ban(
         # And it must explain web evidence schema
         assert "checksum" in prompt
         assert "fetched_at" in prompt
+
+
+def test_annual_report_block_is_closed_loop_local_dp_id_only() -> None:
+    """Local annual-report excerpts are SQLite facts, not web evidence."""
+
+    nodes = [_node_with_dp("L3.region.domestic_overseas")]
+    realtime = {
+        "L9.disclosure.annual_report": {
+            "source": "annual_report:cninfo:2025",
+            "value": {
+                "ar_year": 2025,
+                "ar_url": "https://static.cninfo.com.cn/finalpage/x.pdf",
+                "sections": {
+                    "region_distribution": "境内收入 70%，境外收入 30%。",
+                    "revenue_structure": "海外销售占比提升。",
+                },
+            },
+        }
+    }
+
+    block = "\n".join(
+        codex_prompt_gen._build_annual_report_block(nodes, realtime)
+    )
+    assert "L3.region.domestic_overseas" in block
+    assert "dp_id=L9.disclosure.annual_report" in block
+    assert "不要写 `url` 字段" in block
+    assert "https://static.cninfo.com.cn" not in block

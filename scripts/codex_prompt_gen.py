@@ -354,8 +354,10 @@ CLOSED_LOOP_RULES = """## 严格闭环规则（X5 closed-loop — 必读 / 必�
 
 本任务**严格**禁止访问外部网络。codex 只能用以下 3 类信息：
 
-1. **本地 SQLite dp_id** —— 由本 prompt 在下方 inline 注入（包括 X5 新增的 3 条文本披露：
-   `L1.company.main_business` / `L9.disclosure.qa_recent` / `L8.gov.management_table`）。
+1. **本地 SQLite dp_id** —— 由本 prompt 在下方 inline 注入（包括 Tushare
+   本地事实：`L1.company.main_business` / `L9.disclosure.qa_recent` /
+   `L8.gov.management_table`，以及已落库的 `L9.disclosure.annual_report`
+   章节摘录、公告/问答/主营/管理层等 `tushare:*` source 行）。
 2. **本地 overlay yaml** —— 本任务编辑文件 + 已填的行业/公司 overlay。
 3. **行业框架推断** —— 行业级常识（如"半导体行业上行周期 24 个月"），但
    `confidence` 必须 ≤ 0.5 且 `evidence_quality: low`，标 `kind: industry_inference`。
@@ -367,9 +369,13 @@ CLOSED_LOOP_RULES = """## 严格闭环规则（X5 closed-loop — 必读 / 必�
 - 引用 prompt 内没出现过的研报 / 年报 / 新闻
 
 **evidence_sources schema**：仅允许 3 种 kind：
-- `local_dp_id`：`{"kind": "local_dp_id", "dp_id": "...", "excerpt": "..."}`
+- `local_dp_id`：`{"kind": "local_dp_id", "dp_id": "...", "source": "tushare:* 或本地派生源", "excerpt": "..."}`
 - `local_overlay`：`{"kind": "local_overlay", "path": "config/...", "dp_id": "..."}`
 - `industry_inference`：`{"kind": "industry_inference", "framework": "...", "confidence": 0.4}`
+
+`local_dp_id` 可以引用 Tushare/AKShare/FMP 已经写入 `runtime/hot.sqlite` 的本地
+事实，但不能写 `url` 字段；即使原始公告 URL 存在于本地 value 中，也只引用本地
+dp_id、source 和 verbatim excerpt。
 
 找不到本地证据 → `data_status: Unknown` + `missing_reason: "no_local_evidence"`，
 **绝不 hallucinate URL**。
@@ -602,6 +608,16 @@ _AR_SECTION_BY_DP_ID: dict[str, tuple[str, ...]] = {
     "L1.position.tech_barrier": ("business_overview", "risk_disclosure"),
     "L3.customer.solvency": ("customer_segment",),
     "L3.channel.overseas": ("region_distribution", "revenue_structure"),
+    "L3.region.domestic_overseas": ("region_distribution", "revenue_structure"),
+    "L3.region.fx_geo": ("region_distribution", "risk_disclosure"),
+    "L3.region.key_risk": ("region_distribution", "risk_disclosure"),
+    "L4.cost.rent_energy_logistics": ("business_overview", "risk_disclosure"),
+    "L4.eff.store_labor": ("business_overview", "revenue_structure"),
+    "L4.price.asp_aov_arpu": ("revenue_structure",),
+    "L4.price.subscription": ("business_overview", "revenue_structure"),
+    "L4.share.market": ("business_overview", "revenue_structure"),
+    "L4.volume.orders": ("customer_segment", "revenue_structure"),
+    "L4.volume.users": ("customer_segment", "revenue_structure"),
 }
 
 
@@ -643,7 +659,6 @@ def _build_annual_report_block(
         used_sections.update(s)
 
     ar_year = ar_value.get("ar_year")
-    ar_url = ar_value.get("ar_url") or ""
     src = ar_entry.get("source", "")
 
     parts: list[str] = []
@@ -652,7 +667,7 @@ def _build_annual_report_block(
     )
     parts.append("")
     parts.append(
-        f"以下章节来自 `L9.disclosure.annual_report` (source={src}, url={ar_url})。"
+        f"以下章节来自本地 SQLite dp_id `L9.disclosure.annual_report` (source={src})。"
         "这些章节包含具体客户结构 / 收入构成 / 区域分布 / 业务概览 / 风险因素披露 — "
         "**填充以下 D bucket / 公司画像字段时，必须从对应章节抽取证据**：（详见下表）。"
     )
@@ -678,8 +693,9 @@ def _build_annual_report_block(
 
     parts.append(
         "**写入 `evidence_sources` 时**：使用 `kind=local_dp_id`，"
-        "`local_dp_id=L9.disclosure.annual_report`，`excerpt` 从上面章节文本里 "
-        "verbatim 复制对应数字 / 描述。引用 ar_url 作为 url 字段。"
+        "`dp_id=L9.disclosure.annual_report`，`source=annual_report:cninfo:*`，"
+        "`excerpt` 从上面章节文本里 verbatim 复制对应数字 / 描述。"
+        "**不要写 `url` 字段**；closed-loop verifier 会把任何 http(s) 字段当作 web evidence。"
     )
     parts.append("")
     return parts
