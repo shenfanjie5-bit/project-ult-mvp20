@@ -663,3 +663,35 @@ def test_x2_industry_ids_moved_off_akshare_to_tushare() -> None:
     }
     assert moved.isdisjoint(akshare_source.SUPPORTED_DP_IDS)
     assert moved.issubset(tushare_source.SUPPORTED_DP_IDS)
+
+
+# ---------------------------------------------------------------------------
+# _ak_call — per-call hard timeout (B2): a stuck akshare endpoint must never
+# block the collector. Regression for the observed 74-minute / kill -9 hang.
+# ---------------------------------------------------------------------------
+
+
+def test_ak_call_returns_value_under_budget() -> None:
+    assert akshare_source._ak_call("fast", lambda: 42) == 42
+
+
+def test_ak_call_propagates_underlying_exception() -> None:
+    def boom():
+        raise RuntimeError("upstream 502")
+
+    with pytest.raises(RuntimeError, match="upstream 502"):
+        akshare_source._ak_call("boom", boom)
+
+
+def test_ak_call_times_out_and_raises() -> None:
+    import time as _t
+
+    # Worker overruns the 0.2s budget → AkshareTimeout; the daemon worker is
+    # abandoned (still sleeping) but does not block the test.
+    with pytest.raises(akshare_source.AkshareTimeout):
+        akshare_source._ak_call("slow", lambda: _t.sleep(5), timeout=0.2)
+
+
+def test_ak_call_disabled_when_timeout_nonpositive() -> None:
+    # timeout<=0 runs inline (no worker thread) — explicit opt-out.
+    assert akshare_source._ak_call("inline", lambda: "ok", timeout=0) == "ok"

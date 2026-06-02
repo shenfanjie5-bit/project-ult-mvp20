@@ -55,15 +55,76 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
-from typing import Iterable
+from typing import Any, Callable, Iterable
 
 log = logging.getLogger("mvp20.sources.akshare")
+
+
+# ---------------------------------------------------------------------------
+# Per-call hard timeout (B2)
+# ---------------------------------------------------------------------------
+# akshare endpoints scrape upstream HTML/JSON with no caller-controllable
+# timeout, so a single stuck endpoint can block the whole collector cycle
+# indefinitely (observed: a 74-minute hang at 0% CPU that needed `kill -9`).
+# Every bare ``ak.*`` call is therefore routed through ``_ak_call``, which runs
+# it on a daemon worker thread and abandons it if it overruns. The orphaned
+# thread cannot be force-killed (CPython has no thread.kill), but it is a daemon
+# so it never blocks process exit, and the collector proceeds to the next field.
+
+# Default 25s; override with AKSHARE_CALL_TIMEOUT_S (0 / negative disables).
+try:
+    _AKSHARE_CALL_TIMEOUT_S = float(os.environ.get("AKSHARE_CALL_TIMEOUT_S", "25"))
+except (TypeError, ValueError):
+    _AKSHARE_CALL_TIMEOUT_S = 25.0
+
+
+class AkshareTimeout(Exception):
+    """Raised when an akshare call exceeds its wall-clock budget."""
+
+
+def _ak_call(label: str, fn: Callable[[], Any], *, timeout: float | None = None) -> Any:
+    """Run a blocking akshare call with a hard wall-clock timeout.
+
+    Returns ``fn()``'s result, re-raises any exception ``fn`` raised, or raises
+    :class:`AkshareTimeout` if it overruns. A non-positive timeout disables the
+    guard (runs inline) so tests / offline use can opt out.
+    """
+
+    budget = _AKSHARE_CALL_TIMEOUT_S if timeout is None else timeout
+    if budget is None or budget <= 0:
+        return fn()
+
+    box: dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 — propagate to caller thread
+            box["error"] = exc
+
+    worker = threading.Thread(
+        target=_run, name=f"akshare-{label}", daemon=True
+    )
+    worker.start()
+    worker.join(budget)
+    if worker.is_alive():
+        log.warning(
+            "[akshare] %s exceeded %.0fs timeout — skipping (worker abandoned)",
+            label, budget,
+        )
+        raise AkshareTimeout(label)
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
+
 
 # ---------------------------------------------------------------------------
 # SUPPORTED_DP_IDS  (Tier-1 wired; Tier-2/3 declared as stubs)
@@ -171,7 +232,7 @@ def health_check() -> dict:
     last_error: str | None = None
     for name, fn in probes:
         try:
-            df = fn()
+            df = _ak_call(name, fn)
             n = int(len(df)) if df is not None else 0
             if n > 0:
                 return {
@@ -373,7 +434,8 @@ def fetch_intraday_announcement(
         if not sec:
             continue
         try:
-            df = ak.stock_individual_notice_report(security=sec)
+            df = _ak_call("stock_individual_notice_report",
+                          lambda: ak.stock_individual_notice_report(security=sec))
         except Exception as e:  # noqa: BLE001
             log.warning("[akshare] notice_report %s failed: %s", ts_code, e)
             failed += 1
@@ -421,7 +483,7 @@ def _fetch_em_hot_rank_snapshot() -> dict[str, dict]:
 
     try:
         import akshare as ak  # type: ignore
-        df = ak.stock_hot_rank_em()
+        df = _ak_call("stock_hot_rank_em", ak.stock_hot_rank_em)
     except Exception as e:  # noqa: BLE001
         log.warning("[akshare] stock_hot_rank_em snapshot failed: %s", e)
         return {}
@@ -447,7 +509,8 @@ def _fetch_em_hot_keywords(em_symbol: str, timeout: int = 8) -> list[dict]:
 
     try:
         import akshare as ak  # type: ignore
-        df = ak.stock_hot_keyword_em(symbol=em_symbol)
+        df = _ak_call("stock_hot_keyword_em",
+                      lambda: ak.stock_hot_keyword_em(symbol=em_symbol))
     except Exception as e:  # noqa: BLE001
         log.warning("[akshare] stock_hot_keyword_em %s failed: %s", em_symbol, e)
         return []
@@ -561,7 +624,8 @@ def _fetch_xq_buzz_snapshot() -> dict[str, dict]:
 
     out: dict[str, dict] = {}
     try:
-        df = ak.stock_hot_follow_xq(symbol="最热门")
+        df = _ak_call("stock_hot_follow_xq",
+                      lambda: ak.stock_hot_follow_xq(symbol="最热门"))
         if df is not None and len(df) > 0:
             for rec in df.to_dict(orient="records"):
                 code = str(rec.get("股票代码") or "").strip()
@@ -576,7 +640,8 @@ def _fetch_xq_buzz_snapshot() -> dict[str, dict]:
         log.warning("[akshare] stock_hot_follow_xq failed: %s", e)
 
     try:
-        df = ak.stock_hot_tweet_xq(symbol="最热门")
+        df = _ak_call("stock_hot_tweet_xq",
+                      lambda: ak.stock_hot_tweet_xq(symbol="最热门"))
         if df is not None and len(df) > 0:
             for rec in df.to_dict(orient="records"):
                 code = str(rec.get("股票代码") or "").strip()
@@ -811,7 +876,7 @@ def fetch_cls_telegraph_batch(now: int) -> list[tuple]:
         return _emit_inactive_cls_triplet(now, "akshare_symbol_missing")
 
     try:
-        df = fn()
+        df = _ak_call("stock_info_global_cls", fn)
     except Exception as e:  # noqa: BLE001 — upstream can 502 / drop JSON
         log.warning("[akshare] stock_info_global_cls failed: %s", e)
         return _emit_inactive_cls_triplet(now, f"upstream_error: {e}")
@@ -1057,7 +1122,8 @@ def fetch_raw_material_batch(now: int) -> list[tuple]:
     per_symbol: dict[str, dict] = {}
     for sym in sorted(symbols_needed):
         try:
-            df = ak.futures_main_sina(symbol=sym)
+            df = _ak_call("futures_main_sina",
+                          lambda: ak.futures_main_sina(symbol=sym))
         except Exception as e:  # noqa: BLE001
             log.warning("[akshare] futures_main_sina %s failed: %s", sym, e)
             continue
@@ -1141,7 +1207,8 @@ def fetch_energy_logistics_batch(now: int) -> list[tuple]:
     crude_close = None
     crude_date = None
     try:
-        df = ak.futures_main_sina(symbol="SC0")
+        df = _ak_call("futures_main_sina",
+                      lambda: ak.futures_main_sina(symbol="SC0"))
         if df is not None and len(df) >= 2:
             recs = df.to_dict(orient="records") if hasattr(df, "to_dict") else list(df)
             latest = recs[-1]
@@ -1160,7 +1227,7 @@ def fetch_energy_logistics_batch(now: int) -> list[tuple]:
     bdi_close = None
     bdi_date = None
     try:
-        df = ak.macro_shipping_bdi()
+        df = _ak_call("macro_shipping_bdi", ak.macro_shipping_bdi)
         if df is not None and len(df) >= 2:
             recs = df.to_dict(orient="records") if hasattr(df, "to_dict") else list(df)
             # BDI frame is date-ascending; take last 2 rows
@@ -1249,7 +1316,8 @@ def fetch_sector_heat_batch(now: int) -> list[tuple]:
     last_err: Exception | None = None
     for attempt in range(2):
         try:
-            df = ak.stock_board_industry_summary_ths()
+            df = _ak_call("stock_board_industry_summary_ths",
+                          ak.stock_board_industry_summary_ths)
             if df is not None and len(df) > 0:
                 last_err = None
                 break
@@ -1438,7 +1506,8 @@ def _fetch_main_fund_flow_5d_snapshot() -> dict[str, dict]:
     except ImportError:
         return {}
     try:
-        df = ak.stock_fund_flow_individual(symbol="5日排行")
+        df = _ak_call("stock_fund_flow_individual",
+                      lambda: ak.stock_fund_flow_individual(symbol="5日排行"))
     except Exception as e:  # noqa: BLE001
         log.warning("[akshare] stock_fund_flow_individual(5日排行) failed: %s", e)
         return {}
@@ -1582,7 +1651,8 @@ def _fetch_dzjy_events_last5(
     for d_back in range(0, max_calendar_days + 1):
         date_str = (base_date - timedelta(days=d_back)).strftime("%Y%m%d")
         try:
-            df = ak.stock_dzjy_mrmx(start_date=date_str, end_date=date_str)
+            df = _ak_call("stock_dzjy_mrmx",
+                          lambda: ak.stock_dzjy_mrmx(start_date=date_str, end_date=date_str))
         except Exception:  # noqa: BLE001
             # NoneType subscripting on weekends, network errors, or layout
             # drifts all land here — silently skip and keep walking back.
