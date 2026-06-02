@@ -77,6 +77,59 @@ def _find_first(text: str, keywords: list[str]) -> list[int]:
     return out
 
 
+def _best_section_pos(
+    text: str, anchors: list[str], window: int, score_kw: str
+) -> list[int]:
+    """Among ALL occurrences of any anchor, return the single position whose
+    following ``window`` chars contain the most ``score_kw`` hits.
+
+    This avoids the min-position trap of ``_find_first`` + ``_slice`` (which
+    land on the *first* front-matter reference — e.g. a "请投资者注意投资风险"
+    boilerplate line — instead of the actual enumerated MD&A section). The real
+    section is keyword-dense (each enumerated item repeats e.g. 风险); a passing
+    reference is not. Returns ``[pos]`` (for ``_slice``) or ``[]`` if no anchor.
+    """
+
+    best_pos: int | None = None
+    best_score = -1
+    for kw in anchors:
+        for m in re.finditer(re.escape(kw), text):
+            seg = text[m.start(): m.start() + window]
+            score = seg.count(score_kw)
+            if score > best_score:
+                best_score = score
+                best_pos = m.start()
+    return [best_pos] if best_pos is not None else []
+
+
+# Enumerated business-risk pattern: "1、…风险" / "(三)…风险" — present in the real
+# MD&A risk section, absent from front-matter "注意投资风险" references.
+_RISK_ENUM_RE = re.compile(r"[0-9０-９一二三四五六七八九十]+[、.\)）][^。\n]{0,18}风险")
+
+
+def _risk_section_pos(text: str, anchors: list[str], window: int) -> list[int]:
+    """Locate the enumerated MD&A risk section.
+
+    Scores each anchor occurrence by ``enumerated-risk count × 100 + 风险
+    density``. The ×100 weight makes an enumerated "1、…风险 / (三)…风险" block
+    (the real forward-looking risk disclosure) dominate both front-matter
+    references and the IFRS financial-instruments risk note (风险-dense but not
+    enumerated as named business risks). Density only breaks ties among
+    non-enumerated candidates.
+    """
+
+    best_pos: int | None = None
+    best_score = -1
+    for kw in anchors:
+        for m in re.finditer(re.escape(kw), text):
+            seg = text[m.start(): m.start() + window]
+            score = len(_RISK_ENUM_RE.findall(seg)) * 100 + seg.count("风险")
+            if score > best_score:
+                best_score = score
+                best_pos = m.start()
+    return [best_pos] if best_pos is not None else []
+
+
 def extract_sections(full_text: str) -> dict[str, str]:
     sections: dict[str, str] = {}
 
@@ -101,26 +154,32 @@ def extract_sections(full_text: str) -> dict[str, str]:
     )
     sections["revenue_structure"] = _slice(full_text, pos, 1800)[:EXCERPT_MAXLEN]
 
-    # region_distribution: try explicit "分地区" first, fallback to "分销售模式"
-    # (which captures the 区域 vs 行业 breakdown that some issuers use as
-    # their geographic-ish split).
-    pos = _find_first(full_text, ["分地区", "境内地区", "境外地区"])
+    # region_distribution: pick the 地区-densest revenue table (the geographic
+    # split), falling back to 分销售模式 / explicit headings. Density avoids
+    # landing on a stray "偏远地区"-style mention.
+    pos = _best_section_pos(full_text, ["分地区", "分销售模式"], 1500, "地区")
     if not pos:
-        pos = _find_first(full_text, ["分销售模式"])
+        pos = _find_first(
+            full_text, ["主营业务分地区", "营业收入按地区", "境内地区", "境外地区"]
+        )
     sections["region_distribution"] = _slice(full_text, pos, 1500)[
         :EXCERPT_MAXLEN
     ]
 
-    # risk_disclosure: anchor on "可能面临的主要风险" with fallbacks
-    pos = _find_first(
+    # risk_disclosure: among ALL risk-heading occurrences, pick the one whose
+    # following window is densest in 风险 — i.e. the enumerated MD&A risk
+    # section, not a front-matter "注意投资风险" reference (which previously
+    # grabbed 董事会/审计 boilerplate under the old min-position anchor).
+    # risk_disclosure: locate the enumerated MD&A risk section (see
+    # _risk_section_pos). Robust to heading variants ("可能面临的风险/和应对措施",
+    # "可能面对的风险", STAR-board "风险因素 (一)…(二)…") and skips front-matter
+    # references + the IFRS financial-risk note.
+    pos = _risk_section_pos(
         full_text,
-        [
-            "可能面临的主要风险",
-            "公司未来发展可能面临的主要风险",
-            "公司业务发展可能面临的主要风险",
-            "可能面对的主要风险",
-            "风险因素",
-        ],
+        ["可能面临的风险", "可能面对的风险", "可能面临的主要风险",
+         "公司可能面临的风险", "公司面临的风险", "风险因素",
+         "面临的风险", "风险及对策", "风险和应对"],
+        3600,
     )
     sections["risk_disclosure"] = _slice(full_text, pos, 3600)[:EXCERPT_MAXLEN]
 
