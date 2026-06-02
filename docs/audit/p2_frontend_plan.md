@@ -26,12 +26,26 @@
 ## P2a — 加股票 UI（纯 React，先做，浏览器可测）
 入口（按钮/弹窗，放工作台或侧边栏）→ 市场下拉(A/HK/US) + 代码框 → "识别"(`/recognize`，显示名称+行业下拉默认=建议值可改) → "加入并分析"(`/onboard`→job_id) → 进度条(轮询 `/onboard?job_id=`，10 步；`ready_preliminary` 先展示初步分，`ready_full` 自动刷新) → 跳该股分析页。用 TanStack Query mutation + 轮询。
 
-## P2b — 系统启停控制（Tauri Rust，后做，需桌面构建）
-- 现状：src-tauri 存在但**无现成命令/sidecar/shell**，要新写。
-- 加 Tauri 命令 `start_system`/`stop_system`/`system_status` → spawn/kill 后端（`mvp20 serve` + collector 循环；collector 的 `--interval` 周期就是"字段跟着系统走"的更新节奏，不用 cron）。
-- UI：StatusBar 或顶部"启动/停止系统"按钮 + 运行状态灯。
-- 仅 Tauri 桌面 app 有效（浏览器不能 spawn 进程）；测试需 `npm run tauri dev`（编 Rust）。
-- 待定：spawn 方式（Tauri `Command` 跑 venv python `-m mvp20.cli serve` + collector）、PID/状态存 Tauri 侧、停止时优雅 kill。
+## P2b — 系统启停控制（已完成 2026-06-03，磁盘上；全部 gitignored）
+新增/改动（均 gitignored）：
+- `src-tauri/src/lib.rs`（重写）：3 个 `#[tauri::command]` —— `start_system(source,interval)`/`stop_system()`/`system_status()`；`SystemState{serve,collector: Mutex<Option<Child>>}` 经 `.manage()` 托管；`find_repo_root()` 从 cwd 上溯找 `.venv/bin/python`+`mvp20`；spawn `.venv/bin/python -m mvp20.cli serve …` + `… scripts/collector.py --source <S> --interval <N>`（cwd=repo root）；stop=`child.kill()`+`wait()`（collector 每 tick 原子提交，SIGKILL 安全）；status 用 `try_wait()` 判活并回收。无新依赖（serde 已在）。
+- `src-tauri/capabilities/default.json`（NEW）：main 窗口授 `core:default`（自定义命令本身 v2 无需 ACL）。
+- `src/api/hooks/useSystemControl.ts`（NEW）：`useSystemStatus`(3s 轮询)/`useStartSystem`/`useStopSystem`，全部 `isTauriEnvironment()` 门控。
+- `src/components/layout/SystemControl.tsx`（NEW）：footer 紧凑控件——状态灯+「系统 运行中/已停止」+ 源下拉(tushare/akshare/mock)+间隔输入(默认600s)+启动/停止按钮；浏览器返回 null。
+- `src/components/layout/StatusBar.tsx`：左簇挂 `<SystemControl/>`。
+
+验证：
+- `cargo build` 增量 13.79s 干净通过（命令注册 + generate_handler/generate_context 宏 + capabilities 解析 + Serialize + 借用检查）。
+- `npm run tauri dev`：vite ready(1420) → `Finished dev in 0.29s` → `Running target/debug/ai_research_frontend`（**窗口启动成功、webview 加载**；随后 `ECONNREFUSED 8701` 是预期——系统未启动）。无 Rust panic。
+- spawn 目标独立验证：serve 早已实测；collector `--source mock --interval 1 --max-cycles 2 --hot-db /tmp/...`（临时库、328 只 upsert 1312/轮、干净退出、已删）。合法源含 mock/tushare/akshare。
+- tsc + eslint 全绿（4 文件）。
+- **唯一未自动化**：桌面 WebKit 窗口里点「启动/停止」按钮——Preview MCP 驱动的是 Chrome，碰不到 WebKit 窗口，需在桌面 app 手点。
+
+待办/已知小瑕疵：
+- do_codex=false 时进度条把第 7-10 步(codex/recompile/rescore)也显绿勾（实际跳过）——终态 step_idx=10 所致，纯视觉，建议给跳过步加 "skipped" 态。
+- onboard 的 generate-overlays 步会"重写"已有 overlay。**已核查(B)：merge-preserve 正确，codex 填充(Known/N/A/Optionality 52 值)字节级保留、零丢失**；变化仅 (a) YAML 重新序列化(格式噪音，致 git 显 modified) + (b) 9 个事件驱动 Inactive→Unknown(设计内刷新)。低优先小瑕疵：onboard 只重 derive 新股，故已有股的事件节点刷 Unknown 后短暂不回填(系统跑 derive 循环时自愈)；可选修：onboard 把 generate-overlays 限定到新股 + 把已提交 overlay 规范化为 canonical 格式消除噪音。
+- 停止用 SIGKILL；如需优雅可加 libc SIGTERM-then-kill。
+- **孤儿进程缺口**：若系统运行中直接关闭 app，spawn 的 serve+collector 子进程不会被自动杀（std Child 无 kill-on-drop）→ 残留占 8701/继续采集。建议在 Builder 的 on_window_event/Drop 或退出钩子里 stop_system，或用进程组 kill。（本次未触发：关窗前未点启动。）
 
 ## P2a — 已完成（2026-06-03，磁盘上；FrontEnd/ 被 .gitignore，不进主仓库 commit）
 新增/改动（均在 `FrontEnd/`，gitignored）：
@@ -50,8 +64,18 @@
 - 进度+评分渲染：注入合成 onboard_jobs 行(999999.SZ, running, step_idx=7, 有初步分无 full)→前端经真实 GET 端点轮询→进度条 70%、步骤 1-6 绿勾+codex_fill 转圈、初步评分卡(WATCH/-0.181/-0.177/-0.139/主因路径)+"CodeX 填充中"、无 full 卡、无详情按钮。验毕删除合成行(零残留：未碰 universe/overlay/其它表)。
 - tsc + eslint 全绿（4 文件）；后端全量 pytest 待确认。
 
+## P2b 可用性收尾（A）— 已完成 2026-06-03（磁盘上，gitignored）
+针对"打开 app→子页面全报错"的体验问题：
+- **A1 启动门面**（`src/components/layout/SystemGate.tsx` NEW + `useBackendReachable` in `useSystemControl.ts` + App.tsx 包裹路由）：projectUlt 模式探 `/api/health`，后端不通时**主区显一个"系统未启动"门面**(Tauri 显源/间隔/启动按钮；浏览器显手动命令)，不再让每页各自报错；后端起来后 4s 轮询**自动开门**。**浏览器实测通过**：down→门面、up→自动进工作台。
+- **A3 关 app 杀子进程**（`src-tauri/src/lib.rs`）：`run()` 改 build+run，拦 `RunEvent::ExitRequested|Exit` → `kill_all`，关窗即杀 serve+collector，**修掉孤儿缺口**。cargo build 2.98s 通过。
+- **A4 进度条 skipped 态**（`AddStock/index.tsx`）：do_codex=false(ready_preliminary) 时第 8-10 步显「（跳过）」而非绿勾。**实测通过**(注入合成 job 验证)。
+- A2(控件提到顶部)：由 A1 门面(停止态醒目)+footer SystemControl(运行态)覆盖，未单列。
+- tsc+eslint 全绿；前述 3 个已知瑕疵中 **error-wall / 孤儿 / skipped 三项已修**；仅"SIGKILL 非优雅"留作可选。
+
 ## 恢复后下一步
-1. ~~P2a~~ ✅ 完成。
-2. 下一步 P2b（控制平面，Tauri Rust 启停后端；需 `npm run tauri dev` 编 Rust）。
-3. 期间用真实后端 + Vite 代理测；茅台等测试股记得用完还原。
-4. 提交范围：仅 `mvp20/onboard.py` + `tests/test_onboard.py`（+本 doc）可进 git；前端 gitignored。
+1. ~~P2a~~ ✅ 完成（含真实 600519 onboard 端到端实测 + 还原）。
+2. ~~P2b~~ ✅ 实现+编译+启动验证；桌面「启动/停止」按钮手点仍需你在 Tauri 窗口验。
+3. ~~B 数据完整性~~ ✅ 核查完毕：merge-preserve 不丢填充（52 值字节级保留），非 corruption。
+4. ~~A P2b 可用性~~ ✅ 完成（门面/杀子进程/skipped）。
+5. C（A股遗留）：hermetic 修 `test_list_only_company_with_tier_filter`(已 spawn 任务) + 000977 beat_probability stale-evidence。
+6. 提交范围：`mvp20/onboard.py`+`tests/test_onboard.py` 已提交 (e3bede2)；前端/Tauri 全 gitignored 不进 git；本 doc 未提交。

@@ -579,11 +579,19 @@ def test_list_only_company_with_tier_filter() -> None:
     report = codex_prompt_gen.build_list_only_report(
         "AI_COMPUTE", "000063.SZ", model_tier_filter="cheap_extract"
     )
+    # Header reflects the company + the active tier filter.
     assert "stock AI_COMPUTE/000063.SZ" in report
     assert "model_tier=cheap_extract" in report
-    # Expect at least L3.channel.mix to be in the fillable list (it's the
-    # only cheap_extract dp_id in the minimal governance).
-    assert "L3.channel.mix" in report
+    # Standard list-only structure is present.
+    assert "Fillable:" in report
+    assert "Skipped:" in report
+    # The tier filter actually filters: dp_ids belonging to OTHER model tiers
+    # are bucketed as tier_mismatch. This assertion is hermetic — it does not
+    # depend on how many cheap_extract dp_ids happen to be already filled.
+    # (The previous assertion pinned a specific dp_id, L3.channel.mix, into the
+    # fillable list; it broke once Phase C1 filled that field, dropping it from
+    # "Fillable" into "preserved_known".)
+    assert "tier_mismatch_" in report
 
 
 # ---------------------------------------------------------------------------
