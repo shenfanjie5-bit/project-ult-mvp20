@@ -53,6 +53,7 @@ from mvp20.fingerprint import (  # noqa: E402
     is_refresh_triggered,
 )
 from mvp20.storage import read_hot_snapshot  # noqa: E402
+from mvp20.schema_validator import DP_SCHEMA, _type_name  # noqa: E402
 
 
 GOVERNANCE_PATH = ROOT / "config" / "llm_field_governance.yaml"
@@ -532,6 +533,87 @@ def _format_fillable_table(
 
 
 # ---------------------------------------------------------------------------
+# Strict output_schema block (C1 hardening). Low-effort codex frequently
+# invented field names / wrong types (101 schema_drift across 8/10 AI_COMPUTE
+# A-shares). Referencing llm_derived_nodes.md by name was not enough — we now
+# inline each fillable dp_id's exact ``DP_SCHEMA`` shape (the same registry the
+# verifier's --check-schema validates against) so the model sees the allowed
+# fields + types right next to the field list.
+# ---------------------------------------------------------------------------
+
+
+def _schema_one_line(node: dict) -> str | None:
+    """Compact one-line schema spec for a fillable node, or None.
+
+    Optionality-status nodes are special-cased: the compiler requires the
+    ``value`` to split into ``current_contribution`` + ``future_option_value``
+    (two objects), regardless of what the flat DP_SCHEMA field list says — so
+    we render that contract instead of the flat fields to avoid steering the
+    model into the shape that fails compile.
+    """
+
+    dp_id = node.get("dp_id") or ""
+    if str(node.get("data_status")) == "Optionality":
+        return (
+            "required{current_contribution:dict, future_option_value:dict} "
+            "（Optionality：两个键都必须是对象；当前贡献放 current_contribution，"
+            "催化后期权价值放 future_option_value，各对象内可含 level/factors/"
+            "catalyst_required 等说明字段）"
+        )
+    sch = DP_SCHEMA.get(dp_id)
+    if not sch:
+        return None
+    parts: list[str] = []
+    req = sch.get("required") or {}
+    opt = sch.get("optional") or {}
+    parts.append(
+        "required{" + ", ".join(f"{k}:{_type_name(v)}" for k, v in req.items()) + "}"
+    )
+    if opt:
+        parts.append(
+            "optional{" + ", ".join(f"{k}:{_type_name(v)}" for k, v in opt.items()) + "}"
+        )
+    # Nested list element schemas: keys named "<field>_item_schema".
+    for key, val in sch.items():
+        if key.endswith("_item_schema") and isinstance(val, dict):
+            base = key[: -len("_item_schema")]
+            parts.append(
+                f"{base}[]=每元素{{"
+                + ", ".join(f"{k}:{_type_name(v)}" for k, v in val.items())
+                + "}"
+            )
+    return "; ".join(parts)
+
+
+def _format_schema_block(nodes: list[dict]) -> list[str]:
+    """Render the strict per-dp_id output_schema enforcement block."""
+
+    rows: list[str] = []
+    for n in nodes:
+        dp_id = n.get("dp_id") or ""
+        spec = _schema_one_line(n)
+        if spec:
+            rows.append(f"- `{dp_id}`: {spec}")
+    if not rows:
+        return []
+    return [
+        "### 各待填字段 output_schema（强约束 — value 必须严格匹配）",
+        "",
+        "**铁律**：每个 dp_id 的 `value` **只能包含下列字段名**，类型必须匹配。"
+        "**禁止新增 schema 之外的任何字段，禁止改字段类型** —— 额外字段 / 错类型会被 "
+        "`schema_validator` 拒绝、导致节点编译失败。`required` 字段必须出现"
+        "（无数据填 `null`，不要省略也不要换名）；`optional` 字段可省略。",
+        "类型记号：`float|int` = 数字，`str` = 字符串，`null` = JSON null，"
+        "`dict` = JSON 对象，`list` = JSON 数组，`bool` = 布尔。",
+        "Optionality 节点（schema 含 `current_contribution` + `future_option_value`）"
+        "的 `value` 必须同时含这两个键、各为对象，**不要写成扁平结构**。",
+        "",
+        *rows,
+        "",
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Fix B (B1) — inline source dp_id values into the prompt so the LLM
 # can quote them verbatim instead of paraphrasing. The A/B test showed
 # codex_low produced ``evidence_sources[kind=local_dp_id]`` with
@@ -887,6 +969,7 @@ def build_industry_prompt(
         )
     )
     parts.append("")
+    parts.extend(_format_schema_block(fillable_l0))
     parts.append("#### 节点元信息")
     parts.append("")
     for n in fillable_l0:
@@ -1145,6 +1228,7 @@ def build_company_prompt(
         )
     )
     parts.append("")
+    parts.extend(_format_schema_block(fillable_company))
     parts.append("#### 按层分组")
     parts.append("")
     by_layer: dict[str, list[dict]] = {}
