@@ -1160,6 +1160,75 @@ def _read_industry_overlay(cfg: ServerConfig, industry_id: str | None) -> dict:
 _UPSTREAM_ONLY: list[tuple[str, str]] = []
 
 
+# ---------------------------------------------------------------------------
+# Add-stock onboarding (P1) — the ONLY whitelisted write endpoints. Everything
+# else stays read-only (do_POST → 405). recognize is synchronous; onboard
+# enqueues an async job (mvp20.onboard) and returns a job_id the frontend polls.
+# ---------------------------------------------------------------------------
+
+
+def handle_recognize(cfg: ServerConfig, body: dict) -> HandlerResult:
+    """POST {market, code} → canonical ts_code + name + industry suggestion."""
+    from mvp20 import onboard as onboard_mod
+    market = str(body.get("market") or "").strip()
+    code = str(body.get("code") or "").strip()
+    if not market or not code:
+        return 400, _error_envelope("BAD_REQUEST", "market and code are required", status=400)
+    return 200, _ok_envelope(onboard_mod.recognize(market, code))
+
+
+def handle_onboard(cfg: ServerConfig, body: dict) -> HandlerResult:
+    """POST {ts_code, name, industry_id, do_codex?} → start async onboard job."""
+    from mvp20 import onboard as onboard_mod
+    ts_code = _validate_ts_code(str(body.get("ts_code") or "").strip().upper())
+    industry_id = str(body.get("industry_id") or "").strip()
+    name = str(body.get("name") or "").strip()
+    if ts_code is None:
+        return 400, _error_envelope("BAD_TS_CODE", "invalid or missing ts_code", status=400)
+    if not _INDUSTRY_ID_RE.match(industry_id):
+        return 400, _error_envelope("BAD_INDUSTRY", "invalid industry_id", status=400)
+    valid = {i["industry_id"] for i in onboard_mod.list_industry_ids()}
+    if industry_id not in valid:
+        return 400, _error_envelope(
+            "UNKNOWN_INDUSTRY", f"{industry_id} is not an active industry",
+            status=400, details={"valid": sorted(valid)})
+    if onboard_mod.already_in_pool(ts_code):
+        return 409, _error_envelope("ALREADY_IN_POOL", f"{ts_code} already in pool", status=409)
+    do_codex = bool(body.get("do_codex", True))
+    job_id = onboard_mod.start_onboard_job(
+        cfg.hot_db_path, ts_code, name or ts_code, industry_id, do_codex=do_codex)
+    return 202, _ok_envelope({
+        "job_id": job_id, "ts_code": ts_code, "status": "pending",
+        "steps": onboard_mod.ONBOARD_STEPS,
+    })
+
+
+def handle_onboard_status(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """GET ?job_id=X → onboarding job progress (poll target)."""
+    from mvp20 import onboard as onboard_mod
+    job_id = (query.get("job_id") or [None])[0]
+    if not job_id:
+        return 400, _error_envelope("BAD_REQUEST", "job_id query param required", status=400)
+    job = onboard_mod.get_job(cfg.hot_db_path, str(job_id))
+    if job is None:
+        return 404, _error_envelope("JOB_NOT_FOUND", f"no onboard job {job_id}", status=404)
+    return 200, _ok_envelope(job)
+
+
+def handle_industries(cfg: ServerConfig, query: dict) -> HandlerResult:
+    """GET → active industry_ids (for the add-stock industry dropdown)."""
+    from mvp20 import onboard as onboard_mod
+    return 200, _ok_envelope({"industries": onboard_mod.list_industry_ids()})
+
+
+#: Whitelisted POST command endpoints (handler signature: (cfg, body_dict)).
+def _post_routes() -> list[tuple[re.Pattern[str], Callable[[ServerConfig, dict], HandlerResult]]]:
+    return [
+        (re.compile(r"^/api/project-ult/recognize$"), handle_recognize),
+        (re.compile(r"^/api/project-ult/onboard$"), handle_onboard),
+    ]
+
+
 def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerConfig, dict], HandlerResult]]]:
     return [
         # === mvp20 own implementations (read YAML, no upstream dependency) ===
@@ -1209,6 +1278,10 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/project-ult/aggregate$"), handle_aggregate),
         (re.compile(r"^/api/project-ult/coverage$"), handle_coverage),
         (re.compile(r"^/api/project-ult/score$"), handle_score),
+        # Add-stock onboarding (P1): industries dropdown + job-status poll.
+        # (POST /recognize + POST /onboard are dispatched via _post_routes.)
+        (re.compile(r"^/api/project-ult/industries$"), handle_industries),
+        (re.compile(r"^/api/project-ult/onboard$"), handle_onboard_status),
     ]
 
 
@@ -1304,7 +1377,47 @@ class _Handler(BaseHTTPRequestHandler):
             ))
 
     def do_POST(self) -> None:  # noqa: N802
+        cfg = self._config
+        if cfg is None:
+            self._write_json(500, _error_envelope(
+                "SERVER_NOT_CONFIGURED", "ServerConfig not bound", status=500))
+            return
+        path = urlsplit(self.path).path
+        for pattern, handler in _post_routes():
+            if pattern.match(path):
+                body = self._read_json_body()
+                if body is None:
+                    self._write_json(400, _error_envelope(
+                        "BAD_JSON", "request body is not valid JSON object", status=400))
+                    return
+                try:
+                    status, resp = handler(cfg, body)
+                except Exception as exc:  # noqa: BLE001 — surface as 500
+                    resp = _error_envelope("HANDLER_ERROR", str(exc), status=500,
+                                           details={"path": path})
+                    status = 500
+                self._write_json(status, resp)
+                return
+        # Non-whitelisted POST stays read-only.
         self._reject_write()
+
+    def _read_json_body(self) -> dict | None:
+        """Parse a JSON request body. ``{}`` for empty, ``None`` for invalid
+        (so the caller can 400). Capped at 1 MB."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            return None
+        if length <= 0:
+            return {}
+        if length > 1_000_000:
+            return None
+        try:
+            raw = self.rfile.read(length)
+            data = json.loads(raw.decode("utf-8"))
+        except (ValueError, TypeError, UnicodeDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
 
     def do_PUT(self) -> None:  # noqa: N802
         self._reject_write()

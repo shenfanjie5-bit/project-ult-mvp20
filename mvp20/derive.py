@@ -1781,6 +1781,7 @@ def derive_all(
     history_days: int = 90,
     limit_companies: int | None = None,
     a_share_only: bool = True,
+    ts_codes: list[str] | None = None,
 ) -> dict[str, int]:
     """Iterate every (ts_code) in realtime_current, compute Tier 0 derived
     dp_ids, UPSERT them back with source ``derived:*``. Returns counters.
@@ -1816,6 +1817,11 @@ def derive_all(
             t for t in all_ts
             if is_a_share(t) or is_us_share(t) or is_hk_share(t)
         ]
+    if ts_codes:
+        # Single-stock / subset derive (used by onboarding one new stock so the
+        # preliminary pass stays fast instead of re-deriving the whole universe).
+        want = {t.upper() for t in ts_codes}
+        all_ts = [t for t in all_ts if t.upper() in want]
     if limit_companies:
         all_ts = all_ts[:limit_companies]
 
