@@ -937,9 +937,19 @@ def handle_aggregate(cfg: ServerConfig, query: dict) -> HandlerResult:
 
     industry_overlay = _load_industry_overlay_payload(cfg, industry_id)
 
+    # Bridge realtime snapshot values into the aggregation (synthetic leaves)
+    # so /aggregate reflects the same node set that /score uses.
+    try:
+        from mvp20.storage import read_hot_snapshot
+        realtime_data = read_hot_snapshot(cfg.hot_db_path, ts_code)
+    except Exception:  # noqa: BLE001
+        realtime_data = {}
+
     try:
         from mvp20.aggregator import aggregate_company_graph
-        nodes = aggregate_company_graph(overlay, industry_overlay) or {}
+        nodes = aggregate_company_graph(
+            overlay, industry_overlay, realtime_snapshot=realtime_data or None
+        ) or {}
     except Exception as exc:  # noqa: BLE001 — surface as 500
         return 500, _error_envelope(
             "AGGREGATE_FAILED",
@@ -1049,8 +1059,18 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
             status=500,
         )
 
+    # Best-effort realtime — read first so the aggregator can bridge realtime
+    # values into the score (synthetic leaves) and score_company can reuse it.
     try:
-        aggregated = aggregate_company_graph(overlay, industry_overlay) or {}
+        from mvp20.storage import read_hot_snapshot
+        realtime_data = read_hot_snapshot(cfg.hot_db_path, ts_code)
+    except Exception:  # noqa: BLE001
+        realtime_data = {}
+
+    try:
+        aggregated = aggregate_company_graph(
+            overlay, industry_overlay, realtime_snapshot=realtime_data or None
+        ) or {}
     except Exception as exc:  # noqa: BLE001
         return 500, _error_envelope(
             "AGGREGATE_FAILED",
@@ -1068,13 +1088,6 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
             status=500,
             details={"ts_code": ts_code, "industry_id": industry_id},
         )
-
-    # Best-effort realtime — score_company tolerates an empty dict
-    try:
-        from mvp20.storage import read_hot_snapshot
-        realtime_data = read_hot_snapshot(cfg.hot_db_path, ts_code)
-    except Exception:  # noqa: BLE001
-        realtime_data = {}
 
     # Aggregator returns ``{node_id: {...}}``; score_company auto-detects
     # this flat shape via ``_is_flat_aggregator_output``.

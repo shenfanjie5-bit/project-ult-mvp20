@@ -753,13 +753,25 @@ def score_company_command(
 
     overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8")) or {}
 
+    # ----- realtime snapshot (best-effort, OK if hot.sqlite missing) -----
+    # Read first so the aggregator can bridge realtime values into the score
+    # (synthetic standalone-leaf nodes for participating dp_ids).
+    realtime_data: dict[str, object] = {}
+    try:
+        from mvp20.storage import read_hot_snapshot
+        realtime_data = read_hot_snapshot(db_path, ts_code)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"# realtime snapshot unavailable ({exc})")
+
     # ----- lazy-load A1 (aggregator) + A2 (coverage); fall back to mocks --
     aggregated_nodes: dict[str, object] = {}
     coverage_report: dict[str, object] = {}
 
     try:
         from mvp20.aggregator import aggregate_company_graph  # type: ignore
-        aggregated_nodes = aggregate_company_graph(overlay) or {}
+        aggregated_nodes = aggregate_company_graph(
+            overlay, realtime_snapshot=realtime_data or None
+        ) or {}
     except Exception as exc:  # noqa: BLE001 (lazy; A1 may not exist yet)
         click.echo(f"# aggregator unavailable ({exc}); using overlay-derived mock")
         aggregated_nodes = _mock_aggregator_payload(overlay)
@@ -770,14 +782,6 @@ def score_company_command(
     except Exception as exc:  # noqa: BLE001
         click.echo(f"# coverage unavailable ({exc}); using overlay-derived mock")
         coverage_report = overlay.get("coverage") or {}
-
-    # ----- realtime snapshot (best-effort, OK if hot.sqlite missing) -----
-    realtime_data: dict[str, object] = {}
-    try:
-        from mvp20.storage import read_hot_snapshot
-        realtime_data = read_hot_snapshot(db_path, ts_code)
-    except Exception as exc:  # noqa: BLE001
-        click.echo(f"# realtime snapshot unavailable ({exc})")
 
     result = score_company(
         stock_overlay=overlay,

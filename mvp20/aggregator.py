@@ -420,6 +420,511 @@ def _apply_proxy_candidates(nodes_by_id: Mapping[str, dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Realtime → leaf-node bridge
+# ---------------------------------------------------------------------------
+#
+# ``realtime_current`` (SQLite hot snapshot) holds the *current* value of every
+# governance-participating real data point. Those values never reach the score
+# unless the authored overlay happens to carry the same dp_id. ``synthesize_
+# realtime_nodes`` closes that gap: it turns each unmapped, participating,
+# non-mock snapshot entry into an overlay-leaf-shaped node so the existing
+# post-order aggregation scores it as a standalone leaf.
+#
+# The sign convention lives entirely in ``_realtime_signal``: it returns a
+# *signed* signal in [-1, 1] only for value shapes whose direction is
+# unambiguous. Everything else returns ``None`` and is skipped — we never
+# fabricate a direction for a bespoke financial dict.
+
+# Score-targets where a *high* reading (rich valuation / hot crowd / overheat)
+# is a drag on the score, so a positive raw percentile must flip negative.
+_REALTIME_INVERTED_TARGETS = {
+    "valuation_rerating",
+    "risk_discount",
+    "overheat_risk",
+    "priced_in_discount",
+}
+
+# Curated single-field signed-percent shapes. Each maps to a divisor K used in
+# ``tanh(x / K)``; ``flip`` inverts the sign (premium = expensive = negative).
+_REALTIME_SIGNED_PCT_FIELDS: dict[str, tuple[float, bool]] = {
+    "consensus_eps_revision_30d_pct": (20.0, False),
+    "premium_vs_industry_pct": (30.0, True),
+    "second_derivative": (1.0, False),
+}
+
+
+def _num(value: Any) -> float | None:
+    """Coerce ``value`` to ``float`` for the realtime field rules, rejecting
+    ``None``/``bool``/non-numeric so a missing key returns ``None`` upstream."""
+
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# Per-field ``change_direction`` vocabularies seen across sources. Tushare +
+# FMP both emit ``upgraded``/``downgraded``/``unchanged``/``new``; the spec
+# also lists up/raised/down/cut, so accept all of them.
+_GUIDANCE_UP_DIRECTIONS = {"up", "raised", "upgraded", "increase", "increased"}
+_GUIDANCE_DOWN_DIRECTIONS = {"down", "cut", "downgraded", "decrease", "decreased"}
+_GUIDANCE_FLAT_DIRECTIONS = {"unchanged", "flat", "stable", "maintained"}
+
+# Minimum magnitude for a *real* (nonzero) guidance revision so a tiny
+# ``current_range_pct`` doesn't collapse a genuine up/down call to ~0.
+_GUIDANCE_DIRECTION_FLOOR = 0.1
+
+# Analyst-rating cross-sectional re-center (L7.mood.analyst_rating → sentiment_
+# score). A-share sell-side ratings are uniformly bullish, so the textbook
+# "3.0 out of 1–5 is neutral" map yields a near-uniform +0.81 for every stock
+# (no discriminating power). Instead we re-center on the *universe consensus*
+# so the signal measures ABOVE/BELOW peers, not absolute bullishness.
+#
+# CALIBRATION constants — measured across n=115 A-shares: avg_rating_score
+# mean 4.63 / std 0.23 / range [3.6, 5.0] (histogram ≈ {4.0:9, 4.5:69, 5.0:36}).
+# RECOMPUTE these if the rating distribution shifts / on data refresh.
+_ANALYST_RATING_NEUTRAL = 4.63  # universe mean → consensus is neutral (signal 0)
+_ANALYST_RATING_SCALE = 0.46    # ≈ 2× std → ±2σ saturates the signal to ±1
+
+# Company-fundamental-QUALITY cross-sectional re-center (→ fundamental_score).
+# Margins / efficiency / cash-cycle metrics are read ABOVE/BELOW the A-share
+# universe via clip((value - MEDIAN) / SCALE, -1, 1): MEDIAN is the skew-robust
+# universe median, SCALE ≈ the inter-quartile spread so a name ~1 IQR off peers
+# saturates the signal to ±1.
+#
+# CALIBRATION constants — MEASURED across the current A-share universe (skew-
+# robust median + ~IQR). RECOMPUTE these on every data refresh; the snapshot
+# they were fit on will drift.
+#
+# CAVEAT — universe-relative is a FIRST APPROXIMATION. Margins and efficiency
+# are strongly industry-dependent (a healthy software gross margin and a healthy
+# steel gross margin are nowhere near each other), so a single universe-wide
+# median mixes industries and will mis-rank names in atypical sectors. An
+# industry-relative re-center (median/IQR within the peer group) is the intended
+# future refinement; until then read these as "vs the broad market", not "vs
+# peers".
+_GROSS_MARGIN_MEDIAN = 0.29   # gross-margin fraction
+_GROSS_MARGIN_SCALE = 0.22    # ≈ IQR; +1 IQR above median saturates to +1
+_NET_MARGIN_MEDIAN = 0.12     # net-margin fraction
+_NET_MARGIN_SCALE = 0.16      # ≈ IQR
+_CCC_DAYS_MEDIAN = 36.0       # cash-conversion-cycle days (lower = better)
+_CCC_DAYS_SCALE = 100.0       # ≈ IQR of CCC days
+_INVENTORY_TURNOVER_DAYS_MEDIAN = 96.0  # inventory days outstanding (lower = better)
+_INVENTORY_TURNOVER_DAYS_SCALE = 120.0  # ≈ IQR of inventory days
+# Labor-cost yoy is self-contained (cost UP = bad): tanh(yoy% / 5.0) saturates a
+# ±5% swing toward ±1, so no universe median/scale is needed for this field.
+_LABOR_COST_YOY_SCALE = 5.0   # % yoy per ~1 tanh unit
+
+# Same-disclosure dedup: ``{secondary_dp_id: primary_dp_id}``. Both fields in a
+# pair are derived from the SAME company 业绩预告 (earnings pre-announcement) and
+# target ``expectation_gap``, so emitting both double-counts the disclosure. The
+# REVISION field (``L5.fcst.guidance_change``) subsumes the LEVEL field
+# (``L9.company.earnings_guidance``): when the primary is present in the snapshot
+# AND passes every synthesis gate (participating + Known/Proxy + non-mock +
+# ``_realtime_signal`` not None), the secondary is SKIPPED. When the primary is
+# absent or yields no clean signal (e.g. change_direction ``new``/``type_change``,
+# or it's mock/Unknown/non-participating), the secondary is KEPT as a fallback.
+_REALTIME_DEDUP_PRIMARY: dict[str, str] = {
+    "L9.company.earnings_guidance": "L5.fcst.guidance_change",
+}
+
+
+def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: str | None) -> float | None:
+    """Per-dp_id signed/magnitude rules for the 8 governance realtime fields
+    that the generic fallbacks in ``_realtime_signal`` can't read.
+
+    Returns a signal in [-1, 1] (additive targets: sign matters) or a
+    magnitude in [0, 1] (discount targets: ``synthesize_realtime_nodes`` stores
+    ``abs(signal)`` and the discount roll-up in ``scoring`` ignores the sign and
+    only subtracts the magnitude). ``None`` → unknown payload, caller skips.
+
+    Robust to missing/None keys: any required key absent → ``None`` (never
+    raises). Direction handled downstream via the node's ``direction``.
+    """
+
+    # --- Additive targets (sign preserved + added to the final score) ---
+
+    if dp_id == "L6.priced.analyst_revision":
+        # expectation_gap. Already-signed net revision in ~[-1, 1].
+        net = _num(value.get("net_revision_score"))
+        if net is None:
+            return None
+        return _clip(net, -1.0, 1.0)
+
+    if dp_id == "L9.company.earnings_guidance":
+        # expectation_gap. change_pct_{min,max} are percentage points (预增 →
+        # large positive). De-saturate with tanh(avg/100) so a strong forecast
+        # (+100%) lands at ~0.76 instead of pinning at 1.0. Either bound
+        # missing → None.
+        cp_min = _num(value.get("change_pct_min"))
+        cp_max = _num(value.get("change_pct_max"))
+        if cp_min is None or cp_max is None:
+            return None
+        return _clip(math.tanh(((cp_min + cp_max) / 2.0) / 100.0), -1.0, 1.0)
+
+    if dp_id == "L5.fcst.guidance_change":
+        # expectation_gap. Direction word sets the sign; current_range_pct
+        # scales the magnitude via tanh (de-saturated so +100% → tanh(1.0)≈0.76
+        # rather than pinning at 1.0), floored so a real revision isn't ~0.
+        raw_dir = value.get("change_direction")
+        if not isinstance(raw_dir, str):
+            return None
+        direction = raw_dir.strip().lower()
+        if direction in _GUIDANCE_UP_DIRECTIONS:
+            sign = 1.0
+        elif direction in _GUIDANCE_DOWN_DIRECTIONS:
+            sign = -1.0
+        elif direction in _GUIDANCE_FLAT_DIRECTIONS:
+            return 0.0
+        else:
+            # "new" / "type_change" / anything unknown → no clean direction.
+            return None
+        rng = _num(value.get("current_range_pct"))
+        scale = math.tanh(abs(rng) / 100.0) if rng is not None else 0.0
+        magnitude = max(scale, _GUIDANCE_DIRECTION_FLOOR)
+        return _clip(sign * magnitude, -1.0, 1.0)
+
+    if dp_id == "L7.mood.analyst_rating":
+        # sentiment_score. avg_rating_score on a 1..5 scale (5 = strong_buy).
+        # A-share sell-side ratings cluster near the top (mean 4.63), so an
+        # absolute 3.0-neutral map gives every stock the same ~+0.81 (no signal).
+        # Cross-sectional re-center on the universe consensus instead: the
+        # signal measures how far ABOVE/BELOW peers a name is rated, centered
+        # ~0. 5.0 → +0.80, 4.63 → 0.0, 4.5 → ≈-0.28, ≤4.0 → clip -1.0.
+        avg = _num(value.get("avg_rating_score"))
+        if avg is None:
+            return None
+        return _clip(
+            (avg - _ANALYST_RATING_NEUTRAL) / _ANALYST_RATING_SCALE, -1.0, 1.0
+        )
+
+    if dp_id == "L6.state.expansion_compression":
+        # valuation_rerating. EXPANDED/EXPENSIVE must be NEGATIVE.
+        ratio = _num(value.get("ratio_vs_250d"))
+        if ratio is not None:
+            return -_clip(math.tanh((ratio - 1.0) * 2.0), -1.0, 1.0)
+        regime = value.get("regime")
+        if isinstance(regime, str):
+            r = regime.strip().lower()
+            if r == "expanded":
+                return -0.5
+            if r == "compressed":
+                return 0.5
+            return 0.0
+        return None
+
+    if dp_id == "L5.bs.leverage":
+        # fundamental_score. ``leverage_ratio`` is debt/assets (e.g. 0.66).
+        # Higher leverage = weaker balance sheet = NEGATIVE. 0.5 is neutral:
+        # 1.0 → -0.75, 0.2 → +0.45. Missing → None.
+        lev = _num(value.get("leverage_ratio"))
+        if lev is None:
+            return None
+        return -_clip((lev - 0.5) * 1.5, -1.0, 1.0)
+
+    if dp_id == "L5.bs.goodwill_ppe":
+        # fundamental_score. ``goodwill_to_assets`` in 0..1. Higher goodwill =
+        # impairment risk = weaker → NEGATIVE. 0.4 → -1.0 (strong), 0.0 → 0.
+        # Missing → None.
+        gw = _num(value.get("goodwill_to_assets"))
+        if gw is None:
+            return None
+        return -_clip(gw * 2.5, -1.0, 1.0)
+
+    if dp_id == "L5.is.gross_margin":
+        # fundamental_score. ``scalar`` is the gross-margin fraction. Higher =
+        # better → POSITIVE. Universe-relative re-center (see calibration block;
+        # industry-mixing caveat applies). 0.51 → +1.0, 0.29 → 0.0, 0.07 → -1.0.
+        gm = _num(value.get("scalar"))
+        if gm is None:
+            return None
+        return _clip((gm - _GROSS_MARGIN_MEDIAN) / _GROSS_MARGIN_SCALE, -1.0, 1.0)
+
+    if dp_id == "L5.is.margins":
+        # fundamental_score. ``net`` is the net-margin fraction (NOT operating).
+        # Higher = better → POSITIVE. Universe-relative re-center (caveat
+        # applies). 0.28 → +1.0, 0.12 → 0.0, -0.04 → -1.0.
+        nm = _num(value.get("net"))
+        if nm is None:
+            return None
+        return _clip((nm - _NET_MARGIN_MEDIAN) / _NET_MARGIN_SCALE, -1.0, 1.0)
+
+    if dp_id == "L4.eff.cycle":
+        # fundamental_score. ``ccc_days`` is the cash-conversion cycle in days.
+        # LOWER = better → INVERSE (negate). Universe-relative (caveat applies).
+        # 136 days → -1.0 (slow cycle drags), 36 → 0.0, -64 → +1.0.
+        ccc = _num(value.get("ccc_days"))
+        if ccc is None:
+            return None
+        return -_clip((ccc - _CCC_DAYS_MEDIAN) / _CCC_DAYS_SCALE, -1.0, 1.0)
+
+    if dp_id == "L4.eff.turnover":
+        # fundamental_score. ``inventory_turnover_days`` is days inventory
+        # outstanding. LOWER = better → INVERSE (negate). Universe-relative
+        # (caveat applies). 216 days → -1.0, 96 → 0.0, -24 → +1.0.
+        td = _num(value.get("inventory_turnover_days"))
+        if td is None:
+            return None
+        return -_clip(
+            (td - _INVENTORY_TURNOVER_DAYS_MEDIAN) / _INVENTORY_TURNOVER_DAYS_SCALE,
+            -1.0,
+            1.0,
+        )
+
+    if dp_id == "L4.cost.labor":
+        # fundamental_score. ``labor_cost_yoy_pct`` is the yoy % change in labor
+        # cost. Cost UP = bad → NEGATIVE (negate). Self-contained (tanh, no
+        # universe median): +5% → ≈-0.76, 0% → 0.0, -5% → ≈+0.76.
+        yoy = _num(value.get("labor_cost_yoy_pct"))
+        if yoy is None:
+            return None
+        return -_clip(math.tanh(yoy / _LABOR_COST_YOY_SCALE), -1.0, 1.0)
+
+    # --- Discount targets (sign ignored downstream; return [0, 1] magnitude) ---
+
+    if dp_id == "L8.val.overvalued":
+        # risk_discount. Higher overvaluation quantile → bigger risk.
+        mq = _num(value.get("max_quantile"))
+        if mq is None:
+            return None
+        return _clip(mq, 0.0, 1.0)
+
+    if dp_id == "L8.val.priced_in":
+        # risk_discount. priced_in_score already in 0..1.
+        pis = _num(value.get("priced_in_score"))
+        if pis is None:
+            return None
+        return _clip(pis, 0.0, 1.0)
+
+    if dp_id == "L6.priced.run_up":
+        # priced_in_discount. Only a run-UP counts; a decline → 0. d20_pct is a
+        # DECIMAL ratio (0.0245 = +2.45%); 20% run-up saturates the magnitude.
+        d20 = _num(value.get("d20_pct"))
+        if d20 is None:
+            d20 = _num(value.get("d5_pct"))
+        if d20 is None:
+            return None
+        return _clip(max(d20, 0.0) / 0.20, 0.0, 1.0)
+
+    return None
+
+
+def _realtime_signal(dp_id: str, value: Any, score_target: str | None) -> float | None:
+    """Reduce a realtime value payload to a *signed* signal in [-1, 1].
+
+    Only shapes whose sign is unambiguous are mapped; everything else returns
+    ``None`` so the caller skips that dp_id rather than inventing a direction.
+
+    Resolution order (first match wins):
+
+    0. Per-dp_id rules for the 8 governance realtime fields (see
+       ``_realtime_field_signal``) — bespoke payloads (net_revision_score,
+       ratio_vs_250d, max_quantile, d20_pct, …) whose direction/magnitude the
+       generic fallbacks below can't read.
+    1. dict ``score`` / ``intensity`` / ``strength`` — a derived sub-score that
+       is already normalized and signed; passthrough clipped to [-1, 1].
+    2. dict with any ``*_percentile`` key — take the max percentile (0..1),
+       map to ``(pct - 0.5) * 2``; invert for valuation/risk targets where a
+       high percentile means "expensive / crowded".
+    3. dict ``yoy_pct`` — ``tanh(yoy / 50)``.
+    4. dict with exactly one curated signed-percent field (see
+       ``_REALTIME_SIGNED_PCT_FIELDS``) — ``tanh(x / K)``, optional sign flip.
+    5. top-level numeric already in [-1, 1] — passthrough.
+    6. anything else — ``None``.
+    """
+
+    # 0. Per-dp_id field rules take precedence — these payloads carry bespoke
+    # keys (not score/percentile/yoy) so they'd otherwise fall through to None.
+    if isinstance(value, dict):
+        field_signal = _realtime_field_signal(dp_id, value, score_target)
+        if field_signal is not None:
+            return field_signal
+
+    # 5 (handled early for the non-dict case): bare numeric in [-1, 1].
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        x = float(value)
+        if -1.0 <= x <= 1.0:
+            return x
+        return None
+
+    if not isinstance(value, dict):
+        return None
+
+    # 1. Explicit signed sub-score.
+    for key in ("score", "intensity", "strength"):
+        if value.get(key) is not None:
+            try:
+                return _clip(float(value[key]), -1.0, 1.0)
+            except (TypeError, ValueError):
+                return None
+
+    # 2. Percentile shapes → signed, inverted for valuation/risk targets.
+    pct_values = [
+        value[k]
+        for k in value
+        if isinstance(k, str)
+        and k.endswith("_percentile")
+        and isinstance(value[k], (int, float))
+        and not isinstance(value[k], bool)
+    ]
+    if pct_values:
+        pct = max(float(p) for p in pct_values)
+        signal = (pct - 0.5) * 2.0
+        if score_target in _REALTIME_INVERTED_TARGETS:
+            signal = -signal
+        return _clip(signal, -1.0, 1.0)
+
+    # 3. yoy_pct via tanh.
+    yoy = value.get("yoy_pct")
+    if yoy is not None:
+        try:
+            return _clip(math.tanh(float(yoy) / 50.0), -1.0, 1.0)
+        except (TypeError, ValueError):
+            return None
+
+    # 4. Curated single signed-percent fields.
+    for field, (divisor, flip) in _REALTIME_SIGNED_PCT_FIELDS.items():
+        raw = value.get(field)
+        if raw is None:
+            continue
+        try:
+            signal = math.tanh(float(raw) / divisor)
+        except (TypeError, ValueError):
+            return None
+        if flip:
+            signal = -signal
+        return _clip(signal, -1.0, 1.0)
+
+    return None
+
+
+def _realtime_entry_signals(
+    dp_id: str,
+    realtime_snapshot: Mapping[str, Mapping[str, Any]],
+    role_registry: FieldGovernanceRegistry,
+    *,
+    existing_dp_ids: set[str] | frozenset[str],
+) -> bool:
+    """True iff ``dp_id``'s snapshot entry would itself be synthesized into a
+    scoring node — i.e. it passes every gate in ``synthesize_realtime_nodes``
+    (present + participating + Known/Proxy + non-mock + ``_realtime_signal`` not
+    None) and isn't already authored in the overlay. Used to decide whether a
+    dedup *primary* is strong enough to suppress its *secondary*."""
+
+    entry = realtime_snapshot.get(dp_id)
+    if not isinstance(entry, Mapping):
+        return False
+    if dp_id in existing_dp_ids:
+        return False
+    rule = role_registry.get(dp_id)
+    if rule is None or not rule.participates_in_score:
+        return False
+    if str(entry.get("data_status") or "") not in ("Known", "Proxy"):
+        return False
+    if str(entry.get("source") or "").startswith("mock:"):
+        return False
+    return _realtime_signal(dp_id, entry.get("value"), rule.score_target) is not None
+
+
+def synthesize_realtime_nodes(
+    realtime_snapshot: Mapping[str, Mapping[str, Any]],
+    role_registry: FieldGovernanceRegistry | None,
+    *,
+    existing_dp_ids: set[str] | frozenset[str],
+    ts_code: str | None,
+) -> list[dict]:
+    """Turn participating realtime snapshot entries into overlay-leaf nodes.
+
+    For each ``(dp_id, entry)`` where ALL of the following hold, emit one
+    standalone-leaf node dict (``parent_node=None``):
+
+    - governance ``participates_in_score`` is True,
+    - ``entry["data_status"]`` is ``Known`` or ``Proxy``,
+    - the source does NOT start with ``"mock:"``,
+    - ``dp_id`` is not already authored in the overlay (``existing_dp_ids``),
+    - ``_realtime_signal`` maps the value to a signed signal (else skip),
+    - ``dp_id`` is not a dedup *secondary* whose *primary* (see
+      ``_REALTIME_DEDUP_PRIMARY``) is itself a scoring entry in this snapshot.
+
+    The emitted node carries ``value={"score": abs(signal)}`` plus a
+    ``direction`` so the sign survives ``_leaf_score``'s ``direction ×
+    _to_scalar`` product. ``synthetic_realtime`` flags the origin for audit.
+    """
+
+    if role_registry is None:
+        return []
+
+    out: list[dict] = []
+    for dp_id, entry in realtime_snapshot.items():
+        if not isinstance(entry, Mapping):
+            continue
+        if dp_id in existing_dp_ids:
+            continue
+
+        # Same-disclosure dedup: skip this secondary field when its primary is
+        # present AND passes every synthesis gate (so it will emit its own
+        # node). A mock / Unknown / non-participating / None-signal primary does
+        # NOT suppress — the secondary is kept as the fallback.
+        primary_dp = _REALTIME_DEDUP_PRIMARY.get(dp_id)
+        if primary_dp is not None and _realtime_entry_signals(
+            primary_dp, realtime_snapshot, role_registry,
+            existing_dp_ids=existing_dp_ids,
+        ):
+            continue
+
+        rule = role_registry.get(dp_id)
+        if rule is None or not rule.participates_in_score:
+            continue
+
+        status = str(entry.get("data_status") or "")
+        if status not in ("Known", "Proxy"):
+            continue
+
+        source = str(entry.get("source") or "")
+        if source.startswith("mock:"):
+            continue
+
+        signal = _realtime_signal(dp_id, entry.get("value"), rule.score_target)
+        if signal is None:
+            continue
+
+        confidence = entry.get("confidence")
+        try:
+            confidence = float(confidence) if confidence is not None else 0.5
+        except (TypeError, ValueError):
+            confidence = 0.5
+
+        # ``confidence_multiplier`` nodes are consumed via their confidence /
+        # data_coverage (scoring._confidence_multiplier_from_flat), NOT via a
+        # directional score. Emitting a signed magnitude for them is inert for
+        # the multiplier yet would pollute the top-path explanation ranking, so
+        # zero the directional signal while keeping the node (and its
+        # confidence) in the set.
+        if rule.score_target == "confidence_multiplier":
+            node_value: dict = {"score": 0.0}
+            node_direction = "neutral"
+        else:
+            node_value = {"score": abs(signal)}
+            node_direction = "positive" if signal >= 0 else "negative"
+
+        out.append({
+            "node_id": f"{ts_code}:{dp_id}:rt",
+            "dp_id": dp_id,
+            "node_name": dp_id,
+            "parent_node": None,
+            "value": node_value,
+            "direction": node_direction,
+            "data_status": "Known",
+            "confidence": confidence,
+            "last_updated": entry.get("updated_at") or entry.get("last_updated"),
+            "synthetic_realtime": True,
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Leaf-node intrinsic score
 # ---------------------------------------------------------------------------
 
@@ -498,6 +1003,10 @@ def _leaf_score(node: dict) -> dict:
         "missing_balance": missing_balance,
         "confidence_penalty": confidence_penalty,
         "proxy_used": node.get("proxy_used"),
+        # Carry the realtime-bridge origin flag through aggregation so scoring's
+        # _industry_variables_from_flat can route dead-sink synthetic nodes
+        # (fundamental_score / optionality_score) into industry_contrib.
+        "synthetic_realtime": node.get("synthetic_realtime"),
         **_governance_payload(node),
     }
 
@@ -672,6 +1181,8 @@ def aggregate_company_graph(
     stock_overlay: dict,
     industry_overlay: dict | None = None,
     role_registry: FieldGovernanceRegistry | None = None,
+    *,
+    realtime_snapshot: dict | None = None,
 ) -> dict[str, dict]:
     """Compute parent-node scores + three-horizon mix for every node in a
     stock overlay. Returns ``{node_id: {...}}``.
@@ -680,7 +1191,24 @@ def aggregate_company_graph(
     industry-level ``value`` payloads when ``inherit_from_industry: true``);
     current implementation reads inheritance directly from the stock overlay
     if the value is null and ``inherit_from_industry`` is true.
+
+    ``realtime_snapshot`` (the ``mvp20.storage.read_hot_snapshot`` shape:
+    ``{dp_id: {value, data_status, confidence, source, ...}}``) is the bridge
+    from minute-level realtime data into the score. When provided, every
+    participating, non-mock, unmapped (vs. authored overlay) entry whose value
+    shape is unambiguous is synthesized into a standalone leaf node (see
+    ``synthesize_realtime_nodes``) and folded into the same aggregation. When
+    ``None`` (default), behaviour is identical to before — pure back-compat.
     """
+
+    # Synthetic realtime nodes need governance (score_target / participates_in
+    # _score) to reach the score. Authored overlay nodes already carry those
+    # fields baked in, so callers historically pass no registry. When a
+    # realtime_snapshot is supplied without one, load the default governance so
+    # the synthetic leaves can be classified. Authored nodes are unaffected
+    # (apply_to_node only fills missing fields).
+    if realtime_snapshot and role_registry is None:
+        role_registry = load_default_governance(strict=False)
 
     nodes_list = stock_overlay.get("nodes") or []
     nodes_by_id: dict[str, dict] = {}
@@ -692,6 +1220,27 @@ def aggregate_company_graph(
         if role_registry is not None:
             node = role_registry.apply_to_node(node)
         nodes_by_id[nid] = node
+
+    # Bridge realtime snapshot values into synthetic standalone-leaf nodes.
+    # Dedupe against the authored overlay's dp_ids so a value is never counted
+    # twice. Synthetic nodes get the same governance enrichment as authored
+    # ones, then flow through the existing post-order aggregation unchanged.
+    if realtime_snapshot:
+        existing_dp_ids = {
+            n.get("dp_id") for n in nodes_by_id.values() if n.get("dp_id")
+        }
+        synthetic = synthesize_realtime_nodes(
+            realtime_snapshot,
+            role_registry,
+            existing_dp_ids=existing_dp_ids,
+            ts_code=stock_overlay.get("ts_code"),
+        )
+        for node in synthetic:
+            if role_registry is not None:
+                node = role_registry.apply_to_node(node)
+            nid = node.get("node_id")
+            if nid and nid not in nodes_by_id:
+                nodes_by_id[nid] = node
 
     if not nodes_by_id:
         return {}
@@ -827,6 +1376,10 @@ def aggregate_company_graph(
                 "n_children_non_scoring": 0,
                 "risk_discount": 0.0,
                 "priced_in_discount": 0.0,
+                # Copy the node's dp_id into the standalone-leaf result so
+                # synthetic realtime nodes carry it through to scoring for
+                # later per-field calibration (was dropped → None before).
+                "dp_id": node.get("dp_id"),
                 "field_role": leaf.get("field_role"),
                 "score_target": leaf.get("score_target"),
                 "participates_in_score": leaf.get("participates_in_score"),
@@ -837,6 +1390,7 @@ def aggregate_company_graph(
                 "score_enabled": leaf.get("score_enabled"),
                 "missing_balance": leaf.get("missing_balance"),
                 "proxy_used": leaf.get("proxy_used"),
+                "synthetic_realtime": leaf.get("synthetic_realtime"),
             }
             child_payload[nid] = {
                 "status": leaf["status"],
@@ -881,8 +1435,10 @@ def aggregate_from_paths(
 __all__ = [
     "aggregate_company_graph",
     "aggregate_from_paths",
+    "synthesize_realtime_nodes",
     # Exposed helpers for tests / downstream tooling:
     "_to_scalar",
     "_classify_horizon",
     "_recency",
+    "_realtime_signal",
 ]

@@ -106,14 +106,25 @@ SPEC28_DEFAULT_HORIZON_MIX: dict[str, dict[str, float]] = {
     },
 }
 
-#: Trading signal thresholds applied to the **mix-weighted final score**.
-#: Values are picked so a healthy multi-driver bull (path/company scores
-#: in the 0.4–0.8 range each) clears BUY while a flat/mixed picture lands
-#: on HOLD. WATCH is the "interesting but not enough conviction" bucket;
-#: AVOID is reserved for net-negative final scores.
-SIGNAL_BUY_THRESHOLD = 0.50
-SIGNAL_HOLD_THRESHOLD = 0.15
-SIGNAL_WATCH_THRESHOLD = -0.10
+#: Trading signal thresholds applied to the **market-adjusted** ``base_score``
+#: (the value ``score_company`` thresholds for ``trading_signal`` — i.e.
+#: ``market_adjusted_final_score["base_score"]``).
+#:
+#: T2 re-calibration (post sentiment de-bias): an analyst-sentiment de-bias
+#: removed a uniform positive skew, re-centering the market-adjusted signal
+#: basis. It now distributes across the 116-stock A-share universe as
+#: min −2.28 / p10 −1.10 / p25 −0.53 / median −0.215 / p75 +0.18 /
+#: p90 +0.47 / max +0.91. The OLD T1 thresholds (0.90 / 0.60 / 0.30) were
+#: calibrated for the prior positively-skewed scale and labelled 93/116 as
+#: AVOID. These T2 values are picked from the de-biased distribution to give
+#: BUY≈24% / HOLD≈16% / WATCH≈29% / AVOID≈31% — a balanced spread with the
+#: median stock (−0.215) landing in WATCH. The slightly-negative center
+#: (hence the negative HOLD/WATCH thresholds) is intentional: it reflects the
+#: priced-in (run-up) drag on the de-biased scale. These remain calibration
+#: constants to revisit if the field set / data distribution changes.
+SIGNAL_BUY_THRESHOLD = 0.20
+SIGNAL_HOLD_THRESHOLD = -0.10
+SIGNAL_WATCH_THRESHOLD = -0.45
 # anything strictly below WATCH threshold => AVOID
 
 
@@ -1062,8 +1073,22 @@ def _sum_role_target(
     target: str,
     *,
     absolute: bool = False,
+    damp: bool = False,
 ) -> float:
+    """Roll up ``Σ(score × confidence)`` over nodes tagged ``score_target == target``.
+
+    When ``damp=True`` the raw confidence-weighted sum is divided by
+    ``max(1.0, Σconfidence)``. The ``max(1.0, …)`` floor means a sparse /
+    single low-confidence node (total confidence ≤ 1) is returned unchanged
+    (identical to the non-damped sum, preserving the confidence discount and
+    existing test expectations), while stacked signals (Σconf > 1) are
+    averaged so components no longer inflate. ``damp=False`` (default) keeps
+    every existing caller's raw-sum behaviour.
+    """
+
     total = 0.0
+    conf_sum = 0.0
+    matched = False
     for value in aggregated_nodes.values():
         if not isinstance(value, Mapping):
             continue
@@ -1071,11 +1096,17 @@ def _sum_role_target(
             continue
         if not _role_participates(value):
             continue
+        matched = True
         score = _coerce_float(value.get("score"), 0.0)
         if absolute:
             score = abs(score)
         confidence = _coerce_float(value.get("confidence"), 1.0)
         total += score * confidence
+        conf_sum += confidence
+    if damp:
+        if not matched:
+            return 0.0
+        return total / max(1.0, conf_sum)
     return total
 
 
@@ -1084,11 +1115,42 @@ def _sum_role_targets(
     targets: set[str],
     *,
     absolute: bool = False,
+    damp: bool = False,
 ) -> float:
-    return sum(
-        _sum_role_target(aggregated_nodes, target, absolute=absolute)
-        for target in targets
-    )
+    """Roll up a SET of ``score_target`` values into one component.
+
+    With ``damp=True`` the damping is applied ONCE over the COMBINED group:
+    we accumulate ``Σ(score × conf)`` and ``Σconf`` across every node matching
+    any target in the set, then divide a single time by ``max(1.0, Σconf)``
+    (NOT per-target). ``damp=False`` (default) is the plain sum-of-sums.
+    """
+
+    if not damp:
+        return sum(
+            _sum_role_target(aggregated_nodes, target, absolute=absolute)
+            for target in targets
+        )
+
+    total = 0.0
+    conf_sum = 0.0
+    matched = False
+    for value in aggregated_nodes.values():
+        if not isinstance(value, Mapping):
+            continue
+        if value.get("score_target") not in targets:
+            continue
+        if not _role_participates(value):
+            continue
+        matched = True
+        score = _coerce_float(value.get("score"), 0.0)
+        if absolute:
+            score = abs(score)
+        confidence = _coerce_float(value.get("confidence"), 1.0)
+        total += score * confidence
+        conf_sum += confidence
+    if not matched:
+        return 0.0
+    return total / max(1.0, conf_sum)
 
 
 def _multiplier_factor_from_targets(
@@ -1138,26 +1200,40 @@ def _role_components_from_flat(aggregated_nodes: Mapping[str, Any]) -> dict[str,
         aggregated_nodes, multiplier_targets,
     )
     return {
-        "expectation_gap": _sum_role_target(aggregated_nodes, "expectation_gap"),
-        "valuation_rerating": _sum_role_target(aggregated_nodes, "valuation_rerating"),
-        "funding_score": _sum_role_target(aggregated_nodes, "funding_score"),
-        "sentiment_score": _sum_role_target(aggregated_nodes, "sentiment_score"),
+        # Additive + discount components use a damped denominator
+        # (max(1.0, Σconf)) so stacked realtime signals average instead of
+        # summing. Sparse / single low-conf nodes (Σconf ≤ 1) are unchanged.
+        "expectation_gap": _sum_role_target(
+            aggregated_nodes, "expectation_gap", damp=True,
+        ),
+        "valuation_rerating": _sum_role_target(
+            aggregated_nodes, "valuation_rerating", damp=True,
+        ),
+        "funding_score": _sum_role_target(
+            aggregated_nodes, "funding_score", damp=True,
+        ),
+        "sentiment_score": _sum_role_target(
+            aggregated_nodes, "sentiment_score", damp=True,
+        ),
         "capital_sentiment": _sum_role_targets(
             aggregated_nodes,
             {"capital_sentiment", "funding_score", "sentiment_score"},
+            damp=True,
         ),
         "risk_discount": _sum_role_targets(
             aggregated_nodes,
             {"risk_discount", "uncertainty_discount", "volatility_risk", "overheat_risk"},
             absolute=True,
+            damp=True,
         ),
         "valuation_pressure": _sum_role_target(
-            aggregated_nodes, "valuation_pressure", absolute=True,
+            aggregated_nodes, "valuation_pressure", absolute=True, damp=True,
         ),
         "priced_in_discount": _sum_role_targets(
             aggregated_nodes,
             {"priced_in_discount", "option_priced_in", "time_decay"},
             absolute=True,
+            damp=True,
         ),
         "funding_multiplier": _multiplier_factor_from_targets(
             aggregated_nodes, {"funding_multiplier"},
@@ -1262,6 +1338,89 @@ def _industry_variables_from_flat(
             "confidence": _coerce_float(agg.get("confidence"), 0.0),
             "materiality": _coerce_float(n.get("materiality"), 1.0),
         })
+
+    # ---- Realtime-bridge dead-sink rescue ----------------------------------
+    # The overlay loop above only sees authored YAML nodes, so synthetic
+    # realtime leaves (node_id ``<ts>:<dp_id>:rt``) never reach the company
+    # score this way. Two score-targets have a sink HERE (industry_contrib →
+    # the §27.4 `fundamental` term) but NO flat sink in
+    # ``_role_components_from_flat``: ``fundamental_score`` and
+    # ``optionality_score``. Without this, ~96/250 participating spec fields
+    # that target fundamental_score are a dead sink via the bridge.
+    #
+    # ⚠️ Restrict STRICTLY to {fundamental_score, optionality_score}. Every
+    # other live target (valuation_rerating, expectation_gap, risk_discount,
+    # funding/sentiment_score, priced_in_discount, *_multiplier,
+    # confidence_multiplier) already counts once via _role_components_from_flat
+    # path #1 — routing them here too would double-count them.
+    if use_governance:
+        _DEAD_SINK_TARGETS = {"fundamental_score", "optionality_score"}
+        emitted_ids = {v.get("node_id") for v in out}
+        # Accumulate ALL synthetic dead-sink nodes into a single damped-mean
+        # variable instead of emitting one industry-variable per node. Each
+        # synthetic node defaults every weight to 1.0, so N of them would SUM
+        # in compute_company_score → inflation as more realtime fields wire in.
+        # We collapse them to ONE var whose score is
+        # ``Σ(node_score × conf) / max(1.0, Σconf)`` (the same damping the
+        # additive components use), confidence = mean conf, direction = sign.
+        synth_total = 0.0          # Σ(node_score × conf)
+        synth_conf_sum = 0.0       # Σ conf (damping denominator)
+        synth_conf_count = 0       # for the mean confidence
+        synth_matched = False
+        for node_id, agg in aggregated_nodes.items():
+            if not isinstance(agg, Mapping):
+                continue
+            # Prefer the explicit flag (propagated through aggregation); fall
+            # back to the ``:rt`` node_id suffix so detection stays reliable
+            # even if a future refactor drops the flag.
+            is_synthetic = bool(agg.get("synthetic_realtime")) or (
+                isinstance(node_id, str) and node_id.endswith(":rt")
+            )
+            if not is_synthetic:
+                continue
+            if node_id in emitted_ids:
+                continue
+            if agg.get("score_target") not in _DEAD_SINK_TARGETS:
+                continue
+            if not _role_participates(agg):
+                continue
+            score = _coerce_float(agg.get("score"), 0.0)
+            confidence = _coerce_float(agg.get("confidence"), 0.0)
+            synth_total += score * confidence
+            synth_conf_sum += confidence
+            synth_conf_count += 1
+            synth_matched = True
+
+        if synth_matched:
+            # Damped mean — identical to a single node when Σconf ≤ 1 (the
+            # max(1.0, …) floor preserves the lone-node confidence discount),
+            # averaging when signals stack so industry_contrib does not scale
+            # linearly with the node count.
+            collapsed_score = synth_total / max(1.0, synth_conf_sum)
+            mean_conf = (
+                synth_conf_sum / synth_conf_count if synth_conf_count else 0.0
+            )
+            direction = (
+                "positive" if collapsed_score > 0
+                else "negative" if collapsed_score < 0 else "neutral"
+            )
+            # Synthetic nodes have no overlay weights; default every
+            # multiplicative factor to 1.0 so the damped-mean score flows
+            # through compute_company_score unchanged. A future B-calibration
+            # pass can tune these per dp_id / score_target.
+            out.append({
+                "name": "realtime_fundamental",
+                "node_id": "realtime_fundamental",
+                "score": collapsed_score,
+                "exposure": 1.0,
+                "revenue_share": 1.0,
+                "profit_elasticity": 1.0,
+                "financial_sensitivity": 1.0,
+                "valuation_sensitivity": 1.0,
+                "direction": direction,
+                "confidence": mean_conf,
+                "materiality": 1.0,
+            })
     return out
 
 
@@ -1437,6 +1596,25 @@ def score_company(
         ts_code=ts_code,
     )
     market_final = market_adapter["adjusted_final_score"]
+
+    # Align the RETURNED trading_meaning verb with the trading_signal basis.
+    # ``apply_market_adapter`` deep-copies ``core_final`` (including its
+    # ``trading_meaning``, which was computed on the core / pre-market-adapter
+    # base_score whose scale is ~0.5 lower than the market-adjusted base the
+    # signal thresholds). Under the higher T1 thresholds that stale verb would
+    # read 回避/观察 even when ``trading_signal`` is BUY — a visible
+    # contradiction. Recompute the verb on the market-adjusted short/medium/
+    # long totals + market-adjusted base so verb and signal agree. The returned
+    # ``final_score`` and ``market_adjusted_final_score`` are this same object,
+    # so the single override fixes both; ``core_final_score["trading_meaning"]``
+    # is left as-is (it documents the pre-adapter view). The displayed
+    # short/medium/long totals are not changed.
+    market_final["trading_meaning"] = _describe_trading_meaning(
+        _coerce_float(market_final.get("short_total"), 0.0),
+        _coerce_float(market_final.get("medium_total"), 0.0),
+        _coerce_float(market_final.get("long_total"), 0.0),
+        base_score=_coerce_float(market_final.get("base_score"), 0.0),
+    )
 
     signals = _signals_from_inputs(
         company_score=company_score,

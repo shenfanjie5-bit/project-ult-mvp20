@@ -499,12 +499,21 @@ class TestTradingSignal:
     def test_horizon_weights_used(self) -> None:
         """Weighted mix uses HORIZON_DEFAULT_WEIGHTS by default; medium
         carries the largest weight, so a strong-medium picture should
-        push the mix higher than the simple average would."""
+        push the mix higher than the simple average would.
+
+        T2 thresholds (BUY 0.20 / HOLD -0.10 / WATCH -0.45): pick a
+        medium-only input where the weighted mix clears BUY but the naive
+        simple average would not — this is what proves the weighting (not
+        just the magnitude) is doing the work.
+        """
 
         from mvp20.scoring import _trading_signal_from_mix
-        # short=0, medium=0.8, long=0 — default weights give
-        # 0 * 0.30 + 0.8 * 0.45 + 0 * 0.25 = 0.36 ⇒ HOLD
-        assert _trading_signal_from_mix(0.0, 0.8, 0.0) == "HOLD"
+        # short=0, medium=0.5, long=0 — default weights give
+        # 0 * 0.30 + 0.5 * 0.45 + 0 * 0.25 = 0.225 ⇒ BUY (≥ 0.20).
+        # The simple average would be 0.5 / 3 = 0.167 ⇒ only HOLD (≥ -0.10,
+        # < 0.20), so the BUY label here is attributable to medium's heavier
+        # weight rather than the raw magnitude.
+        assert _trading_signal_from_mix(0.0, 0.5, 0.0) == "BUY"
 
 
 # ---------------------------------------------------------------------------
@@ -1008,3 +1017,226 @@ def test_score_company_outputs_core_and_market_adjusted_scores() -> None:
     assert result["market_adapter"]["market_code"] == "CN_A"
     assert result["market_adjusted_final_score"] is result["final_score"]
     assert result["short_total"] == pytest.approx(result["final_score"]["short_total"])
+
+
+# ---------------------------------------------------------------------------
+# Damped role-target roll-up: ``Σ(score×conf) / max(1.0, Σconf)``.
+#   * Σconf ≤ 1 (sparse / single low-conf node) → denominator floored to 1.0
+#     → identical to the raw confidence-weighted sum (UNCHANGED behaviour).
+#   * Σconf > 1 (signals stack) → averages, killing the inflation.
+# ---------------------------------------------------------------------------
+
+
+class TestDampedRoleTarget:
+    def _node(self, score: float, conf: float, target: str = "expectation_gap") -> dict:
+        return {"score": score, "confidence": conf, "score_target": target}
+
+    def test_sparse_single_low_conf_node_is_unchanged(self) -> None:
+        """One node score 0.8 conf 0.5: Σconf=0.5 ≤ 1 → max(1.0, 0.5)=1.0,
+        so damp = 0.8×0.5 / 1.0 = 0.4 == the non-damped sum (0.4)."""
+
+        from mvp20.scoring import _sum_role_target
+
+        agg = {"n1": self._node(0.8, 0.5)}
+        non_damped = _sum_role_target(agg, "expectation_gap", damp=False)
+        damped = _sum_role_target(agg, "expectation_gap", damp=True)
+        assert non_damped == pytest.approx(0.4)   # 0.8 * 0.5
+        assert damped == pytest.approx(0.4)        # / max(1.0, 0.5) = /1.0
+        assert damped == pytest.approx(non_damped)
+
+    def test_dense_signals_average_not_sum(self) -> None:
+        """Three nodes each score 0.8 conf 0.9: Σconf=2.7 > 1.
+        non-damped = 3 × (0.8×0.9) = 2.16.
+        damped = 2.16 / max(1.0, 2.7) = 2.16 / 2.7 = 0.8 (≈ per-node score)."""
+
+        from mvp20.scoring import _sum_role_target
+
+        agg = {f"n{i}": self._node(0.8, 0.9) for i in range(3)}
+        non_damped = _sum_role_target(agg, "expectation_gap", damp=False)
+        damped = _sum_role_target(agg, "expectation_gap", damp=True)
+        assert non_damped == pytest.approx(2.16)   # 3 * 0.72
+        assert damped == pytest.approx(0.8)         # 2.16 / 2.7
+        assert damped < non_damped
+
+    def test_absolute_true_dampens_magnitude(self) -> None:
+        """absolute=True takes abs(score) before ×conf, then damps once.
+        Three nodes score -0.8 conf 0.9: |−0.8|×0.9 = 0.72 each.
+        non-damped = 2.16; damped = 2.16 / 2.7 = 0.8."""
+
+        from mvp20.scoring import _sum_role_target
+
+        agg = {f"n{i}": self._node(-0.8, 0.9, "risk_discount") for i in range(3)}
+        non_damped = _sum_role_target(agg, "risk_discount", absolute=True, damp=False)
+        damped = _sum_role_target(agg, "risk_discount", absolute=True, damp=True)
+        assert non_damped == pytest.approx(2.16)
+        assert damped == pytest.approx(0.8)
+        assert damped < non_damped
+
+    def test_no_matching_node_returns_zero(self) -> None:
+        from mvp20.scoring import _sum_role_target
+
+        assert _sum_role_target({}, "expectation_gap", damp=True) == pytest.approx(0.0)
+
+
+class TestDampedRoleTargets:
+    """``_sum_role_targets`` over a SET — damping applied ONCE over the
+    combined group (accumulate total + conf_sum across all targets, divide
+    a single time), NOT per-target."""
+
+    def test_sparse_set_is_unchanged(self) -> None:
+        """One node (funding_score) score 0.8 conf 0.5 in a 2-target set:
+        Σconf=0.5 ≤ 1 → damp = 0.4 == non-damped sum."""
+
+        from mvp20.scoring import _sum_role_targets
+
+        agg = {"a": {"score": 0.8, "confidence": 0.5, "score_target": "funding_score"}}
+        targets = {"funding_score", "sentiment_score"}
+        non_damped = _sum_role_targets(agg, targets, damp=False)
+        damped = _sum_role_targets(agg, targets, damp=True)
+        assert non_damped == pytest.approx(0.4)
+        assert damped == pytest.approx(0.4)
+        assert damped == pytest.approx(non_damped)
+
+    def test_dense_set_dampens_once_over_combined_group(self) -> None:
+        """Three nodes (one per target in the set), each score 0.8 conf 0.9:
+        combined Σ(score×conf)=2.16, combined Σconf=2.7.
+        damped = 2.16 / max(1.0, 2.7) = 0.8 — a SINGLE divide over the group,
+        not 3 separate per-target damps (each of which would also be 0.8 and
+        then SUM back to 2.4)."""
+
+        from mvp20.scoring import _sum_role_targets
+
+        agg = {
+            "a": {"score": 0.8, "confidence": 0.9, "score_target": "funding_score"},
+            "b": {"score": 0.8, "confidence": 0.9, "score_target": "sentiment_score"},
+            "c": {"score": 0.8, "confidence": 0.9, "score_target": "capital_sentiment"},
+        }
+        targets = {"funding_score", "sentiment_score", "capital_sentiment"}
+        non_damped = _sum_role_targets(agg, targets, damp=False)
+        damped = _sum_role_targets(agg, targets, damp=True)
+        assert non_damped == pytest.approx(2.16)
+        assert damped == pytest.approx(0.8)        # combined-once, NOT 2.4
+        assert damped < non_damped
+
+    def test_absolute_true_set_dampens_once(self) -> None:
+        from mvp20.scoring import _sum_role_targets
+
+        agg = {
+            "a": {"score": -0.8, "confidence": 0.9, "score_target": "risk_discount"},
+            "b": {"score": -0.8, "confidence": 0.9, "score_target": "overheat_risk"},
+            "c": {"score": -0.8, "confidence": 0.9, "score_target": "volatility_risk"},
+        }
+        targets = {"risk_discount", "overheat_risk", "volatility_risk"}
+        non_damped = _sum_role_targets(agg, targets, absolute=True, damp=False)
+        damped = _sum_role_targets(agg, targets, absolute=True, damp=True)
+        assert non_damped == pytest.approx(2.16)
+        assert damped == pytest.approx(0.8)
+        assert damped < non_damped
+
+    def test_no_matching_node_returns_zero(self) -> None:
+        from mvp20.scoring import _sum_role_targets
+
+        assert _sum_role_targets({}, {"funding_score"}, damp=True) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Fundamental collapse: synthetic dead-sink nodes (fundamental_score /
+# optionality_score) collapse into a SINGLE "realtime_fundamental" damped-mean
+# industry variable so industry_contrib does not scale linearly with the
+# synthetic node count.
+# ---------------------------------------------------------------------------
+
+
+class TestFundamentalCollapse:
+    def _governed_overlay(self) -> dict:
+        # One authored governance node so _has_role_governance() is True and
+        # the synthetic dead-sink rescue path runs. The authored node carries
+        # no aggregate score (kept out of the collapse below).
+        return {
+            "ts_code": "X",
+            "industry_id": "TEST",
+            "nodes": [
+                {
+                    "node_id": "auth",
+                    "dp_id": "L5.is.eps",
+                    "node_name": "auth",
+                    "layer": "industry_macro",
+                    "field_role": "score_component",
+                    "score_target": "fundamental_score",
+                    "participates_in_score": True,
+                }
+            ],
+        }
+
+    def _synthetic(self, score: float, conf: float) -> dict:
+        return {
+            "score": score,
+            "confidence": conf,
+            "score_target": "fundamental_score",
+            "synthetic_realtime": True,
+            "participates_in_score": True,
+            "score_enabled": True,
+        }
+
+    def test_three_synthetic_nodes_collapse_to_one_damped_mean(self) -> None:
+        """3 synthetic fundamental_score nodes (0.6/0.9, 0.9/0.9, 0.3/0.9).
+        Σ(score×conf) = (0.6+0.9+0.3)×0.9 = 1.8×0.9 = 1.62; Σconf = 2.7.
+        damped mean = 1.62 / max(1.0, 2.7) = 0.6. Exactly ONE
+        "realtime_fundamental" var, score 0.6, conf = mean(0.9)=0.9."""
+
+        from mvp20.scoring import _industry_variables_from_flat
+
+        overlay = self._governed_overlay()
+        agg = {
+            # authored node has no real score → excluded from the collapse,
+            # but its presence keeps the governance path on.
+            "auth": {
+                "score": 0.0, "confidence": 0.5,
+                "field_role": "score_component",
+                "score_target": "fundamental_score",
+                "participates_in_score": True, "score_enabled": True,
+            },
+            "X:dp1:rt": self._synthetic(0.6, 0.9),
+            "X:dp2:rt": self._synthetic(0.9, 0.9),
+            "X:dp3:rt": self._synthetic(0.3, 0.9),
+        }
+        ivars = _industry_variables_from_flat(agg, overlay)
+        rt = [v for v in ivars if v["node_id"] == "realtime_fundamental"]
+        assert len(rt) == 1                              # collapsed to ONE var
+        assert rt[0]["score"] == pytest.approx(0.6)      # 1.62 / 2.7
+        assert rt[0]["confidence"] == pytest.approx(0.9)  # mean conf
+        assert rt[0]["name"] == "realtime_fundamental"
+
+    def test_industry_contrib_does_not_scale_linearly_with_node_count(self) -> None:
+        """1 vs 3 synthetic nodes of the SAME score/conf must NOT triple the
+        industry contribution. With per-node summing (the old behaviour) 3
+        nodes would have summed to 3×. With the damped-mean collapse the
+        contribution stays bounded near the single-node value."""
+
+        from mvp20.scoring import score_company
+
+        overlay = self._governed_overlay()
+
+        def contrib_for(n: int) -> float:
+            agg = {
+                "auth": {
+                    "score": 0.0, "confidence": 0.5,
+                    "field_role": "score_component",
+                    "score_target": "fundamental_score",
+                    "participates_in_score": True, "score_enabled": True,
+                },
+            }
+            for i in range(n):
+                agg[f"X:dp{i}:rt"] = self._synthetic(0.8, 0.9)
+            res = score_company(overlay, aggregated_nodes=agg)
+            return res["company_score"]["components"]["industry_contrib"]
+
+        one = contrib_for(1)
+        three = contrib_for(3)
+        # Single node: Σconf=0.9 ≤ 1 → damped mean = 0.72/1.0 = 0.72.
+        assert one == pytest.approx(0.72)
+        # Three identical nodes: Σ(0.8×0.9)=2.16, Σconf=2.7 → 2.16/2.7 = 0.8.
+        assert three == pytest.approx(0.8)
+        # Crucially NOT linear: 3 nodes is ~1.1×, not 3× (old summing = 2.16).
+        assert three < 3.0 * one
+        assert three < 1.0
