@@ -124,24 +124,117 @@ coverage:
 | Permanently unhandled | 0 | No spec field is impossible to handle, but not every field is a structured hard-data feed. |
 
 Current local runtime snapshot
-(`runtime/hot.sqlite:realtime_current`) has **31 612 rows**,
+(`runtime/hot.sqlite:realtime_current`) has **31 961 rows**,
 **181 distinct dp_id**, **328 stock tickers**, and **14 sentinel
 market/industry entities**. **136 / 250 (54.4%)** of the
 spec data points are now present in SQLite (intersection of distinct
-dp_id with `config/data_point_roles.yaml`). **105 sentinel rows**
-(`MARKET:CN` × 14, `MARKET:US` × 7, `INDUSTRY:<id>` × 5–8) cover
+dp_id with `config/data_point_roles.yaml`). **106 sentinel rows**
+(`MARKET:CN` × 15, `MARKET:US` × 7, `INDUSTRY:<id>` × 84 rows) cover
 market-level and industry-level macro / policy / sector fields. The
 current injection audit reports an average of **102.1 / 250 (40.8%)**
 effective dp_ids per company and **96.0** realtime-injected dp_ids
 (the per-stock count includes sentinel rows merged via
 `read_hot_snapshot`'s `MARKET:<market>` and `INDUSTRY:<id>` fallback).
-**123 distinct `source` labels** are written by adapters (Tushare /
+**127 distinct `source` labels** are written by adapters (Tushare /
 FMP / Futu / AKShare / derive). Recheck with:
 
 ```bash
 sqlite3 runtime/hot.sqlite \
   'select count(*), count(distinct dp_id), count(distinct ts_code), count(distinct source) from realtime_current;'
 ```
+
+For the A-share slice specifically, use
+[`docs/audit/a_share_spec_completion.md`](docs/audit/a_share_spec_completion.md)
+or rerun `scripts/check_a_share_spec_completion.py`. The current A-share
+audit shows **115 / 250** spec dp_ids handled by effective runtime snapshots
+after excluding `mock:*` rows, **66 / 250** handled by compiled overlays, and
+**179 / 250 (71.6%)** handled by the combined real A-share view. The split fix
+plan is in
+[`docs/audit/a_share_gap_fill_plan.md`](docs/audit/a_share_gap_fill_plan.md).
+
+That combined **179 / 250 (71.6%)** is a "handled" count and conflates two
+very different things. Only **104 / 250 (41.6%)** carry a real, usable numeric
+value (real source, status `Known` / `Proxy`) — this is the honest real
+usable-numeric coverage. The other **75** are "handled" only as
+*explainable-missing* (status `Inactive` / `Optionality`, or overlay nodes that
+are not `Known`) and contribute no real number. A further **10** dp_ids are
+mock-only (fabricated `mock:*` rows) and are excluded from real coverage
+entirely.
+
+Latest A-share focused refresh status (2026-05-28):
+
+| Item | Current status |
+|---|---:|
+| Effective runtime real-source dp_ids | 115 / 250 |
+| Compiled overlay dp_ids | 66 / 250 |
+| Combined real A-share dp_ids (handled) | 179 / 250 (71.6%) |
+| — of which real usable-numeric (`Known` / `Proxy`) | 104 / 250 (41.6%) |
+| — of which explainable-missing only | 75 |
+| Effective runtime mock-only dp_ids | 10 |
+
+The current focused Tushare collector routes are:
+
+- `tushare-core`: quotes, daily bars, daily basic, moneyflow, margin, HK
+  holding, stock basics, and trading calendar fields.
+- `tushare-market-env`: market-level sentinel rows such as
+  `MARKET:CN / L7.env.market_trend`.
+- `tushare-crowding`: history-backed crowdedness / percentile-style runtime
+  fields.
+- `tushare-report-rc`: sell-side forecast and revision fields from
+  `report_rc`, with explicit `Inactive` rows when a forecast is unavailable or
+  the account lacks permission.
+
+Fields landed or materially improved by the focused refresh:
+
+- `L6.mult.pe` and `L6.mult.pb` from `tushare:daily_basic`.
+- `L7.trade.volume_turnover` from `tushare:daily_basic`.
+- `L7.flow.active_inflow` from `tushare:moneyflow`.
+- `L7.env.market_trend` from `tushare:index_daily` on `MARKET:CN`.
+- `L6.priced.crowdedness` from `tushare:daily_basic.history`.
+- `L11.trade.signal` from deterministic `derive:l11_trade_signal` even when a
+  stale `mock:*` row is present.
+- `L5.fcst.revenue_margin`, `L5.fcst.eps_cf`, and `L5.fcst.revisions` from
+  `tushare:report_rc` / derived report-forecast rows.
+
+Rerun the A-share refresh and audit with:
+
+```bash
+TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare-core --max-cycles 1
+TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare-market-env --max-cycles 1
+TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare-crowding --max-cycles 1
+TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare-report-rc --max-cycles 1
+.venv/bin/python -m mvp20.cli derive-snapshot --db runtime/hot.sqlite
+.venv/bin/python scripts/check_a_share_spec_completion.py
+```
+
+`--source real` and `--source all` now dispatch through focused Tushare routes
+before Futu / FMP / AKShare instead of calling the full Tushare adapter
+directly. Keep `--source tushare` for low-frequency manual refreshes because
+it may call slower financial statement and report endpoints.
+
+The effective runtime mock-only fields in the current DB (10, per the
+checker) are the stale fabricated `mock:*` rows that the focused real
+collectors above replace once re-run:
+
+- `L6.mult.pe`, `L6.mult.pb` (→ `tushare:daily_basic`)
+- `L6.priced.crowdedness` (→ `tushare:daily_basic.history`)
+- `L7.trade.volume_turnover` (→ `tushare:daily_basic`)
+- `L7.flow.active_inflow` (→ `tushare:moneyflow`)
+- `L7.flow.passive_northbound` (→ `tushare` hk_hold)
+- `L7.mood.media_social`, `L7.mood.theme` (→ `akshare`)
+- `L9.media.social_buzz` (→ `akshare`)
+- `L11.trade.signal` (→ `derive:l11_trade_signal`; `participates_in_score:
+  false`)
+
+The collector no longer fabricates any of these; the remaining `--source
+mock` seeds (`L7.market.l2_quote`, `L7.market.tick_count_5min`,
+`L9.event.intraday_block_trade`, `L11.short_term`) are written with
+`data_status="Mock"` so they are never scored as real.
+
+The remaining 71 A-share gaps are tracked in
+[`docs/audit/a_share_gap_fill_plan.md`](docs/audit/a_share_gap_fill_plan.md);
+see the regenerated `docs/audit/a_share_spec_completion.md` for the current
+per-category gap breakdown.
 
 Coverage audit baseline:
 
@@ -425,6 +518,11 @@ The top-level `short_total`, `medium_total`, `long_total`, `mode`, and
 `trading_signal` use the market-adjusted score so existing API/CLI consumers
 continue to read the final decision result without changing field names.
 
+A new realtime→score bridge now wires governance `participates_in_score` real
+fields from `realtime_current` into the stock `final_score` via
+`aggregate_company_graph(realtime_snapshot=...)` (previously the
+realtime/derived layer did not affect the score at all).
+
 ## Not Claimed
 
 - Default/full propagation enabled.
@@ -550,6 +648,15 @@ Start collector + server together::
 
 # Terminal 1 — minute-level collector (use --source mock for development)
 .venv/bin/python scripts/collector.py --source mock --interval 60 --enable-history
+
+# Production-like real refresh: focused Tushare routes first, then Futu/FMP/AKShare
+.venv/bin/python scripts/collector.py --source real --interval 60 --enable-history
+
+# Focused one-shot A-share Tushare refreshes
+TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare-core --max-cycles 1
+TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare-market-env --max-cycles 1
+TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare-crowding --max-cycles 1
+TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare-report-rc --max-cycles 1
 
 # Terminal 2 — BFF server
 .venv/bin/mvp20 serve --port 8701

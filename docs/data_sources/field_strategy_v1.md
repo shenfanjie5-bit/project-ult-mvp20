@@ -5,8 +5,14 @@
 > 来源交叉：
 >
 > - **spec source of truth**: `config/data_point_roles.yaml`（250 dp_id）+ `docs/data_sources/coverage_audit.md` §7 完整覆盖矩阵
-> - **实测 SQLite**: `runtime/hot.sqlite` `realtime_current` 表 distinct dp_id（181 个；136 在 spec 250 内；123 distinct source）
+> - **实测 SQLite**: `runtime/hot.sqlite` `realtime_current` 表 distinct dp_id（181 个；136 在 spec 250 内；127 distinct source）
 > - **实测 overlay yaml**: `config/{industry_overlays,stock_overlays}/**/*.yaml` 节点 `data_status ∈ {Known, Optionality}`（48 total / 47 在 spec 250 内）
+> - **A 股专项完成度**: [`docs/audit/a_share_spec_completion.md`](../audit/a_share_spec_completion.md)
+>   由 `scripts/check_a_share_spec_completion.py` 生成；当前 A 股
+>   effective runtime 覆盖 121 / 250（剔除 `mock:*`，含 MARKET/INDUSTRY
+>   sentinel），compiled overlay 覆盖 66 / 250，合并完成 185 / 250
+>   （74.0%），剩余 65 个 A 股 gap。补齐拆分见
+>   [`docs/audit/a_share_gap_fill_plan.md`](../audit/a_share_gap_fill_plan.md)。
 >
 > 用户提出的架构原则（来自任务上下文）：
 >
@@ -34,11 +40,11 @@
 
 | Bucket | 数 | 占比 |
 |---|---:|---:|
-| A | 106 | 42.4% |
+| A | 107 | 42.8% |
 | B | 28 | 11.2% |
 | C | 103 | 41.2% |
 | D | 8 | 3.2% |
-| E | 5 | 2.0% |
+| E | 4 | 1.6% |
 | **合计** | **250** | **100%** |
 
 ### 1.3 按 layer × bucket 矩阵
@@ -51,13 +57,13 @@
 | L3 | 18 | 0 | 0 | 15 | 3 | 0 |
 | L4 | 23 | 4 | 0 | 15 | 4 | 0 |
 | L5 | 28 | 26 | 0 | 1 | 0 | 1 |
-| L6 | 26 | 15 | 9 | 0 | 0 | 2 |
+| L6 | 26 | 16 | 9 | 0 | 0 | 1 |
 | L7 | 21 | 15 | 4 | 0 | 0 | 2 |
 | L8 | 32 | 15 | 2 | 15 | 0 | 0 |
 | L9 | 20 | 13 | 0 | 7 | 0 | 0 |
 | L10 | 7 | 7 | 0 | 0 | 0 | 0 |
 | L11 | 16 | 3 | 13 | 0 | 0 | 0 |
-| **合计** | **250** | **106** | **28** | **103** | **8** | **5** |
+| **合计** | **250** | **107** | **28** | **103** | **8** | **4** |
 
 ### 1.4 按 bucket × 当前实测状态交叉
 
@@ -65,16 +71,16 @@
 
 | Bucket | SQLite 已 emit | OverlayKnown | 都没（missing） | 小计 |
 |---|---:|---:|---:|---:|
-| A | 104 | 0 | 2 | 106 |
+| A | 104 | 0 | 3 | 107 |
 | B | 24 | 0 | 4 | 28 |
 | C | 6 | 42 | 55 | 103 |
 | D | 0 | 4 | 4 | 8 |
-| E | 2 | 1 | 2 | 5 |
+| E | 1 | 1 | 2 | 4 |
 | **合计** | **136** | **47** | **67** | **250** |
 
 **关键观察**：
 
-- A bucket 106 个中仅 2 个还没 emit（`L10.industry.inventory_orders`、`L10.industry.sales_price`）— X4 hot snapshot 主战场已大幅收敛
+- A bucket 107 个中仍有 3 个当前实测未落到 spec dp_id；A 股实时完成度以 `docs/audit/a_share_spec_completion.json` 为准
 - C bucket 103 个中 55 个尚未填（X5 工作流核心 KPI；现在 42 个 overlay + 6 个 SQLite 近似/误标）
 - D bucket 8 个中 4 个已在 overlay 试填阶段，4 个仍 missing（实际产物质量待评估，可能其中部分要重判到 C）
 - B bucket 28 个中 4 个 missing 是因为下游派生未触发（L11.long.* / L11.mode 等待 X4 contribution chain）
@@ -397,20 +403,25 @@
 
 ## 3. 按 bucket 详细分析
 
-### 3.A bucket A — closed-hard（106 个，42.4%）
+### 3.A bucket A — closed-hard（107 个，42.8%）
 
 > **定义**：spec coverage_audit §7 总评 ✓ 单源 full 或 ✓✓ 多源 full；现接 5 源（FMP / Tushare / AKShare / yfinance / Futu）任一源能直接出值。
 
-**实测**：106 个中 104 个已在 SQLite `realtime_current` 落库（98%）；2 个 spec ✓ / partial 但 SQLite 还没 emit。
+**实测口径**：本节是长期 provider/source 策略，不是 A 股 runtime
+completion 真相。当前 A 股 completion 以
+`docs/audit/a_share_spec_completion.json` 为准；本节手写 SQLite/overlay
+交叉状态只用于定位字段路线，可能随本地 `runtime/hot.sqlite` 刷新漂移。
 
-**当前仍未 emit 的 A bucket dp_id**：
+**当前仍需重点跟踪的 A bucket dp_id**：
 
 - `L10.industry.inventory_orders` — 行业库存/订单验证
 - `L10.industry.sales_price` — 行业销量/价格验证
+- `L6.mult.dcf` — FMP Starter 侧有 DCF，但 A 股 runtime 当前仍未暴露该 spec dp_id
 
 **A 没 emit 的根因（按现状推断）**：
 
-- 剩余两项是行业验证类字段，当前 provider 侧已有若干行业/板块和宏观代理，但还没有把库存/订单、销量/价格验证结果以这两个精确 dp_id 落库。
+- 行业验证类字段当前 provider 侧已有若干行业/板块和宏观代理，但还没有把库存/订单、销量/价格验证结果以这两个精确 dp_id 落库。
+- DCF 在全球 FMP path 已有能力，但 A 股 runtime 仍需独立补齐或明确 N/A/Unavailable 策略。
 - 早期报告中列出的 L0 sentiment、L2 segment、L5 forecast、L6 IV、L8/L9 事件类缺口已经在当前 runtime 中落库或经 alias/derive 收敛，不再作为 33 个缺口跟踪。
 
 **推荐 next action**（A bucket，X4 主线）：
@@ -706,23 +717,22 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 
 > **定义**：spec 标 ✓ 但只有 FMP Premium 或 Tushare/Futu LV2 等付费接口直接覆盖；或字段语义本身在公开数据缺位（如 buy-side whisper）。
 
-**全部 5 个**：
+**全部 4 个**：
 
 - `L5.surprise.buy_whisper` — 买方/whisper预期（实测：OverlayKnown）
-- `L6.mult.dcf` — DCF估值（实测：SQLite）
 - `L6.mult.forward_pe` — Forward PE（实测：missing）
 - `L7.flow.institutional` — 机构/对冲基金持仓（实测：SQLite）
 - `L7.trade.gamma` — Gamma暴露（实测：missing）
 
 **实测发现**（重要）：
 
-- `L6.mult.dcf` SQLite 实测已有数据（FMP `/discounted-cash-flow` 在 Starter tier 也可访问，spec 标 $ 但 fetcher 已绕过）→ 实质 A 行为
+- `L6.mult.dcf` FMP `/discounted-cash-flow` 在 Starter tier 也可访问，spec 标 $ 但 fetcher 已绕过 → 实质 A 行为，不再列入 E bucket；A 股 runtime 仍需单独补齐
 - `L7.flow.institutional` SQLite 实测已有 alias 数据（来自 tushare `top_list` 龙虎榜代理），不是真正机构持仓 → 数据语义偏差，建议保留 E 标签 + 备注 alias 弱替代
 - 剩 3 个真正 E：`L5.surprise.buy_whisper` / `L6.mult.forward_pe` / `L7.trade.gamma`
 
 **推荐 next action**（E bucket）：
 
-1. **`L6.mult.dcf` / `L7.flow.institutional`** — 在 spec source_status 中应该重打标为 ✓ 或 ✓（alias），coverage_audit 滞后
+1. **`L7.flow.institutional`** — 在 spec source_status 中应标注 alias 弱替代，避免把龙虎榜机构席位误读为完整机构持仓
 2. **`L6.mult.forward_pe`** — Tushare 分析师预期能算 forward EPS，再除股价即得 Forward PE → 升 B bucket（派生）
 3. **`L7.trade.gamma`** — Futu LV2 期权链可推（已 ○ partial），需要 derive 层算 → 升 B（前提：Futu 期权链字段稳定）
 4. **`L5.surprise.buy_whisper`** — 接受永久 Unknown，或长期接付费 alt-data（Bloomberg/Refinitiv whisper）— ROI 低，推迟
@@ -764,7 +774,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 **目标**：
 
 - D bucket 全 8 字段开通
-- E bucket 5 字段重新评估（DCF/institutional 已绕过，forward_pe/gamma 升 B，buy_whisper 接受 Unknown）
+- E bucket 4 字段重新评估（DCF 已移出 E；institutional 仅有弱 alias，forward_pe/gamma 升 B，buy_whisper 接受 Unknown）
 - C bucket 扩 prompt 至 95+ Known
 
 **输出指标**：
@@ -804,7 +814,7 @@ L7.mood.fomo = z_score(L7.trade.volume_turnover) + L6.priced.run_up + L8.cap.cro
 
 ### 5.3 FMP Premium 升级 ROI
 
-**当前判断**：升级 $29/mo 净解锁 2 个真有效字段（forward_pe + dcf 严格 spec 标 $；其余 spec $ 在 Tushare ✓）
+**当前判断**：升级 $29/mo 不再直接解决当前 A 股主缺口。DCF 已不是 Premium-only；Forward PE 更适合由 Tushare `report_rc` / EPS 预测派生；真正可能受益的是 FMP-native institutional/options/transcripts，但这些不是当前最短路径。
 
 **结论**：不建议升级。两个字段都可通过：
 
