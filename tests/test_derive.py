@@ -19,6 +19,11 @@ from mvp20 import derive as derive_mod
 from mvp20.derive import (
     DeriveRunner,
     _bootstrap_l11_subscores,
+    _read_realtime_value_with_source,
+    _value_if_not_mock,
+    derive_historical_quantile,
+    derive_overvalued,
+    derive_run_up,
     derive_l6_path_second_derivative,
     derive_l6_path_tag,
     derive_l6_priced_run_up_snapshot,
@@ -409,6 +414,31 @@ def test_derive_runner_emits_all_dp_ids(tmp_hot_db: Path):
     }
 
 
+def test_derive_runner_replaces_mock_trade_signal(tmp_hot_db: Path):
+    now = int(time.time())
+    upsert_realtime(tmp_hot_db, [(
+        "300750.SZ", "L11.trade.signal",
+        {"signal": "MOCK", "mix_score": 0.0},
+        "Known", 0.55, "mock:mvp20-bff", now,
+    )])
+
+    runner = DeriveRunner(tmp_hot_db)
+    runner.run_all(["300750.SZ"])
+
+    with sqlite3.connect(f"file:{tmp_hot_db}?mode=ro", uri=True) as conn:
+        source, payload_json = conn.execute(
+            """SELECT source, value_json
+                 FROM realtime_current
+                WHERE ts_code = '300750.SZ'
+                  AND dp_id = 'L11.trade.signal'"""
+        ).fetchone()
+
+    payload = json.loads(payload_json)
+    assert source == "derive:l11_trade_signal"
+    assert payload["signal"] in {"BUY", "HOLD", "WATCH", "AVOID"}
+    assert payload["signal"] != "MOCK"
+
+
 def test_derive_runner_confidence_decay(tmp_hot_db: Path):
     """Each derive output's confidence should be <= the minimum input confidence."""
 
@@ -757,3 +787,167 @@ def test_bootstrap_subscores_produces_all_l11_subs():
     for dp_id, payload in out.items():
         assert "score" in payload
         assert -1.0 <= payload["score"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Tier 0 (legacy) pure-function tests: run_up / historical_quantile /
+# overvalued. These were previously uncovered. They are hermetic — no
+# network, no DB.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_run_up_typical():
+    # index 0 is the most recent close. 7 days so the 5-day window resolves.
+    # d5_pct = (latest - close[5]) / close[5] = (110 - 100) / 100 = 0.10.
+    closes = [110.0, 108.0, 106.0, 104.0, 102.0, 100.0, 98.0]
+    out = derive_run_up(closes)
+    assert out is not None
+    assert out["d5_pct"] == pytest.approx(0.10, abs=1e-9)
+    # Not enough history for the 20-/60-day windows -> None.
+    assert out["d20_pct"] is None
+    assert out["d60_pct"] is None
+    assert out["latest_close"] == 110.0
+    assert out["history_days"] == 7
+
+
+def test_derive_run_up_zero_reference_is_safe():
+    # close[5] == 0 must not divide-by-zero; that window -> None.
+    closes = [110.0, 108.0, 106.0, 104.0, 102.0, 0.0, 98.0]
+    out = derive_run_up(closes)
+    assert out is not None
+    assert out["d5_pct"] is None
+
+
+def test_derive_run_up_short_or_empty_series():
+    # Fewer than 6 closes -> neutral/safe None (no payload).
+    assert derive_run_up([110.0, 108.0, 106.0, 104.0, 102.0]) is None
+    assert derive_run_up([]) is None
+    assert derive_run_up(None) is None  # type: ignore[arg-type]
+
+
+def test_derive_historical_quantile_by_hand():
+    # PE history (all positive) = [10, 20, 30, 40, 50]; current 30.
+    # count(h < 30) = {10, 20} = 2 -> 2/5 = 0.40.
+    # PB history = [1, 2, 3, 4]; current 3 -> count(<3) = {1, 2} = 2 -> 2/4 = 0.50.
+    out = derive_historical_quantile(
+        30.0, [10.0, 20.0, 30.0, 40.0, 50.0],
+        3.0, [1.0, 2.0, 3.0, 4.0],
+    )
+    assert out is not None
+    assert out["pe_percentile"] == pytest.approx(0.40, abs=1e-9)
+    assert out["pb_percentile"] == pytest.approx(0.50, abs=1e-9)
+    assert out["history_window_days"] == 5
+
+
+def test_derive_historical_quantile_out_of_range_high():
+    # current far above all history -> every point is below -> percentile 1.0.
+    out = derive_historical_quantile(
+        100.0, [10.0, 20.0, 30.0, 40.0, 50.0],
+        None, [],
+    )
+    assert out is not None
+    assert out["pe_percentile"] == pytest.approx(1.0, abs=1e-9)
+    # pb absent -> key not emitted.
+    assert "pb_percentile" not in out
+
+
+def test_derive_historical_quantile_filters_nonpositive():
+    # Zero/negative history entries are filtered before ranking, so the
+    # effective history is [20, 40]; current 30 -> count(<30) = {20} -> 1/2 = 0.5.
+    out = derive_historical_quantile(
+        30.0, [0.0, -5.0, 20.0, 40.0],
+        None, [],
+    )
+    assert out is not None
+    assert out["pe_percentile"] == pytest.approx(0.5, abs=1e-9)
+
+
+def test_derive_historical_quantile_empty_history():
+    # No usable history at all -> None (nothing to rank against).
+    assert derive_historical_quantile(30.0, [], 3.0, []) is None
+    assert derive_historical_quantile(None, [10.0, 20.0], None, [1.0]) is None
+
+
+def test_derive_overvalued_extreme_and_normal():
+    # max_pct = 0.96 > 0.95 -> extreme + overvalued.
+    hot = derive_overvalued({"pe_percentile": 0.96, "pb_percentile": 0.50})
+    assert hot is not None
+    assert hot["is_overvalued"] is True
+    assert hot["severity"] == "extreme"
+    assert hot["max_quantile"] == pytest.approx(0.96, abs=1e-9)
+
+    # max_pct = 0.50 -> normal, not overvalued.
+    cool = derive_overvalued({"pe_percentile": 0.50, "pb_percentile": 0.30})
+    assert cool is not None
+    assert cool["is_overvalued"] is False
+    assert cool["severity"] == "normal"
+
+
+def test_derive_overvalued_high_threshold_boundary():
+    # max_pct = 0.85 -> in (0.80, 0.95] -> "high" and overvalued (> 0.80).
+    out = derive_overvalued({"pe_percentile": 0.85, "pb_percentile": None})
+    assert out is not None
+    assert out["severity"] == "high"
+    assert out["is_overvalued"] is True
+
+
+def test_derive_overvalued_none_inputs():
+    # No payload, or a payload with no usable percentile -> None.
+    assert derive_overvalued(None) is None
+    assert derive_overvalued({}) is None
+    assert derive_overvalued({"pe_percentile": None, "pb_percentile": None}) is None
+
+
+# ---------------------------------------------------------------------------
+# Mock-guard regression: derive's valuation reads must reject ``mock:*`` rows.
+#
+# ``derive_all`` itself needs a live Tushare client for price/PE/PB history,
+# so it cannot run hermetically offline. The mock-skip logic was therefore
+# extracted into the pure helper ``_value_if_not_mock`` (used by
+# ``_read_realtime_value_with_source``); we unit-test that helper directly
+# AND prove the source-aware reader drops a mock scalar from an in-memory DB.
+# ---------------------------------------------------------------------------
+
+
+def test_value_if_not_mock_helper():
+    real = {"scalar": 42.0, "unit": "ratio"}
+    assert _value_if_not_mock(real, "tushare:daily_basic") is real
+    assert _value_if_not_mock(real, None) is real
+    # Any source starting "mock:" is dropped, regardless of payload shape.
+    assert _value_if_not_mock({"scalar": 999.0, "unit": "mock"}, "mock:mvp20-bff") is None
+    assert _value_if_not_mock(real, "mock:") is None
+
+
+def test_read_realtime_value_with_source_skips_mock(tmp_path: Path):
+    db = tmp_path / "mockguard.sqlite"
+    init_db(db)
+    now = int(time.time())
+    upsert_realtime(db, [
+        # A fabricated PE row — has a "scalar" key just like a real one.
+        ("600519.SH", "L6.mult.pe",
+         {"scalar": 999.0, "unit": "mock"}, "Known", 0.55, "mock:mvp20-bff", now),
+        # A genuine PB row for contrast.
+        ("600519.SH", "L6.mult.pb",
+         {"scalar": 7.5, "unit": "ratio"}, "Known", 0.9, "tushare:daily_basic", now),
+    ])
+
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        pe_value, pe_source = _read_realtime_value_with_source(conn, "600519.SH", "L6.mult.pe")
+        pb_value, pb_source = _read_realtime_value_with_source(conn, "600519.SH", "L6.mult.pb")
+        missing_value, missing_source = _read_realtime_value_with_source(
+            conn, "600519.SH", "L7.trade.volume_turnover"
+        )
+
+    # Mock PE: source reported, but value scrubbed to None so the fake 999.0
+    # scalar can never reach derive_historical_quantile / derive_overvalued.
+    assert pe_source == "mock:mvp20-bff"
+    assert pe_value is None
+    pe_scalar = (pe_value or {}).get("scalar") if isinstance(pe_value, dict) else None
+    assert pe_scalar is None
+
+    # Real PB flows through untouched.
+    assert pb_source == "tushare:daily_basic"
+    assert pb_value == {"scalar": 7.5, "unit": "ratio"}
+
+    # Absent row -> (None, None).
+    assert missing_value is None and missing_source is None

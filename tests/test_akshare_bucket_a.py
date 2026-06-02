@@ -458,9 +458,22 @@ def test_block_no_crash_when_akshare_missing(
 
 
 def test_bucket_a_dp_ids_registered_in_supported_set() -> None:
-    """Sanity: the 2 new dp_ids must appear in both TIER1 and SUPPORTED."""
+    """Sanity on the bucket-A dp_id ownership after the akshare→Tushare move.
 
-    assert "L8.cap.outflow_cut" in akshare_source.TIER1_DP_IDS
+    ``L8.cap.outflow_cut`` was MOVED off akshare onto Tushare
+    (tushare_source.fetch_akshare_replacement_batch) so akshare no longer
+    declares it — only the block-trade signal (``L9.capital.etf_block``)
+    remains an akshare Tier-1 field. The ``fetch_l8_cap_outflow_cut`` function
+    is kept for back-compat/unit tests but is no longer wired into fetch_batch.
+    """
+
+    from mvp20.sources import tushare_source
+
+    # outflow_cut now belongs to Tushare, not akshare.
+    assert "L8.cap.outflow_cut" not in akshare_source.TIER1_DP_IDS
+    assert "L8.cap.outflow_cut" not in akshare_source.SUPPORTED_DP_IDS
+    assert "L8.cap.outflow_cut" in tushare_source.SUPPORTED_DP_IDS
+
+    # The block-trade signal stays on akshare.
     assert "L9.capital.etf_block" in akshare_source.TIER1_DP_IDS
-    assert "L8.cap.outflow_cut" in akshare_source.SUPPORTED_DP_IDS
     assert "L9.capital.etf_block" in akshare_source.SUPPORTED_DP_IDS

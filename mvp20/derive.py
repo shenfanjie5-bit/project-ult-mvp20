@@ -74,6 +74,8 @@ from typing import Any, Callable, Iterable, Mapping
 
 log = logging.getLogger("mvp20.derive")
 
+DEFAULT_TUSHARE_TIMEOUT_SECONDS = 10.0
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,6 +109,39 @@ def _read_realtime_value(conn: sqlite3.Connection, ts_code: str, dp_id: str) -> 
         (ts_code, dp_id),
     ).fetchone()
     return _safe_load(row[0]) if row else None
+
+
+def _is_mock_source(source: Any) -> bool:
+    """True when a realtime_current row originates from a fabricated/mock
+    feed (``source`` starting ``"mock:"``). Such rows carry placeholder
+    scalars and must never feed quantitative derives."""
+
+    return isinstance(source, str) and source.startswith("mock:")
+
+
+def _value_if_not_mock(value: Any, source: Any) -> Any:
+    """Pure mock guard: return ``value`` unless ``source`` is a mock feed,
+    in which case return ``None``. Kept tiny + side-effect free so it can be
+    unit-tested offline without a Tushare client or live DB."""
+
+    return None if _is_mock_source(source) else value
+
+
+def _read_realtime_value_with_source(
+    conn: sqlite3.Connection, ts_code: str, dp_id: str
+) -> tuple[Any, str | None]:
+    """Like :func:`_read_realtime_value` but also returns the row's ``source``
+    so callers can reject mock feeds. Returns ``(value, source)``; ``value``
+    is ``None`` when the row is absent or its source is ``mock:*``."""
+
+    row = conn.execute(
+        "SELECT value_json, source FROM realtime_current WHERE ts_code = ? AND dp_id = ?",
+        (ts_code, dp_id),
+    ).fetchone()
+    if not row:
+        return None, None
+    source = row[1]
+    return _value_if_not_mock(_safe_load(row[0]), source), source
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
@@ -1393,7 +1428,30 @@ def _get_pro_api():
     if not token:
         return None
     ts.set_token(token)
-    return ts.pro_api()
+    return ts.pro_api(timeout=_tushare_timeout_seconds())
+
+
+def _tushare_timeout_seconds() -> float:
+    raw = os.environ.get("TUSHARE_TIMEOUT_SECONDS")
+    if not raw:
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    try:
+        timeout = float(raw)
+    except ValueError:
+        log.warning(
+            "[derive] invalid TUSHARE_TIMEOUT_SECONDS=%r; using %.1fs",
+            raw,
+            DEFAULT_TUSHARE_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    if timeout <= 0:
+        log.warning(
+            "[derive] non-positive TUSHARE_TIMEOUT_SECONDS=%r; using %.1fs",
+            raw,
+            DEFAULT_TUSHARE_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    return timeout
 
 
 def _fetch_a_share_history(pro, ts_code: str, days: int = 90) -> dict:
@@ -1768,9 +1826,16 @@ def derive_all(
         # Pull current values for this stock
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
-            current_pe_payload = _read_realtime_value(conn, ts_code, "L6.mult.pe")
-            current_pb_payload = _read_realtime_value(conn, ts_code, "L6.mult.pb")
-            volume_turnover_payload = _read_realtime_value(conn, ts_code, "L7.trade.volume_turnover")
+            # Source-aware reads: a row whose ``source`` is ``mock:*`` carries
+            # a fabricated scalar and must NOT flow into quantile/overvalued
+            # derives. ``_read_realtime_value_with_source`` returns ``None`` for
+            # such rows (defense-in-depth — the DB may still hold legacy mock
+            # rows even after the collector stopped emitting them).
+            current_pe_payload, _ = _read_realtime_value_with_source(conn, ts_code, "L6.mult.pe")
+            current_pb_payload, _ = _read_realtime_value_with_source(conn, ts_code, "L6.mult.pb")
+            volume_turnover_payload, _ = _read_realtime_value_with_source(
+                conn, ts_code, "L7.trade.volume_turnover"
+            )
         finally:
             conn.close()
 
@@ -2385,12 +2450,14 @@ class DeriveRunner:
 
         # Now run each formula
         emitted: dict[str, dict] = {}
-        # Track dp_ids that came from a non-derive upstream source so we
-        # don't clobber them with a snapshot fallback.
+        # Track dp_ids that came from a real non-derive upstream source so we
+        # don't clobber them with a snapshot fallback. Mock rows are excluded:
+        # they should seed downstream calculations when useful, but a concrete
+        # derive formula must be allowed to replace them.
         upstream_known: dict[str, dict] = {}
         for dp_id, row in usable.items():
             src = (row.get("source") or "")
-            if src and not src.startswith("derive:"):
+            if src and not src.startswith("derive:") and not src.startswith("mock:"):
                 upstream_known[dp_id] = row
 
         for output_dp, input_dp_ids, fn in _FORMULA_REGISTRY:

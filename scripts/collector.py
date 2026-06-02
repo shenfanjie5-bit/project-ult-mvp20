@@ -49,6 +49,13 @@ load_dotenv()
 # from the v2 spec; see docs/data_sources/coverage_audit.md §7).
 # ---------------------------------------------------------------------------
 
+# Sentinel data_status for fabricated (mock/offline) rows. A fake value must
+# NEVER carry "Known" — downstream consumers (spec checker, derive upstream
+# pass, aggregator/coverage, server `WHERE data_status = 'Known'`) treat
+# "Known" as real, trustworthy data. "Mock" is deliberately outside that set
+# so fabricated rows can seed the pipeline without ever being scored as real.
+MOCK_DATA_STATUS = "Mock"
+
 REALTIME_DP_IDS: list[tuple[str, str]] = [
     # (dp_id, primary_source_hint)
     #
@@ -61,24 +68,33 @@ REALTIME_DP_IDS: list[tuple[str, str]] = [
     #
     # L7.flow.broker_queue_hk also excluded — current Futu account has
     # only HK Stocks LV1, broker queue requires LV2 BMP.
-    # spec-aligned dp_ids (renamed from L6.priced.intraday_*/L7.flow.netbuy/L7.trade.turnover_pct)
-    ("L6.mult.pe", "tushare/futu/fmp"),
-    ("L6.mult.pb", "tushare/futu/fmp"),
-    ("L6.priced.crowdedness", "futu"),
-    ("L7.flow.active_inflow", "tushare/futu"),    # bundles main_net + 大单 net
-    ("L7.flow.passive_northbound", "tushare"),
-    ("L7.flow.margin_balance", "tushare"),
-    ("L7.trade.volume_turnover", "tushare/futu"), # bundles turnover_rate + volume_ratio
+    #
+    # IMPORTANT: dp_ids that already have a REAL emitter must NOT appear here.
+    # The mock fetcher upserts on PRIMARY KEY (ts_code, dp_id), so a fabricated
+    # row would silently overwrite real data. The following were intentionally
+    # REMOVED because a real source emits them:
+    #   L6.mult.pe / L6.mult.pb        → tushare_source (daily_basic)
+    #   L6.priced.crowdedness          → tushare_source (turnover percentile)
+    #   L7.flow.active_inflow          → tushare_source (moneyflow)
+    #   L7.flow.passive_northbound     → tushare_source (hk_hold)
+    #   L7.trade.volume_turnover       → tushare_source (turnover_rate + volume_ratio)
+    #   L7.flow.margin_balance         → tushare_source (margin 融资余额, ~line 1245)
+    #   L7.mood.theme / media_social   → akshare_source (EM hot-rank / concept tags)
+    #   L9.event.intraday_news         → akshare_source (EM news headlines)
+    #   L9.event.intraday_announcement → akshare_source (Cninfo / EM announcements)
+    #   L9.media.social_buzz           → akshare_source (雪球 关注/分享 heat)
+    #   L11.trade.signal               → recomputed by derive_l11_trade_signal
+    #                                    (participates_in_score: false in
+    #                                     config/data_point_roles.yaml)
+    #
+    # The dp_ids below have NO real emitter wired yet (futu OpenD / BFF are not
+    # live in this environment, and intraday_block_trade has no source at all),
+    # so the mock fetcher still seeds them — but with data_status="Mock"
+    # (see fetch_mock_batch), never "Known".
     ("L7.market.l2_quote", "futu"),
     ("L7.market.tick_count_5min", "futu"),
-    ("L7.mood.theme", "akshare"),
-    ("L7.mood.media_social", "akshare"),
-    ("L9.event.intraday_news", "akshare"),
-    ("L9.event.intraday_announcement", "tushare"),
-    ("L9.event.intraday_block_trade", "tushare"),
-    ("L9.media.social_buzz", "akshare"),
+    ("L9.event.intraday_block_trade", "n/a"),
     ("L11.short_term", "mvp20-bff"),
-    ("L11.trade.signal", "mvp20-bff"),
 ]
 
 
@@ -123,7 +139,7 @@ def fetch_mock_batch(universe: list[dict], tick: int) -> list[tuple]:
             rows.append((
                 ts_code, dp_id,
                 json.dumps(value, ensure_ascii=False),
-                "Known",
+                MOCK_DATA_STATUS,       # never "Known" — fabricated value
                 0.55,                   # mock confidence
                 f"mock:{source_hint}",
                 now,
@@ -136,6 +152,51 @@ def fetch_tushare_batch(universe: list[dict], tick: int) -> list[tuple]:
 
     from mvp20.sources import tushare_source
     return tushare_source.fetch_batch(universe, tick)
+
+
+def fetch_tushare_core_batch(universe: list[dict], tick: int) -> list[tuple]:
+    """Pull only fast A-share market/flow rows from Tushare."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_core_batch(universe, tick)
+
+
+def fetch_tushare_report_rc_batch(universe: list[dict], tick: int) -> list[tuple]:
+    """Pull only A-share sell-side forecast/report rows from Tushare."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_report_rc_constituents_batch(universe, tick)
+
+
+def fetch_tushare_crowding_batch(universe: list[dict], tick: int) -> list[tuple]:
+    """Pull only A-share turnover-history crowdedness rows from Tushare."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_crowding_batch(universe, tick)
+
+
+def fetch_tushare_market_env_batch(universe: list[dict], tick: int) -> list[tuple]:
+    """Pull only A-share market-level environment sentinel rows from Tushare."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_market_env_batch(universe, tick)
+
+
+def fetch_tushare_macro_batch(universe: list[dict], tick: int) -> list[tuple]:
+    """Pull China macro and industry sentinel rows from Tushare."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_macro_china_batch(int(time.time()))
+
+
+def fetch_tushare_akshare_replacement_batch(
+    universe: list[dict], tick: int,
+) -> list[tuple]:
+    """Pull the 8 dp_ids re-pointed from akshare onto permitted Tushare
+    endpoints (announcement / heat / theme / sector / commodity / outflow)."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_akshare_replacement_batch(universe, tick)
 
 
 def fetch_futu_batch(universe: list[dict], tick: int) -> list[tuple]:
@@ -161,20 +222,29 @@ def fetch_akshare_batch(universe: list[dict], tick: int) -> list[tuple]:
 
 def fetch_real_batch(universe: list[dict], tick: int) -> list[tuple]:
     """Dispatch per market + free aggregator:
-       - A-share → Tushare (PE/PB/turnover/资金流)
+       - A-share → focused Tushare paths (core/market/crowding/report)
        - HK/US   → Futu OpenD (PE/PB/turnover/资金流/L2 quote)
        - US      → FMP (financial statements / valuation multiples)
        - A-share → akshare (news / 公告 / 雪球热度 / 概念板块)
 
     This is the production path. Each source's failure is caught per-source
-    and logged; the collector cycle continues so partial outages don't kill
-    the whole pipeline."""
+    and logged; the collector cycle continues so partial outages don't kill the
+    whole pipeline. The full ``--source tushare`` path is intentionally kept as
+    a separate low-frequency/manual refresh because it calls slower financial
+    and report endpoints.
+    """
 
     rows: list[tuple] = []
-    for label, fn in (("tushare", fetch_tushare_batch),
-                       ("futu", fetch_futu_batch),
-                       ("fmp", fetch_fmp_batch),
-                       ("akshare", fetch_akshare_batch)):
+    for label, fn in (
+        ("tushare-core", fetch_tushare_core_batch),
+        ("tushare-market-env", fetch_tushare_market_env_batch),
+        ("tushare-crowding", fetch_tushare_crowding_batch),
+        ("tushare-report-rc", fetch_tushare_report_rc_batch),
+        ("tushare-akshare-repl", fetch_tushare_akshare_replacement_batch),
+        ("futu", fetch_futu_batch),
+        ("fmp", fetch_fmp_batch),
+        ("akshare", fetch_akshare_batch),
+    ):
         try:
             new_rows = fn(universe, tick)
             rows.extend(new_rows)
@@ -187,6 +257,12 @@ def fetch_real_batch(universe: list[dict], tick: int) -> list[tuple]:
 SOURCE_DISPATCH = {
     "mock": fetch_mock_batch,
     "tushare": fetch_tushare_batch,
+    "tushare-core": fetch_tushare_core_batch,
+    "tushare-report-rc": fetch_tushare_report_rc_batch,
+    "tushare-crowding": fetch_tushare_crowding_batch,
+    "tushare-market-env": fetch_tushare_market_env_batch,
+    "tushare-macro": fetch_tushare_macro_batch,
+    "tushare-akshare-repl": fetch_tushare_akshare_replacement_batch,
     "futu": fetch_futu_batch,
     "fmp": fetch_fmp_batch,
     "akshare": fetch_akshare_batch,

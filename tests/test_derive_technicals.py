@@ -56,6 +56,13 @@ def _synthetic_bars(n: int = 60, start: float = 100.0) -> list[dict]:
     return bars
 
 
+def test_derive_tushare_timeout_seconds_uses_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TUSHARE_TIMEOUT_SECONDS", "4")
+    assert derive._tushare_timeout_seconds() == 4.0
+
+
 def test_derive_all_emits_all_8_technicals(
     hot_db: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

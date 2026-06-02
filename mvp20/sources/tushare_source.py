@@ -22,6 +22,8 @@ from typing import Iterable
 
 log = logging.getLogger("mvp20.sources.tushare")
 
+DEFAULT_TUSHARE_TIMEOUT_SECONDS = 10.0
+
 SUPPORTED_DP_IDS = {
     # L6/L7 daily (from daily_basic / moneyflow / hk_hold)
     "L6.mult.pe",                # was L6.priced.intraday_pe
@@ -56,6 +58,11 @@ SUPPORTED_DP_IDS = {
     "L5.bs.inventory",
     "L5.bs.ar_ap",
     "L5.bs.goodwill_ppe",
+    # L5 sell-side forecast fields (from report_rc). These mirror the
+    # FMP analyst-estimates dp_ids but use A-share broker report fields.
+    "L5.fcst.revenue_margin",
+    "L5.fcst.eps_cf",
+    "L5.fcst.revisions",
     # L5 financial indicators (from fina_indicator) — A-share deep-dive metrics.
     # Note: these specific L5.fina.* dp_ids are NOT individually enumerated in
     # 图谱设计.md (spec stops at the L5.{is,bs,cf} family). They extend the
@@ -110,8 +117,21 @@ SUPPORTED_DP_IDS = {
     "L7.env.liquidity",           # cn_m M0/M1/M2 (state)
     "L9.macro.liquidity",         # cn_m event-shaped when M2 yoy shifts
     "L9.macro.cpi_employment",    # cn_cpi + cn_ppi
+    "L7.env.market_trend",         # index_daily market benchmark trend
     "L10.val.historical_quantile",  # market-wide PE_ttm quantile from daily_basic
     "L10.industry.fund_flow",     # moneyflow_ind_ths per active industry
+    # ── akshare-replacement batch (8 dp_ids moved off akshare onto permitted
+    # Tushare endpoints; emitted by ``fetch_akshare_replacement_batch``).
+    # Each preserves the original akshare payload-key schema so downstream
+    # derive/bridge consumers keep working. ──
+    "L9.event.intraday_announcement",  # anns_d (per-stock 公告)
+    "L7.mood.media_social",            # ths_hot 热股 (per-stock heat)
+    "L9.media.social_buzz",            # ths_hot 热股 (per-stock; in_xq_top_buzz kept)
+    "L7.mood.theme",                   # ths_hot 概念板块 (hot concepts)
+    "L0.sentiment.sector_heat",        # moneyflow_ind_ths (per-industry heat)
+    "L0.cost.raw_material",            # fut_daily (per-industry commodity pct)
+    "L0.cost.energy_logistics",        # fut_daily SC.INE + akshare BDI
+    "L8.cap.outflow_cut",              # moneyflow 5d net (per-stock)
     # ── X3b: per-stock derived A-share fundamentals (Phase B.9) ──
     # Each dp_id is computed in ``_fetch_a_share_derived_metrics`` from a
     # mix of fina_indicator + balancesheet + cashflow + income. Per-stock
@@ -133,7 +153,7 @@ SUPPORTED_DP_IDS = {
     "L9.disclosure.qa_recent",    # irm_qa_sh / irm_qa_sz (投资者关系 Q&A)
     "L1.company.main_business",   # stock_company (主营业务 + 业务范围)
     "L8.gov.management_table",    # stk_managers (top10 高管 + 任期表)
-    # ── Bucket A: 14 hard-data dp_ids appended at fetch_batch tail ──
+    # ── Bucket A: hard-data dp_ids appended at fetch_batch tail ──
     # Sub-group 1: L2 业务分部 (3) from pro.fina_mainbz
     "L2.segment.revenue_share",     # 各 bz_item 收入占比
     "L2.segment.gross_margin",      # (bz_sales - bz_cost) / bz_sales
@@ -163,6 +183,7 @@ SUPPORTED_DP_IDS = {
     # Sub-group B2: L6 valuation 5 (mix per-stock + per-industry)
     "L6.priced.analyst_revision",   # report_rc 上修/下修 90d (per-stock)
     "L6.priced.discussion",         # dc_hot + ths_hot 30d (per-stock)
+    "L6.priced.crowdedness",        # daily_basic turnover percentile (per-stock)
     "L6.state.expansion_compression",  # PE vs 60d / 250d ma (per-stock)
     "L6.state.industry_center",     # industry PE/PB/PS median (per industry)
     "L6.state.peer_compare",        # stock PE vs industry median (per-stock)
@@ -245,7 +266,7 @@ _STK_MANAGERS_CACHE: dict[str, tuple[int, list[dict]]] = {}
 # Bucket A: extra per-stock caches (5-min TTL).
 # ---------------------------------------------------------------------------
 #
-# Bucket A adds 14 hard-data dp_ids that re-use the existing fina_indicator /
+# Bucket A adds hard-data dp_ids that re-use the existing fina_indicator /
 # balancesheet / income / cashflow cache family plus three new endpoints:
 #
 #   * pro.fina_mainbz  — 主营业务收入分部 (per-stock)
@@ -319,7 +340,30 @@ def _get_pro_api():
     if not token:
         return None
     ts.set_token(token)
-    return ts.pro_api()
+    return ts.pro_api(timeout=_tushare_timeout_seconds())
+
+
+def _tushare_timeout_seconds() -> float:
+    raw = os.environ.get("TUSHARE_TIMEOUT_SECONDS")
+    if not raw:
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    try:
+        timeout = float(raw)
+    except ValueError:
+        log.warning(
+            "[tushare] invalid TUSHARE_TIMEOUT_SECONDS=%r; using %.1fs",
+            raw,
+            DEFAULT_TUSHARE_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    if timeout <= 0:
+        log.warning(
+            "[tushare] non-positive TUSHARE_TIMEOUT_SECONDS=%r; using %.1fs",
+            raw,
+            DEFAULT_TUSHARE_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    return timeout
 
 
 def health_check() -> dict:
@@ -515,6 +559,716 @@ def _compute_ttm_fcf(
         return None
 
 
+# ---------------------------------------------------------------------------
+# akshare-replacement batch (8 dp_ids moved off akshare onto permitted Tushare
+# endpoints). Each emitter preserves the EXACT payload key schema the old
+# akshare emitter produced so downstream derive/bridge consumers keep working.
+# ---------------------------------------------------------------------------
+#
+# dp_id → Tushare endpoint:
+#   L9.event.intraday_announcement → pro.anns_d (per-stock recent 公告)
+#   L7.mood.media_social           → pro.ths_hot data_type=='热股' (per-stock heat)
+#   L9.media.social_buzz           → pro.ths_hot data_type=='热股' (same fetch)
+#   L7.mood.theme                  → pro.ths_hot data_type=='概念板块' (hot concepts)
+#   L0.sentiment.sector_heat       → pro.moneyflow_ind_ths (per-industry heat)
+#   L0.cost.raw_material           → pro.fut_daily (per-industry commodity pct)
+#   L0.cost.energy_logistics       → pro.fut_daily SC.INE (+ akshare BDI kept)
+#   L8.cap.outflow_cut             → pro.moneyflow ts_code history (5d net)
+#
+# The per-stock emitters share a single ths_hot fetch (TTL-cached at module
+# level) so a collector tick hits that endpoint at most once. The ann_d +
+# moneyflow per-stock calls are throttled with the existing _BUCKET_A_SLEEP_S.
+
+_AK_REPL_CACHE_TTL_S = 600
+
+# Industry → primary commodity future ts_code (Tushare ``pro.fut_daily``
+# ``ts_code`` convention, e.g. ``CU.SHF`` 沪铜, ``SC.INE`` 上海原油). Mirrors
+# the akshare ``config/industry_to_commodity.yaml`` Sina-futures map but uses
+# Tushare's exchange-suffixed continuous-contract codes. Industries with no
+# clean 1:1 commodity exposure are omitted (the emitter skips them — no
+# half-baked rows), matching the akshare ``null`` semantics.
+INDUSTRY_TO_FUT_TS_CODE: dict[str, list[str]] = {
+    "NONFERROUS_METALS":   ["CU.SHF", "AL.SHF", "NI.SHF", "ZN.SHF", "SN.SHF"],
+    "SEMI_EQUIPMENT":      ["SI.GFE", "LC.GFE"],
+    "EXPORT_MFG":          ["CU.SHF", "AL.SHF"],
+    "CONSUMER_ELECTRONICS": ["CU.SHF", "L.DCE"],
+    "STORAGE_GRID":        ["LC.GFE", "NI.SHF", "CU.SHF"],
+    "ANTI_INVOLUTION_CYCLICAL": ["RB.SHF", "I.DCE", "J.DCE"],
+}
+
+# Commodity future used for the crude-oil component of energy_logistics.
+_ENERGY_CRUDE_FUT_TS_CODE = "SC.INE"
+
+# Module-level TTL caches for the shared ths_hot pull + the two industry/market
+# batches. Per-stock announcement/moneyflow results are not cached here (they
+# vary by universe slice); the upstream collector re-pulls per cycle but the
+# anns_d/moneyflow endpoints are cheap per-stock daily snapshots.
+_THS_HOT_HEAT_CACHE: tuple[int, list[dict]] | None = None
+_LAST_AK_SECTOR_HEAT_FETCH: dict[str, object] = {"ts": 0, "rows": []}
+_LAST_AK_RAW_MATERIAL_FETCH: dict[str, object] = {"ts": 0, "rows": []}
+_LAST_AK_ENERGY_FETCH: dict[str, object] = {"ts": 0, "rows": []}
+
+
+def _ak_repl_as_of_iso() -> str:
+    """ISO-8601 local timestamp matching akshare_source._as_of_iso()."""
+
+    return datetime.now(tz=timezone.utc).astimezone().isoformat(
+        timespec="seconds",
+    )
+
+
+def _to_a_share_6digit(ts_code: str) -> str | None:
+    """``300750.SZ`` → ``300750``; None for non-A-share. Mirrors
+    akshare_source.to_a_share_code so per-stock lookup keys match."""
+
+    if not is_a_share(ts_code):
+        return None
+    return ts_code[:-3]
+
+
+def _get_ths_hot_heat_records(pro, now: int) -> list[dict]:
+    """One market-wide ``pro.ths_hot(trade_date=)`` pull, TTL-cached.
+
+    Returns the raw record list (all ``data_type`` rows: 热股 / 概念板块 / …).
+    Callers filter by ``data_type``. Walks back up to 8 calendar days to find
+    a populated snapshot (covers weekends/holidays). Probed columns:
+    ``[trade_date, data_type, ts_code, ts_name, rank, pct_change, current_price,
+    rank_reason, hot, concept, rank_time]`` — we only rely on the documented
+    subset ``[trade_date, ts_code, ts_name, rank, hot, pct_change, data_type]``.
+    """
+
+    global _THS_HOT_HEAT_CACHE
+    if _THS_HOT_HEAT_CACHE is not None:
+        cached_ts, records = _THS_HOT_HEAT_CACHE
+        if now - cached_ts < _AK_REPL_CACHE_TTL_S:
+            return records
+    records: list[dict] = []
+    for back in range(0, 8):
+        trade_date = _previous_n_days(back)
+        try:
+            df = pro.ths_hot(trade_date=trade_date)
+            time.sleep(_BUCKET_A_SLEEP_S)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] ths_hot(%s) failed: %s", trade_date, e)
+            continue
+        if df is None or len(df) == 0:
+            continue
+        records = df.to_dict(orient="records")
+        break
+    _THS_HOT_HEAT_CACHE = (now, records)
+    return records
+
+
+def _ths_hot_index_by_code(records: list[dict], data_type: str) -> dict[str, dict]:
+    """Index ths_hot records of one ``data_type`` by 6-digit A-share code.
+
+    ths_hot ``ts_code`` is suffixed (``300750.SZ``); we key by the 6-digit
+    prefix so per-stock lookup matches the akshare convention. The total
+    membership count for that data_type is stashable by the caller via len().
+    """
+
+    out: dict[str, dict] = {}
+    for rec in records:
+        if str(rec.get("data_type") or "") != data_type:
+            continue
+        ts_code = str(rec.get("ts_code") or "").strip()
+        if not ts_code:
+            continue
+        # Accept both suffixed (300750.SZ) and bare (300750) forms.
+        code6 = ts_code.split(".")[0]
+        if code6:
+            out[code6] = rec
+    return out
+
+
+def _emit_ak_intraday_announcement(
+    pro, a_codes: list[str], now: int, top_n_per_stock: int = 5,
+) -> list[tuple]:
+    """``L9.event.intraday_announcement`` — per A-share recent 公告 via
+    ``pro.anns_d(ts_code=, start_date=, end_date=)``.
+
+    Preserves the akshare ``fetch_intraday_announcement`` payload schema:
+    ``{count_recent, top_announcements:[{title, type, ann_date, url}], as_of}``.
+    anns_d has no 公告类型 column, so ``type`` is emitted as ``None`` (the key
+    is preserved for downstream compatibility). Probed columns:
+    ``[ann_date, ts_code, name, title, url]``.
+    """
+
+    rows: list[tuple] = []
+    as_of = _ak_repl_as_of_iso()
+    start_date = _previous_n_days(30)
+    end_date = _today_yyyymmdd()
+    success = 0
+    failed = 0
+    for ts_code in a_codes:
+        if not is_a_share(ts_code):
+            continue
+        try:
+            df = pro.anns_d(
+                ts_code=ts_code, start_date=start_date, end_date=end_date,
+                fields="ann_date,ts_code,name,title,url",
+            )
+            time.sleep(_BUCKET_A_SLEEP_S)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] anns_d %s failed: %s", ts_code, e)
+            failed += 1
+            continue
+        if df is None or len(df) == 0:
+            failed += 1
+            continue
+        records = df.to_dict(orient="records")
+        # anns_d returns most-recent-first; keep the top-N as headlines.
+        top: list[dict] = []
+        for rec in records[:top_n_per_stock]:
+            top.append({
+                "title": rec.get("title"),
+                "type": None,  # anns_d has no 公告类型 column
+                "ann_date": _stringify_yyyymmdd(rec.get("ann_date")),
+                "url": rec.get("url"),
+            })
+        payload = {
+            "count_recent": len(records),
+            "top_announcements": top,
+            "as_of": as_of,
+        }
+        rows.append((
+            ts_code, "L9.event.intraday_announcement",
+            json.dumps(payload, ensure_ascii=False),
+            "Known", 0.65, "tushare:anns_d", now,
+        ))
+        success += 1
+    log.info("[tushare] ak-repl intraday_announcement: %d ok / %d failed → %d rows",
+             success, failed, len(rows))
+    return rows
+
+
+def _emit_ak_media_social_buzz_theme(
+    pro, a_codes: list[str], now: int,
+) -> list[tuple]:
+    """Emit ``L7.mood.media_social`` + ``L9.media.social_buzz`` +
+    ``L7.mood.theme`` from a single ``pro.ths_hot`` pull.
+
+    Reuses ONE ths_hot fetch (热股 + 概念板块 data_type buckets) for all three
+    per-stock dp_ids. Payload schemas are preserved verbatim from the akshare
+    emitters:
+
+      * media_social: {rank_overall, in_top_100, last_price, change_pct,
+                       concept_tag_count, as_of}
+      * social_buzz:  {in_xq_top_buzz, follow_count, tweet_count,
+                       rank_among_buzz_top, last_price, as_of}
+        — ``in_xq_top_buzz`` is KEPT (downstream derive._bootstrap_l11_subscores
+        reads it) but now means "in ths_hot 热股 top list" instead of "in
+        Xueqiu top buzz". follow_count/tweet_count have no ths_hot equivalent
+        → emitted as the ``hot`` heat score / None to preserve the keys.
+      * theme: {concept_count, top_concepts:[...], as_of}
+    """
+
+    records = _get_ths_hot_heat_records(pro, now)
+    heat_by_code = _ths_hot_index_by_code(records, "热股")
+    # Hot concept-board list (market-wide; no per-stock attribution offline) —
+    # matches the akshare theme version which surfaced market/industry-level
+    # hot concept tags. Build the top-concepts list once.
+    hot_concepts: list[dict] = []
+    for rec in records:
+        if str(rec.get("data_type") or "") != "概念板块":
+            continue
+        hot_concepts.append({
+            "concept": rec.get("ts_name") or rec.get("concept"),
+            "rank": _safe_num(rec.get("rank")),
+            "hot": _safe_num(rec.get("hot")),
+            "pct_change": _safe_num(rec.get("pct_change")),
+        })
+    hot_concepts.sort(key=lambda c: (c["rank"] if c["rank"] is not None else 1e9))
+    as_of = _ak_repl_as_of_iso()
+
+    rows: list[tuple] = []
+    n_social = 0
+    n_buzz = 0
+    n_theme = 0
+    for ts_code in a_codes:
+        code6 = _to_a_share_6digit(ts_code)
+        if not code6:
+            continue
+        entry = heat_by_code.get(code6)
+        rank = _safe_num(entry.get("rank")) if entry else None
+        hot = _safe_num(entry.get("hot")) if entry else None
+        pct = _safe_num(entry.get("pct_change")) if entry else None
+        last_price = _safe_num(entry.get("current_price")) if entry else None
+
+        # ---- L7.mood.media_social ----
+        social_payload = {
+            "rank_overall": int(rank) if rank is not None else None,
+            "in_top_100": bool(rank is not None and rank <= 100),
+            "last_price": last_price,
+            "change_pct": pct,
+            "concept_tag_count": len(hot_concepts),
+            "as_of": as_of,
+        }
+        rows.append((
+            ts_code, "L7.mood.media_social",
+            json.dumps(social_payload, ensure_ascii=False),
+            "Known" if entry else "Inactive",
+            0.55, "tushare:ths_hot.热股", now,
+        ))
+        n_social += 1
+
+        # ---- L9.media.social_buzz ----
+        if entry is not None:
+            buzz_payload = {
+                "in_xq_top_buzz": True,
+                "follow_count": hot,   # ths heat score (no follow metric)
+                "tweet_count": None,   # no ths_hot equivalent
+                "rank_among_buzz_top": int(rank) if rank is not None else None,
+                "last_price": last_price,
+                "as_of": as_of,
+            }
+            rows.append((
+                ts_code, "L9.media.social_buzz",
+                json.dumps(buzz_payload, ensure_ascii=False),
+                "Known", 0.55, "tushare:ths_hot.热股", now,
+            ))
+        else:
+            rows.append((
+                ts_code, "L9.media.social_buzz",
+                json.dumps({"in_xq_top_buzz": False, "as_of": as_of},
+                           ensure_ascii=False),
+                "Inactive", 0.5, "tushare:ths_hot.热股", now,
+            ))
+        n_buzz += 1
+
+        # ---- L7.mood.theme ----
+        if hot_concepts:
+            theme_payload = {
+                "concept_count": len(hot_concepts),
+                "top_concepts": hot_concepts[:8],
+                "as_of": as_of,
+            }
+            rows.append((
+                ts_code, "L7.mood.theme",
+                json.dumps(theme_payload, ensure_ascii=False),
+                "Known", 0.55, "tushare:ths_hot.概念板块", now,
+            ))
+        else:
+            rows.append((
+                ts_code, "L7.mood.theme",
+                json.dumps({"concept_count": 0, "as_of": as_of},
+                           ensure_ascii=False),
+                "Inactive", 0.5, "tushare:ths_hot.概念板块", now,
+            ))
+        n_theme += 1
+
+    log.info("[tushare] ak-repl media_social=%d social_buzz=%d theme=%d "
+             "(heat_codes=%d, hot_concepts=%d)",
+             n_social, n_buzz, n_theme, len(heat_by_code), len(hot_concepts))
+    return rows
+
+
+def _emit_ak_outflow_cut(
+    pro, a_codes: list[str], now: int,
+) -> list[tuple]:
+    """``L8.cap.outflow_cut`` — per A-share 5-day 主力资金 cumulative net
+    outflow via ``pro.moneyflow(ts_code=, start_date=, end_date=)``.
+
+    Preserves the akshare ``fetch_l8_cap_outflow_cut`` payload schema:
+    ``{signal, main_net_5d, stage_pct_change_5d, last_price, alert_severity,
+    as_of}``. ``main_net_5d`` = sum of ``net_mf_amount`` over the last ≤5 trade
+    days, converted from 万元 → 元 to match the akshare threshold semantics
+    (signal when ≤ -1e8 元). ``stage_pct_change_5d`` is derived from the daily
+    bars (cumulative compounded pct over the window). Same Inactive-on-absence
+    behaviour: stocks with no moneyflow history emit Inactive.
+    """
+
+    rows: list[tuple] = []
+    as_of = _ak_repl_as_of_iso()
+    start_date = _previous_n_days(12)  # pad for weekends → ≥5 trade days
+    end_date = _today_yyyymmdd()
+    n_signal = 0
+    for ts_code in a_codes:
+        if not is_a_share(ts_code):
+            continue
+        try:
+            df = pro.moneyflow(
+                ts_code=ts_code, start_date=start_date, end_date=end_date,
+                fields="ts_code,trade_date,net_mf_amount",
+            )
+            time.sleep(_BUCKET_A_SLEEP_S)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] moneyflow(outflow) %s failed: %s", ts_code, e)
+            rows.append((
+                ts_code, "L8.cap.outflow_cut",
+                json.dumps({"signal": False, "reason": "moneyflow_fetch_failed",
+                            "as_of": as_of}, ensure_ascii=False),
+                "Inactive", 0.4, "tushare:moneyflow.5d", now,
+            ))
+            continue
+        if df is None or len(df) == 0:
+            rows.append((
+                ts_code, "L8.cap.outflow_cut",
+                json.dumps({"signal": False, "reason": "no_moneyflow_history",
+                            "as_of": as_of}, ensure_ascii=False),
+                "Inactive", 0.4, "tushare:moneyflow.5d", now,
+            ))
+            continue
+        records = df.to_dict(orient="records")
+        # Sort most-recent-first, take last 5 trade days.
+        records.sort(key=lambda r: r.get("trade_date") or "", reverse=True)
+        window = records[:5]
+        net_vals = [_safe_num(r.get("net_mf_amount")) for r in window]
+        net_clean = [v for v in net_vals if v is not None]
+        if not net_clean:
+            rows.append((
+                ts_code, "L8.cap.outflow_cut",
+                json.dumps({"signal": False, "reason": "no_net_mf_amount",
+                            "as_of": as_of}, ensure_ascii=False),
+                "Inactive", 0.4, "tushare:moneyflow.5d", now,
+            ))
+            continue
+        # moneyflow.net_mf_amount is in 万元; convert to 元 so the -1e8
+        # threshold matches the akshare (THS 资金流入净额 in 元) semantics.
+        main_net_5d = sum(net_clean) * 1e4
+        signal = main_net_5d <= -1e8
+        status = "Known" if signal else "Inactive"
+        if signal:
+            n_signal += 1
+        payload = {
+            "signal": signal,
+            "main_net_5d": main_net_5d,
+            "stage_pct_change_5d": None,  # moneyflow has no price; key kept
+            "last_price": None,
+            "alert_severity": "WARN" if signal else None,
+            "as_of": as_of,
+        }
+        rows.append((
+            ts_code, "L8.cap.outflow_cut",
+            json.dumps(payload, ensure_ascii=False),
+            status, 0.65, "tushare:moneyflow.5d", now,
+        ))
+    log.info("[tushare] ak-repl outflow_cut: %d rows (signals=%d)",
+             len(rows), n_signal)
+    return rows
+
+
+def _emit_ak_sector_heat(pro, now: int) -> list[tuple]:
+    """``L0.sentiment.sector_heat`` — per active industry, THS 行业资金流 heat
+    via ``pro.moneyflow_ind_ths(trade_date=)`` (same endpoint pattern as
+    ``_emit_industry_fund_flow``).
+
+    Preserves the akshare ``fetch_sector_heat_batch`` payload schema:
+    ``{boards, avg_change_pct, total_fund_inflow, top_leader, as_of}`` keyed by
+    ``INDUSTRY:<id>``. Each industry maps (via INDUSTRY_TO_THS_NAME) to one THS
+    行业; ``boards`` carries that single board, ``top_leader`` carries the THS
+    ``lead_stock`` / 领涨股.
+    """
+
+    cached_ts = int(_LAST_AK_SECTOR_HEAT_FETCH.get("ts") or 0)
+    cached_rows = _LAST_AK_SECTOR_HEAT_FETCH.get("rows") or []
+    if cached_ts and (now - cached_ts) < _AK_REPL_CACHE_TTL_S and cached_rows:
+        return list(cached_rows)
+
+    industries = _active_industry_ids()
+    slug_by_ths: dict[str, str] = {}
+    for slug in industries:
+        ths = INDUSTRY_TO_THS_NAME.get(slug)
+        if ths:
+            slug_by_ths[ths] = slug
+    if not slug_by_ths:
+        return []
+
+    df = None
+    for back in range(0, 8):
+        trade_date = _previous_n_days(back)
+        try:
+            tmp = pro.moneyflow_ind_ths(
+                trade_date=trade_date,
+                fields=("ts_code,industry,lead_stock,trade_date,close,"
+                        "pct_change,net_amount,net_d5_amount"),
+            )
+            if tmp is not None and len(tmp) > 0:
+                df = tmp
+                break
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] sector_heat moneyflow_ind_ths %s failed: %s",
+                        trade_date, e)
+            continue
+    if df is None or len(df) == 0:
+        return []
+
+    as_of = _ak_repl_as_of_iso()
+    rows: list[tuple] = []
+    for rec in df.to_dict(orient="records"):
+        ths_name = rec.get("industry")
+        slug = slug_by_ths.get(ths_name)
+        if not slug:
+            continue
+        change_pct = _safe_num(rec.get("pct_change"))
+        net_amount = _safe_num(rec.get("net_amount"))
+        lead_stock = rec.get("lead_stock")
+        board = {
+            "board_name": ths_name,
+            "change_pct": change_pct,
+            "fund_inflow_cny": net_amount,
+            "leader_stock": lead_stock,
+            "leader_stock_pct": None,  # not in moneyflow_ind_ths; key kept
+        }
+        top_leader = board if lead_stock else None
+        payload = {
+            "boards": [board],
+            "avg_change_pct": (round(change_pct, 3)
+                               if change_pct is not None else None),
+            "total_fund_inflow": net_amount,
+            "top_leader": top_leader,
+            "as_of": as_of,
+        }
+        rows.append((
+            f"INDUSTRY:{slug}", "L0.sentiment.sector_heat",
+            json.dumps(payload, ensure_ascii=False),
+            "Known", 0.65, "tushare:moneyflow_ind_ths", now,
+        ))
+
+    _LAST_AK_SECTOR_HEAT_FETCH["ts"] = now
+    _LAST_AK_SECTOR_HEAT_FETCH["rows"] = list(rows)
+    log.info("[tushare] ak-repl sector_heat: %d industries emitted", len(rows))
+    return rows
+
+
+def _fut_daily_latest_pct(pro, fut_ts_code: str) -> dict | None:
+    """Pull the latest ``pro.fut_daily`` bar for one commodity future and
+    compute day-over-day pct from ``close`` vs ``pre_close``.
+
+    Returns ``{symbol, close, pct_change, date}`` (matching the akshare
+    per-commodity shape) or None on failure / insufficient data. Probed
+    columns: ``[ts_code, trade_date, close, pre_close, change1, ...]``.
+    """
+
+    df = None
+    for back in range(0, 10):
+        start = _previous_n_days(back + 10)
+        end = _previous_n_days(back)
+        try:
+            tmp = pro.fut_daily(
+                ts_code=fut_ts_code, start_date=start, end_date=end,
+                fields="ts_code,trade_date,close,pre_close",
+            )
+            if tmp is not None and len(tmp) > 0:
+                df = tmp
+                break
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] fut_daily %s failed: %s", fut_ts_code, e)
+            return None
+    if df is None or len(df) == 0:
+        return None
+    records = df.to_dict(orient="records")
+    records.sort(key=lambda r: r.get("trade_date") or "", reverse=True)
+    latest = records[0]
+    close = _safe_num(latest.get("close"))
+    pre_close = _safe_num(latest.get("pre_close"))
+    if close is None or pre_close in (None, 0):
+        return None
+    pct_change = (close - pre_close) / pre_close * 100.0
+    return {
+        "symbol": fut_ts_code,
+        "close": close,
+        "pct_change": round(pct_change, 3),
+        "date": latest.get("trade_date"),
+    }
+
+
+def _emit_ak_raw_material(pro, now: int) -> list[tuple]:
+    """``L0.cost.raw_material`` — per active industry commodity pct via
+    ``pro.fut_daily``.
+
+    Preserves the akshare ``fetch_raw_material_batch`` payload schema:
+    ``{commodities, avg_pct_change, symbols_resolved, symbols_requested,
+    latest_date, unit}`` keyed by ``INDUSTRY:<id>``. Uses
+    INDUSTRY_TO_FUT_TS_CODE (Tushare future codes) in place of the akshare
+    Sina-futures map.
+    """
+
+    cached_ts = int(_LAST_AK_RAW_MATERIAL_FETCH.get("ts") or 0)
+    cached_rows = _LAST_AK_RAW_MATERIAL_FETCH.get("rows") or []
+    if cached_ts and (now - cached_ts) < _AK_REPL_CACHE_TTL_S and cached_rows:
+        return list(cached_rows)
+
+    active = set(_active_industry_ids())
+    industry_syms: dict[str, list[str]] = {}
+    symbols_needed: set[str] = set()
+    for industry_id, syms in INDUSTRY_TO_FUT_TS_CODE.items():
+        if industry_id not in active or not syms:
+            continue
+        industry_syms[industry_id] = list(syms)
+        symbols_needed.update(syms)
+    if not industry_syms:
+        return []
+
+    per_symbol: dict[str, dict] = {}
+    for sym in sorted(symbols_needed):
+        res = _fut_daily_latest_pct(pro, sym)
+        time.sleep(_BUCKET_A_SLEEP_S)
+        if res is not None:
+            per_symbol[sym] = res
+    if not per_symbol:
+        return []
+
+    rows: list[tuple] = []
+    for industry_id, syms in industry_syms.items():
+        present = [per_symbol[s] for s in syms if s in per_symbol]
+        if not present:
+            continue
+        avg_pct = sum(p["pct_change"] for p in present) / len(present)
+        payload = {
+            "commodities": present,
+            "avg_pct_change": round(avg_pct, 3),
+            "symbols_resolved": len(present),
+            "symbols_requested": len(syms),
+            "latest_date": present[0]["date"],
+            "unit": "Tushare fut_daily close (CNY)",
+        }
+        rows.append((
+            f"INDUSTRY:{industry_id}", "L0.cost.raw_material",
+            json.dumps(payload, ensure_ascii=False),
+            "Known", 0.6, "tushare:fut_daily", now,
+        ))
+
+    _LAST_AK_RAW_MATERIAL_FETCH["ts"] = now
+    _LAST_AK_RAW_MATERIAL_FETCH["rows"] = list(rows)
+    log.info("[tushare] ak-repl raw_material: %d industries emitted", len(rows))
+    return rows
+
+
+def _emit_ak_energy_logistics(pro, now: int) -> list[tuple]:
+    """``L0.cost.energy_logistics`` — MARKET:CN crude (SC.INE) via
+    ``pro.fut_daily`` + BDI via akshare (Tushare has no BDI feed).
+
+    Preserves the akshare ``fetch_energy_logistics_batch`` payload schema:
+    ``{crude_pct, crude_close_cny_per_bbl, crude_latest_date, bdi_pct,
+    bdi_close, bdi_latest_date, scope}``. Crude moves to Tushare ``fut_daily``;
+    the BDI sub-call is KEPT on akshare (``ak.macro_shipping_bdi``) since
+    Tushare exposes no Baltic Dry Index endpoint. If akshare is unavailable the
+    BDI fields are emitted as None (keys preserved).
+    """
+
+    cached_ts = int(_LAST_AK_ENERGY_FETCH.get("ts") or 0)
+    cached_rows = _LAST_AK_ENERGY_FETCH.get("rows") or []
+    if cached_ts and (now - cached_ts) < _AK_REPL_CACHE_TTL_S and cached_rows:
+        return list(cached_rows)
+
+    crude = _fut_daily_latest_pct(pro, _ENERGY_CRUDE_FUT_TS_CODE)
+    crude_pct = crude["pct_change"] if crude else None
+    crude_close = crude["close"] if crude else None
+    crude_date = crude["date"] if crude else None
+
+    # BDI stays on akshare — Tushare has no Baltic Dry Index feed.
+    bdi_pct = None
+    bdi_close = None
+    bdi_date = None
+    try:
+        import akshare as ak  # type: ignore
+        df = ak.macro_shipping_bdi()
+        if df is not None and len(df) >= 2:
+            recs = df.to_dict(orient="records") if hasattr(df, "to_dict") else list(df)
+            latest = recs[-1]
+            prior = recs[-2]
+            cur = _safe_num(latest.get("最新值") or latest.get("BDI"))
+            prev = _safe_num(prior.get("最新值") or prior.get("BDI"))
+            if cur is not None and prev not in (None, 0):
+                bdi_pct = round((cur - prev) / prev * 100.0, 3)
+                bdi_close = cur
+                bdi_raw_date = latest.get("日期") or latest.get("date")
+                bdi_date = str(bdi_raw_date) if bdi_raw_date is not None else None
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] ak-repl energy BDI (akshare) failed: %s", e)
+
+    if crude_pct is None and bdi_pct is None:
+        return []
+
+    payload = {
+        "crude_pct": crude_pct,
+        "crude_close_cny_per_bbl": crude_close,
+        "crude_latest_date": crude_date,
+        "bdi_pct": bdi_pct,
+        "bdi_close": bdi_close,
+        "bdi_latest_date": bdi_date,
+        "scope": "A_share_market",
+    }
+    rows = [(
+        "MARKET:CN", "L0.cost.energy_logistics",
+        json.dumps(payload, ensure_ascii=False),
+        "Known", 0.65, "tushare:fut_daily+akshare:macro_shipping_bdi", now,
+    )]
+    _LAST_AK_ENERGY_FETCH["ts"] = now
+    _LAST_AK_ENERGY_FETCH["rows"] = list(rows)
+    log.info("[tushare] ak-repl energy_logistics: 1 MARKET:CN row "
+             "(crude_pct=%s, bdi_pct=%s)", crude_pct, bdi_pct)
+    return rows
+
+
+def _stringify_yyyymmdd(v) -> str | None:
+    """Normalise an anns_d ann_date (``20260529`` or ``2026-05-29``) to a
+    deterministic string. Mirrors akshare_source._stringify_date output."""
+
+    if v is None:
+        return None
+    try:
+        if v != v:  # NaN/NaT
+            return None
+    except TypeError:
+        pass
+    s = str(v).strip()
+    return s or None
+
+
+def fetch_akshare_replacement_batch(
+    constituents: Iterable[dict],
+    tick: int,
+) -> list[tuple]:
+    """8 dp_ids moved off akshare onto permitted Tushare endpoints.
+
+    Per-stock (announcement / media_social / social_buzz / theme / outflow_cut)
+    run only for A-share constituents; industry/market fields (sector_heat /
+    raw_material / energy_logistics) run regardless of the per-stock universe.
+    Each emitter is isolated in try/except so one endpoint outage never drops
+    the rest. Returns the standard 7-tuple list for ``upsert_realtime``.
+    """
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping akshare-repl batch")
+        return []
+
+    cons_list = [c for c in constituents if c.get("ts_code")]
+    a_codes = [c["ts_code"] for c in cons_list if is_a_share(c["ts_code"])]
+    now = int(time.time())
+    rows: list[tuple] = []
+
+    if a_codes:
+        for label, fn in (
+            ("intraday_announcement",
+             lambda: _emit_ak_intraday_announcement(pro, a_codes, now)),
+            ("media_social+social_buzz+theme",
+             lambda: _emit_ak_media_social_buzz_theme(pro, a_codes, now)),
+            ("outflow_cut",
+             lambda: _emit_ak_outflow_cut(pro, a_codes, now)),
+        ):
+            try:
+                rows.extend(fn())
+            except Exception as e:  # noqa: BLE001
+                log.warning("[tushare] ak-repl %s crashed: %s", label, e)
+
+    for label, fn in (
+        ("sector_heat",      _emit_ak_sector_heat),
+        ("raw_material",     _emit_ak_raw_material),
+        ("energy_logistics", _emit_ak_energy_logistics),
+    ):
+        try:
+            rows.extend(fn(pro, now))
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] ak-repl %s crashed: %s", label, e)
+
+    log.info("[tushare] akshare-replacement batch: %d rows for %d A-share codes",
+             len(rows), len(a_codes))
+    return rows
+
+
 def fetch_batch(
     constituents: Iterable[dict],
     tick: int,
@@ -686,29 +1440,36 @@ def fetch_batch(
 
     # ── hk_hold: per-stock Hong Kong holding amount (北向资金 per-stock持仓) ──
     # 这是 EOD 数据，每天一条；近似 passive_northbound 这个 dp_id
-    try:
-        df = pro.hk_hold(
-            trade_date=_previous_n_days(1),  # T-1
-            fields="ts_code,trade_date,vol,ratio",
-        )
-        if df is not None and len(df) > 0:
-            df = df[df["ts_code"].isin(a_codes_set)]
-        if df is not None and len(df) > 0:
-            for rec in df.to_dict(orient="records"):
-                ts_code = rec.get("ts_code")
-                if not ts_code:
-                    continue
-                vol = _safe(rec, "vol")
-                ratio = _safe(rec, "ratio")
-                rows.append((
-                    ts_code, "L7.flow.passive_northbound",
-                    json.dumps({"vol": vol, "ratio_pct": ratio,
-                                "trade_date": rec.get("trade_date")},
-                               ensure_ascii=False),
-                    "Known", 0.7, "tushare:hk_hold", now,
-                ))
-    except Exception as e:  # noqa: BLE001
-        log.warning("[tushare] hk_hold failed (likely permission): %s", e)
+    hk_hold_df = None
+    for back in range(1, 9):
+        trade_date = _previous_n_days(back)
+        try:
+            df = pro.hk_hold(
+                trade_date=trade_date,
+                fields="ts_code,trade_date,vol,ratio",
+            )
+            if df is not None and len(df) > 0:
+                df = df[df["ts_code"].isin(a_codes_set)]
+                if len(df) > 0:
+                    hk_hold_df = df
+                    break
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] hk_hold %s failed (likely permission): %s",
+                        trade_date, e)
+    if hk_hold_df is not None:
+        for rec in hk_hold_df.to_dict(orient="records"):
+            ts_code = rec.get("ts_code")
+            if not ts_code:
+                continue
+            vol = _safe(rec, "vol")
+            ratio = _safe(rec, "ratio")
+            rows.append((
+                ts_code, "L7.flow.passive_northbound",
+                json.dumps({"vol": vol, "ratio_pct": ratio,
+                            "trade_date": rec.get("trade_date")},
+                           ensure_ascii=False),
+                "Known", 0.7, "tushare:hk_hold", now,
+            ))
 
     # ── L7 capital events: margin / top_list / block_trade (trade-date-wide) ──
     rows.extend(_fetch_a_share_capital_events(pro, a_codes_set, now))
@@ -800,7 +1561,7 @@ def fetch_batch(
     except Exception as e:  # noqa: BLE001
         log.warning("[tushare] X5 disclosure batch failed: %s", e)
 
-    # ── Bucket A: 14 hard-data dp_ids (additive, all wrapped) ──
+    # ── Bucket A: hard-data dp_ids (additive, all wrapped) ──
     # The dispatcher emits per-stock rows plus N industry-level rows for
     # L8.industry.valuation_compression. Per-fetcher try/except inside the
     # dispatcher ensures a single endpoint failure cannot poison the rest.
@@ -825,6 +1586,256 @@ def fetch_batch(
     except Exception as e:  # noqa: BLE001
         log.warning("[tushare] Bucket B batch failed: %s", e)
 
+    return rows
+
+
+def fetch_core_batch(
+    constituents: Iterable[dict],
+    tick: int,
+) -> list[tuple]:
+    """Pull only the fast A-share core market/flow Tushare rows.
+
+    This intentionally stops before the slow per-stock financial/report
+    endpoints used by ``fetch_batch``. It is suitable for operational refreshes
+    where we want PE/PB/turnover/moneyflow/northbound rows to land even when a
+    later financial endpoint is slow or timing out.
+    """
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping core batch")
+        return []
+
+    cons_list = [c for c in constituents if c.get("ts_code")]
+    a_codes = [c["ts_code"] for c in cons_list if is_a_share(c["ts_code"])]
+    if not a_codes:
+        return []
+
+    now = int(time.time())
+    a_codes_set = set(a_codes)
+    rows: list[tuple] = []
+
+    daily_basic_df = None
+    for back in range(0, 8):
+        trade_date = _previous_n_days(back)
+        try:
+            df = pro.daily_basic(
+                trade_date=trade_date,
+                fields=("ts_code,trade_date,close,turnover_rate,pe_ttm,pb,"
+                        "volume_ratio,ps_ttm,total_mv"),
+            )
+            if df is not None and len(df) > 0:
+                df = df[df["ts_code"].isin(a_codes_set)]
+                if len(df) > 0:
+                    daily_basic_df = df
+                    log.info("[tushare] core daily_basic from %s rows=%d",
+                             trade_date, len(df))
+                    break
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] core daily_basic %s failed: %s", trade_date, e)
+
+    if daily_basic_df is not None:
+        for rec in daily_basic_df.to_dict(orient="records"):
+            ts_code = rec.get("ts_code")
+            if not ts_code:
+                continue
+            pe = _safe(rec, "pe_ttm")
+            pb = _safe(rec, "pb")
+            ps = _safe(rec, "ps_ttm")
+            turnover_rate = _safe(rec, "turnover_rate")
+            volume_ratio = _safe(rec, "volume_ratio")
+            trade_date = rec.get("trade_date")
+
+            for dp_id, val in (("L6.mult.pe", pe), ("L6.mult.pb", pb),
+                               ("L6.mult.ps", ps)):
+                if val is None:
+                    continue
+                rows.append((
+                    ts_code, dp_id,
+                    json.dumps({"scalar": float(val), "unit": "ratio",
+                                "ttm": True, "trade_date": trade_date},
+                               ensure_ascii=False),
+                    "Known", 0.7, "tushare:daily_basic", now,
+                ))
+            if turnover_rate is not None or volume_ratio is not None:
+                rows.append((
+                    ts_code, "L7.trade.volume_turnover",
+                    json.dumps({
+                        "turnover_rate_pct": float(turnover_rate) if turnover_rate is not None else None,
+                        "volume_ratio": float(volume_ratio) if volume_ratio is not None else None,
+                        "trade_date": trade_date,
+                    }, ensure_ascii=False),
+                    "Known", 0.7, "tushare:daily_basic", now,
+                ))
+
+    moneyflow_df = None
+    for back in range(0, 8):
+        trade_date = _previous_n_days(back)
+        try:
+            df = pro.moneyflow(
+                trade_date=trade_date,
+                fields="ts_code,trade_date,net_mf_amount,buy_lg_amount,sell_lg_amount,buy_elg_amount,sell_elg_amount",
+            )
+            if df is not None and len(df) > 0:
+                df = df[df["ts_code"].isin(a_codes_set)]
+                if len(df) > 0:
+                    moneyflow_df = df
+                    log.info("[tushare] core moneyflow from %s rows=%d",
+                             trade_date, len(df))
+                    break
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] core moneyflow %s failed: %s", trade_date, e)
+
+    if moneyflow_df is not None:
+        for rec in moneyflow_df.to_dict(orient="records"):
+            ts_code = rec.get("ts_code")
+            if not ts_code:
+                continue
+            netbuy = _safe(rec, "net_mf_amount")
+            buy_lg = _safe(rec, "buy_lg_amount") or 0
+            sell_lg = _safe(rec, "sell_lg_amount") or 0
+            buy_elg = _safe(rec, "buy_elg_amount") or 0
+            sell_elg = _safe(rec, "sell_elg_amount") or 0
+            rows.append((
+                ts_code, "L7.flow.active_inflow",
+                json.dumps({
+                    "main_net": float(netbuy) if netbuy is not None else None,
+                    "big_orders_net": float((buy_lg + buy_elg) - (sell_lg + sell_elg)),
+                    "unit": "万元",
+                    "trade_date": rec.get("trade_date"),
+                }, ensure_ascii=False),
+                "Known", 0.75, "tushare:moneyflow", now,
+            ))
+
+    hk_hold_df = None
+    for back in range(1, 9):
+        trade_date = _previous_n_days(back)
+        try:
+            df = pro.hk_hold(
+                trade_date=trade_date,
+                fields="ts_code,trade_date,vol,ratio",
+            )
+            if df is not None and len(df) > 0:
+                df = df[df["ts_code"].isin(a_codes_set)]
+                if len(df) > 0:
+                    hk_hold_df = df
+                    break
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] core hk_hold %s failed (likely permission): %s",
+                        trade_date, e)
+    if hk_hold_df is not None:
+        for rec in hk_hold_df.to_dict(orient="records"):
+            ts_code = rec.get("ts_code")
+            if not ts_code:
+                continue
+            rows.append((
+                ts_code, "L7.flow.passive_northbound",
+                json.dumps({
+                    "vol": _safe(rec, "vol"),
+                    "ratio_pct": _safe(rec, "ratio"),
+                    "trade_date": rec.get("trade_date"),
+                }, ensure_ascii=False),
+                "Known", 0.7, "tushare:hk_hold", now,
+            ))
+
+    return rows
+
+
+def fetch_report_rc_constituents_batch(
+    constituents: Iterable[dict],
+    tick: int,
+    *,
+    lookback_days: int = 90,
+) -> list[tuple]:
+    """Pull only per-stock sell-side forecast rows from ``report_rc``.
+
+    This is a focused collector path for the spec forecast fields. It keeps
+    broker-report latency/permission issues isolated from the fast market and
+    moneyflow refreshes handled by ``fetch_core_batch``.
+    """
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping report_rc batch")
+        return []
+
+    a_codes = [
+        c["ts_code"] for c in constituents
+        if c.get("ts_code") and is_a_share(c["ts_code"])
+    ]
+    if not a_codes:
+        return []
+    return _fetch_a_share_report_rc(
+        pro, a_codes, int(time.time()), lookback_days=lookback_days,
+    )
+
+
+def fetch_crowding_batch(
+    constituents: Iterable[dict],
+    tick: int,
+) -> list[tuple]:
+    """Pull only ``daily_basic`` history needed for L6 priced crowdedness.
+
+    The full Bucket A path also fetches balancesheet/income/margin endpoints.
+    This narrow path lets A-share turnover percentile rows land even when
+    slower financial endpoints are unhealthy.
+    """
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping crowding batch")
+        return []
+
+    a_codes = [
+        c["ts_code"] for c in constituents
+        if c.get("ts_code") and is_a_share(c["ts_code"])
+    ]
+    if not a_codes:
+        return []
+
+    now = int(time.time())
+    rows: list[tuple] = []
+    for ts_code in a_codes:
+        try:
+            records = _get_daily_basic_history(pro, ts_code, now)
+            payload, status = _derive_priced_crowdedness(records)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] crowding %s failed: %s", ts_code, e)
+            payload, status = {"reason": "daily_basic history failed"}, "Inactive"
+        rows.append((
+            ts_code, "L6.priced.crowdedness",
+            json.dumps(payload, ensure_ascii=False),
+            status, 0.7 if status == "Known" else 0.0,
+            "tushare:daily_basic.history", now,
+        ))
+    return rows
+
+
+def fetch_market_env_batch(
+    constituents: Iterable[dict],
+    tick: int,
+) -> list[tuple]:
+    """Pull only market-level A-share environment sentinels.
+
+    Currently emits ``L7.env.market_trend`` and the MARKET:CN northbound flow
+    sentinel. Per-stock northbound replacement still depends on ``hk_hold``.
+    """
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping market env batch")
+        return []
+
+    now = int(time.time())
+    rows: list[tuple] = []
+    for label, fn in (
+        ("market_trend", _emit_market_trend),
+        ("passive_northbound", _emit_passive_northbound),
+    ):
+        try:
+            rows.extend(fn(pro, now))
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] market env %s failed: %s", label, e)
     return rows
 
 
@@ -2065,6 +3076,257 @@ def fetch_report_rc_batch(
                                     lookback_days=lookback_days)
 
 
+_REPORT_RC_FCST_DP_IDS = (
+    "L5.fcst.revenue_margin",
+    "L5.fcst.eps_cf",
+    "L5.fcst.revisions",
+)
+
+
+def _report_rc_year(rec: dict) -> int | None:
+    q = str(rec.get("quarter") or "")
+    if len(q) >= 4 and q[:4].isdigit():
+        return int(q[:4])
+    return None
+
+
+def _report_rc_key(rec: dict) -> tuple:
+    return (
+        rec.get("report_date"),
+        rec.get("org_name"),
+        rec.get("author_name"),
+        rec.get("report_title"),
+    )
+
+
+def _avg_float(values: list[float]) -> float | None:
+    clean = [v for v in values if v is not None]
+    if not clean:
+        return None
+    return sum(clean) / len(clean)
+
+
+def _inactive_report_rc_fcst_rows(
+    ts_code: str,
+    now: int,
+    reason: str,
+    lookback_days: int,
+) -> list[tuple]:
+    return [
+        (
+            ts_code, dp_id,
+            json.dumps({
+                "reason": reason,
+                "lookback_days": lookback_days,
+            }, ensure_ascii=False),
+            "Inactive", 0.0, "tushare:report_rc", now,
+        )
+        for dp_id in _REPORT_RC_FCST_DP_IDS
+    ]
+
+
+def _inactive_report_rc_all_rows(
+    ts_code: str,
+    now: int,
+    reason: str,
+    lookback_days: int,
+) -> list[tuple]:
+    rows = [(
+        ts_code, "L5.surprise.sell_side",
+        json.dumps({
+            "n_reports_90d": 0,
+            "lookback_days": lookback_days,
+            "reason": reason,
+        }, ensure_ascii=False),
+        "Inactive", 0.0, "tushare:report_rc", now,
+    )]
+    rows.extend(_inactive_report_rc_fcst_rows(
+        ts_code, now, reason, lookback_days,
+    ))
+    return rows
+
+
+def _build_report_rc_fcst_rows(
+    ts_code: str,
+    records: list[dict],
+    now: int,
+    lookback_days: int,
+    as_of_date: str,
+) -> list[tuple]:
+    """Emit spec forecast dp_ids from Tushare ``report_rc`` records.
+
+    ``report_rc`` rows are broker report × forecast-year records. The
+    nearest forward forecast year supplies EPS / revenue consensus, while
+    recent-vs-older EPS means provide a simple 30d revision signal.
+    """
+
+    if not records:
+        return _inactive_report_rc_fcst_rows(
+            ts_code, now, "no sell-side report in window", lookback_days,
+        )
+
+    current_year = int(as_of_date[:4])
+    by_year: dict[int, list[dict]] = {}
+    for rec in records:
+        year = _report_rc_year(rec)
+        if year is None:
+            continue
+        by_year.setdefault(year, []).append(rec)
+
+    forward_years = sorted(y for y in by_year if y >= current_year)
+    if not forward_years:
+        return _inactive_report_rc_fcst_rows(
+            ts_code, now, "no forward forecast year in report_rc",
+            lookback_days,
+        )
+
+    target_year = forward_years[0]
+    target_records = by_year[target_year]
+
+    eps_vals: list[float] = []
+    rev_vals_wan: list[float] = []
+    op_profit_vals_wan: list[float] = []
+    net_profit_vals_wan: list[float] = []
+    eps_report_keys: set[tuple] = set()
+    revenue_report_keys: set[tuple] = set()
+    for rec in target_records:
+        eps = _safe_num(rec.get("eps"))
+        revenue = _safe_num(rec.get("op_rt"))
+        op_profit = _safe_num(rec.get("op_pr"))
+        net_profit = _safe_num(rec.get("np"))
+        if eps is not None:
+            eps_vals.append(eps)
+            eps_report_keys.add(_report_rc_key(rec))
+        if revenue is not None:
+            rev_vals_wan.append(revenue)
+            revenue_report_keys.add(_report_rc_key(rec))
+        if op_profit is not None:
+            op_profit_vals_wan.append(op_profit)
+        if net_profit is not None:
+            net_profit_vals_wan.append(net_profit)
+
+    rows: list[tuple] = []
+    revenue_avg_wan = _avg_float(rev_vals_wan)
+    op_profit_avg_wan = _avg_float(op_profit_vals_wan)
+    net_profit_avg_wan = _avg_float(net_profit_vals_wan)
+    if revenue_avg_wan is not None:
+        op_margin = (
+            op_profit_avg_wan / revenue_avg_wan
+            if op_profit_avg_wan is not None and revenue_avg_wan else None
+        )
+        net_margin = (
+            net_profit_avg_wan / revenue_avg_wan
+            if net_profit_avg_wan is not None and revenue_avg_wan else None
+        )
+        rows.append((
+            ts_code, "L5.fcst.revenue_margin",
+            json.dumps({
+                "revenue_avg": revenue_avg_wan * 10_000.0,
+                "operating_profit_avg": (
+                    op_profit_avg_wan * 10_000.0
+                    if op_profit_avg_wan is not None else None
+                ),
+                "net_profit_avg": (
+                    net_profit_avg_wan * 10_000.0
+                    if net_profit_avg_wan is not None else None
+                ),
+                "operating_margin": op_margin,
+                "net_margin": net_margin,
+                "num_analysts": len(revenue_report_keys),
+                "period": f"{target_year}Q4",
+                "unit": "CNY",
+                "source_unit": "万元",
+            }, ensure_ascii=False),
+            "Known", 0.8, "tushare:report_rc", now,
+        ))
+    else:
+        rows.append((
+            ts_code, "L5.fcst.revenue_margin",
+            json.dumps({
+                "reason": "report_rc missing op_rt for nearest forecast year",
+                "period": f"{target_year}Q4",
+                "lookback_days": lookback_days,
+            }, ensure_ascii=False),
+            "Inactive", 0.0, "tushare:report_rc", now,
+        ))
+
+    if eps_vals:
+        rows.append((
+            ts_code, "L5.fcst.eps_cf",
+            json.dumps({
+                "eps_avg": _avg_float(eps_vals),
+                "eps_low": min(eps_vals),
+                "eps_high": max(eps_vals),
+                "cashflow_estimate": None,
+                "cashflow_available": False,
+                "num_analysts": len(eps_report_keys),
+                "period": f"{target_year}Q4",
+                "unit": "CNY/share",
+            }, ensure_ascii=False),
+            "Known", 0.8, "tushare:report_rc", now,
+        ))
+    else:
+        rows.append((
+            ts_code, "L5.fcst.eps_cf",
+            json.dumps({
+                "reason": "report_rc missing eps for nearest forecast year",
+                "period": f"{target_year}Q4",
+                "lookback_days": lookback_days,
+            }, ensure_ascii=False),
+            "Inactive", 0.0, "tushare:report_rc", now,
+        ))
+
+    cutoff_30d = _previous_n_days(30)
+    recent_eps: list[float] = []
+    older_eps: list[float] = []
+    for rec in target_records:
+        eps = _safe_num(rec.get("eps"))
+        if eps is None:
+            continue
+        rd = str(rec.get("report_date") or "")
+        if rd and rd >= cutoff_30d:
+            recent_eps.append(eps)
+        else:
+            older_eps.append(eps)
+    recent_avg = _avg_float(recent_eps)
+    older_avg = _avg_float(older_eps)
+    if recent_avg is not None and older_avg not in (None, 0.0):
+        revision_pct = (recent_avg - older_avg) / abs(older_avg) * 100.0
+        direction = (
+            "up" if revision_pct > 2.0 else
+            "down" if revision_pct < -2.0 else
+            "flat"
+        )
+        rows.append((
+            ts_code, "L5.fcst.revisions",
+            json.dumps({
+                "consensus_eps_revision_30d_pct": revision_pct,
+                "direction": direction,
+                "recent_eps_avg": recent_avg,
+                "older_eps_avg": older_avg,
+                "recent_sample": len(recent_eps),
+                "older_sample": len(older_eps),
+                "period": f"{target_year}Q4",
+                "as_of": as_of_date,
+            }, ensure_ascii=False),
+            "Known", 0.7, "tushare:report_rc.derived", now,
+        ))
+    else:
+        rows.append((
+            ts_code, "L5.fcst.revisions",
+            json.dumps({
+                "reason": "insufficient recent/older eps comparison",
+                "recent_sample": len(recent_eps),
+                "older_sample": len(older_eps),
+                "period": f"{target_year}Q4",
+                "lookback_days": lookback_days,
+            }, ensure_ascii=False),
+            "Inactive", 0.0, "tushare:report_rc.derived", now,
+        ))
+
+    return rows
+
+
 def _fetch_a_share_report_rc(
     pro,
     a_codes: list[str],
@@ -2107,7 +3369,7 @@ def _fetch_a_share_report_rc(
     end_date = _today_yyyymmdd()
     start_date = _previous_n_days(lookback_days)
 
-    for ts_code in a_codes:
+    for idx, ts_code in enumerate(a_codes):
         try:
             df = pro.report_rc(
                 ts_code=ts_code,
@@ -2124,11 +3386,27 @@ def _fetch_a_share_report_rc(
                         "sell-side injection for this cycle: %s",
                         ts_code, e,
                     )
+                rows.extend(_inactive_report_rc_all_rows(
+                    ts_code, now, "report_rc permission unavailable",
+                    lookback_days,
+                ))
+                inactive += 1
                 if permission_errors >= 3:
+                    for skipped_code in a_codes[idx + 1:]:
+                        rows.extend(_inactive_report_rc_all_rows(
+                            skipped_code, now,
+                            "report_rc permission unavailable; batch aborted",
+                            lookback_days,
+                        ))
+                        inactive += 1
                     break
                 time.sleep(sleep_s)
                 continue
             log.warning("[tushare] report_rc %s failed: %s", ts_code, e)
+            rows.extend(_inactive_report_rc_all_rows(
+                ts_code, now, "report_rc endpoint failed", lookback_days,
+            ))
+            inactive += 1
             time.sleep(sleep_s)
             continue
 
@@ -2144,6 +3422,9 @@ def _fetch_a_share_report_rc(
                     "reason": "no sell-side report in window",
                 }, ensure_ascii=False),
                 "Inactive", 0.85, "tushare:report_rc", now,
+            ))
+            rows.extend(_inactive_report_rc_fcst_rows(
+                ts_code, now, "no sell-side report in window", lookback_days,
             ))
             continue
 
@@ -2251,6 +3532,9 @@ def _fetch_a_share_report_rc(
             ts_code, "L5.surprise.sell_side",
             json.dumps(payload, ensure_ascii=False),
             "Known", 0.8, "tushare:report_rc", now,
+        ))
+        rows.extend(_build_report_rc_fcst_rows(
+            ts_code, records, now, lookback_days, end_date,
         ))
 
     log.info(
@@ -2640,6 +3924,130 @@ def _emit_cpi_ppi(pro, now: int) -> list[tuple]:
     )]
 
 
+_CN_MARKET_TREND_INDEXES = (
+    ("sse", "000001.SH", "上证指数"),
+    ("csi300", "000300.SH", "沪深300"),
+    ("szse", "399001.SZ", "深证成指"),
+    ("chinext", "399006.SZ", "创业板指"),
+)
+
+
+def _ratio_change(first: float | None, last: float | None) -> float | None:
+    try:
+        if first is None or last is None or not first:
+            return None
+        return float(last) / float(first) - 1.0
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _market_index_payload(records: list[dict]) -> dict | None:
+    if not records:
+        return None
+    records.sort(key=lambda r: r.get("trade_date") or "", reverse=True)
+    latest = records[0]
+    latest_close = _safe_num(latest.get("close"))
+    closes = [
+        _safe_num(r.get("close")) for r in records
+        if _safe_num(r.get("close")) is not None
+    ]
+    if latest_close is None or len(closes) < 2:
+        return None
+
+    def _window_change(window: int) -> float | None:
+        if len(closes) > window:
+            return _ratio_change(closes[window], latest_close)
+        return None
+
+    pct_chg_1d = _safe_num(latest.get("pct_chg"))
+    if pct_chg_1d is not None:
+        # Tushare ``pct_chg`` is percentage points; keep all *_pct fields as
+        # decimal ratios to match the multi-day window changes below.
+        pct_chg_1d = pct_chg_1d / 100.0
+
+    return {
+        "last": latest_close,
+        "latest_date": latest.get("trade_date"),
+        "pct_chg_1d": pct_chg_1d,
+        "d5_pct": _window_change(5),
+        "d20_pct": _window_change(20),
+        "d60_pct": _window_change(60),
+        "history_days": len(closes),
+    }
+
+
+def _emit_market_trend(pro, now: int) -> list[tuple]:
+    """``L7.env.market_trend`` — MARKET:CN benchmark trend via index_daily."""
+
+    payload: dict[str, object] = {"scope": "A_share_market"}
+    latest_dates: list[str] = []
+    had_response = False
+    start = _previous_n_days(90)
+    end = _today_yyyymmdd()
+
+    for key, ts_code, name in _CN_MARKET_TREND_INDEXES:
+        try:
+            df = pro.index_daily(
+                ts_code=ts_code,
+                start_date=start,
+                end_date=end,
+                fields="ts_code,trade_date,close,pct_chg,vol,amount",
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] index_daily %s failed: %s", ts_code, e)
+            continue
+        had_response = True
+        if df is None or len(df) == 0:
+            continue
+        metric = _market_index_payload(df.to_dict(orient="records"))
+        if metric is None:
+            continue
+        payload[f"{key}_name"] = name
+        payload[f"{key}_last"] = metric["last"]
+        payload[f"{key}_1d_pct"] = metric["pct_chg_1d"]
+        payload[f"{key}_5d_pct"] = metric["d5_pct"]
+        payload[f"{key}_20d_pct"] = metric["d20_pct"]
+        payload[f"{key}_60d_pct"] = metric["d60_pct"]
+        payload[f"{key}_history_days"] = metric["history_days"]
+        latest_date = metric.get("latest_date")
+        if latest_date:
+            latest_dates.append(str(latest_date))
+
+    if not any(payload.get(f"{key}_last") is not None
+               for key, *_ in _CN_MARKET_TREND_INDEXES):
+        if had_response:
+            return [(
+                "MARKET:CN", "L7.env.market_trend",
+                json.dumps({"reason": "no_index_data"},
+                           ensure_ascii=False),
+                "Inactive", 0.0, "tushare:index_daily", now,
+            )]
+        return []
+
+    trend_values = [
+        payload.get(f"{key}_20d_pct")
+        for key, *_ in _CN_MARKET_TREND_INDEXES
+        if payload.get(f"{key}_20d_pct") is not None
+    ]
+    scalar = (
+        sum(float(v) for v in trend_values) / len(trend_values)
+        if trend_values else None
+    )
+    payload["latest_date"] = max(latest_dates) if latest_dates else None
+    payload["lookback_days"] = 90
+    payload["scalar"] = scalar
+    payload["regime"] = (
+        "bull" if scalar is not None and scalar >= 0.05 else
+        "bear" if scalar is not None and scalar <= -0.05 else
+        "range"
+    )
+    return [(
+        "MARKET:CN", "L7.env.market_trend",
+        json.dumps(payload, ensure_ascii=False),
+        "Known", 0.8, "tushare:index_daily", now,
+    )]
+
+
 def _emit_market_pe_quantile(pro, now: int) -> list[tuple]:
     """``L10.val.historical_quantile`` — market-wide PE_ttm quantile.
 
@@ -2947,6 +4355,7 @@ def fetch_macro_china_batch(now: int) -> list[tuple]:
         ("shibor_lpr",       _emit_rates),
         ("cn_m",             _emit_money_supply),
         ("cn_cpi+cn_ppi",    _emit_cpi_ppi),
+        ("market_trend",     _emit_market_trend),
         ("market_pe_quantile", _emit_market_pe_quantile),
         ("industry_fund_flow", _emit_industry_fund_flow),
         # X2 declared-but-silent fetchers — MARKET:CN sentinel rows
@@ -4178,7 +5587,7 @@ def fetch_disclosure_batch(
 
 
 # ---------------------------------------------------------------------------
-# Bucket A: 14 hard-data dp_ids appended at fetch_batch tail.
+# Bucket A: hard-data dp_ids appended at fetch_batch tail.
 # ---------------------------------------------------------------------------
 #
 # Sub-groups:
@@ -4834,6 +6243,48 @@ def _derive_crowdedness(
     return payload, ("Known" if severity else "Inactive")
 
 
+def _derive_priced_crowdedness(
+    daily_basic_records: list[dict],
+    min_samples: int = 20,
+) -> tuple[dict, str]:
+    """L6.priced.crowdedness — current turnover percentile vs history."""
+
+    if not daily_basic_records:
+        return {"reason": "no daily_basic history"}, "Inactive"
+
+    current_turnover = _safe_num(daily_basic_records[0].get("turnover_rate"))
+    if current_turnover is None:
+        return {"reason": "latest turnover_rate missing"}, "Inactive"
+
+    turnover_history = [
+        _safe_num(r.get("turnover_rate")) for r in daily_basic_records
+    ]
+    clean = [v for v in turnover_history if v is not None]
+    if len(clean) < min_samples:
+        return {
+            "reason": "insufficient turnover history",
+            "history_window_days": len(clean),
+        }, "Inactive"
+
+    pct100 = _percentile_rank(current_turnover, sorted(clean))
+    if pct100 is None:
+        return {"reason": "percentile unavailable"}, "Inactive"
+    percentile = pct100 / 100.0
+    label = (
+        "extreme" if percentile > 0.9 else
+        "crowded" if percentile > 0.75 else
+        "elevated" if percentile > 0.5 else
+        "neutral"
+    )
+    return {
+        "percentile": percentile,
+        "label": label,
+        "current_turnover_rate": current_turnover,
+        "history_window_days": len(clean),
+        "latest_date": daily_basic_records[0].get("trade_date"),
+    }, "Known"
+
+
 def _derive_short_increase(
     margin_records: list[dict],
     delta_threshold_pct: float = 20.0,
@@ -5062,6 +6513,7 @@ def fetch_bucket_a_batch(
         "L8.fin.eps_downward":      {"Known": 0, "Inactive": 0},
         "L8.fin.goodwill_impairment": {"Known": 0, "Inactive": 0},
         "L8.fin.revenue_profit_miss": {"Known": 0, "Inactive": 0},
+        "L6.priced.crowdedness":    {"Known": 0, "Inactive": 0},
         "L8.cap.crowdedness":       {"Known": 0, "Inactive": 0},
         "L8.cap.short_increase":    {"Known": 0, "Inactive": 0},
         "L8.cap.liquidity_short":   {"Known": 0, "Inactive": 0},
@@ -5148,6 +6600,9 @@ def fetch_bucket_a_batch(
             cr_payload, cr_status = _derive_crowdedness(
                 db_history, main_net_inflow_by_ts_code.get(ts_code),
             )
+            pc_payload, pc_status = _derive_priced_crowdedness(db_history)
+            _emit("L6.priced.crowdedness", ts_code, pc_payload, pc_status,
+                  0.7, "tushare:daily_basic.history")
             _emit("L8.cap.crowdedness", ts_code, cr_payload, cr_status,
                   0.7, "tushare:daily_basic.history")
         except Exception as e:  # noqa: BLE001

@@ -70,14 +70,18 @@ log = logging.getLogger("mvp20.sources.akshare")
 # ---------------------------------------------------------------------------
 
 # Tier-1: per-stock fields actually populated by fetch_batch().
+#
+# NOTE: intraday_announcement / media_social / social_buzz / mood.theme /
+# cap.outflow_cut were MOVED off akshare onto permitted Tushare endpoints
+# (``tushare_source.fetch_akshare_replacement_batch``) so they no longer
+# appear here — the akshare fetchers for them are also disabled in
+# ``fetch_batch`` so the two sources never race on the (ts_code, dp_id) PK.
+# The 4 news-based fields (intraday_news + the 3 CLS catalyst dp_ids) stay on
+# akshare because Tushare ``news`` is empty for this account.
 TIER1_DP_IDS = {
     "L9.event.intraday_news",
-    "L9.event.intraday_announcement",
-    "L7.mood.media_social",
-    "L9.media.social_buzz",
-    "L7.mood.theme",
-    # Bucket A append (per A-share fund-flow + block-trade signals).
-    "L8.cap.outflow_cut",
+    # Bucket A append (per A-share block-trade signal; outflow_cut moved to
+    # Tushare).
     "L9.capital.etf_block",
 }
 
@@ -90,16 +94,11 @@ MARKET_LEVEL_DP_IDS = {
     "L9.industry.compete_risk",
 }
 
-# Tier-2/3: declared so collector.py can register the source as the
-# *primary* hint for these, but the fetcher is intentionally a TODO so we
-# don't emit half-baked rows. See module docstring for why.
-TIER2_TODO_DP_IDS = {
-    # Tier-2 — industry / commodity (need fan-out via overlay engine)
-    "L0.cost.raw_material",
-    "L0.cost.energy_logistics",
-    # Tier-3 — sector heat (industry-level, single payload per industry)
-    "L0.sentiment.sector_heat",
-}
+# Tier-2/3: industry / commodity / sector-heat dp_ids. These were MOVED off
+# akshare onto permitted Tushare endpoints (fut_daily / moneyflow_ind_ths) in
+# ``tushare_source.fetch_akshare_replacement_batch``; the akshare fetchers for
+# them are disabled in ``fetch_batch`` so the sources don't race on the PK.
+TIER2_TODO_DP_IDS: set[str] = set()
 
 SUPPORTED_DP_IDS = TIER1_DP_IDS | MARKET_LEVEL_DP_IDS | TIER2_TODO_DP_IDS
 
@@ -1745,14 +1744,17 @@ def fetch_batch(
     rows: list[tuple] = []
 
     # Per-stock Tier-1 fetchers — only run when we have A-share constituents.
+    #
+    # NOTE: intraday_announcement / media_social+theme / social_buzz /
+    # l8_cap_outflow_cut were MOVED to Tushare
+    # (``tushare_source.fetch_akshare_replacement_batch``) and are intentionally
+    # NOT run here — emitting them from akshare would clobber the Tushare rows
+    # via the (ts_code, dp_id) UPSERT primary key. The fetcher functions remain
+    # defined for unit-test/back-compat but are no longer wired into the batch.
     if a_codes:
         fetchers = (
             ("intraday_news",         lambda: fetch_intraday_news(a_codes, now)),
-            ("intraday_announcement", lambda: fetch_intraday_announcement(a_codes, now)),
-            ("media_social_theme",    lambda: fetch_media_social_and_theme(a_codes, now)),
-            ("social_buzz",           lambda: fetch_social_buzz(a_codes, now)),
-            # Bucket A append — fund-flow outflow + block-trade signals.
-            ("l8_cap_outflow_cut",    lambda: fetch_l8_cap_outflow_cut(a_codes, now)),
+            # Bucket A append — block-trade signal (outflow_cut moved to Tushare).
             ("l9_capital_etf_block",  lambda: fetch_l9_capital_etf_block(a_codes, now)),
         )
         for name, fn in fetchers:
@@ -1772,21 +1774,12 @@ def fetch_batch(
     except Exception as exc:  # noqa: BLE001
         log.warning("[akshare] cls_telegraph FAILED: %s", exc)
 
-    # X2 industry-level / market-level dp_ids (pre-X2 were silent stubs).
-    # Each batch has its own 10-min TTL cache so the per-cycle tick stays
-    # cheap. Failure is isolated per fetcher — one akshare endpoint going
-    # offline never drops the rest.
-    for label, fn in (
-        ("raw_material",     fetch_raw_material_batch),
-        ("energy_logistics", fetch_energy_logistics_batch),
-        ("sector_heat",      fetch_sector_heat_batch),
-    ):
-        try:
-            new_rows = fn(now)
-            rows.extend(new_rows)
-            log.info("[akshare] X2 %s → %d rows", label, len(new_rows))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("[akshare] X2 %s FAILED: %s", label, exc)
+    # X2 industry-level / market-level dp_ids (raw_material / energy_logistics
+    # / sector_heat) were MOVED to Tushare
+    # (``tushare_source.fetch_akshare_replacement_batch`` via fut_daily /
+    # moneyflow_ind_ths) and are intentionally NOT run here — they would clobber
+    # the Tushare rows via the (ts_code, dp_id) UPSERT primary key. The fetcher
+    # functions remain defined for unit-test/back-compat but are unwired.
 
     log.info("[akshare] fetch_batch: total %d rows for %d A-share codes",
              len(rows), len(a_codes))

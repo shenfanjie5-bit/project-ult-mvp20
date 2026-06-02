@@ -1,4 +1,4 @@
-"""Tests for Bucket A — 14 hard-data dp_ids added to ``tushare_source``.
+"""Tests for Bucket A hard-data dp_ids in ``tushare_source``.
 
 All Tushare HTTP calls are stubbed via fake DataFrames so the suite stays
 hermetic. We exercise each fetcher and the dispatcher contract:
@@ -115,17 +115,18 @@ def _clear_caches():
 
 
 # ---------------------------------------------------------------------------
-# SUPPORTED_DP_IDS contract — all 14 dp_ids registered.
+# SUPPORTED_DP_IDS contract — all Bucket A + direct priced dp_ids registered.
 # ---------------------------------------------------------------------------
 
 
-def test_supported_dp_ids_includes_fourteen_bucket_a() -> None:
+def test_supported_dp_ids_includes_bucket_a_and_priced_crowdedness() -> None:
     expected = {
         "L2.segment.revenue_share", "L2.segment.gross_margin",
         "L2.segment.growth",
         "L5.fcst.guidance_change", "L5.surprise.beat_miss",
         "L8.fin.eps_downward", "L8.fin.goodwill_impairment",
         "L8.fin.revenue_profit_miss",
+        "L6.priced.crowdedness",
         "L8.cap.crowdedness", "L8.cap.short_increase",
         "L8.cap.liquidity_short",
         "L8.industry.valuation_compression", "L8.op.cost_overrun",
@@ -432,6 +433,18 @@ def test_derive_crowdedness_inactive_when_normal_turnover() -> None:
     assert status == "Inactive"
 
 
+def test_derive_priced_crowdedness_percentile_from_turnover_history() -> None:
+    records = (
+        [{"trade_date": "20260510", "turnover_rate": 35.0}]
+        + [{"trade_date": f"202604{i:02d}", "turnover_rate": float(i)}
+           for i in range(1, 30)]
+    )
+    payload, status = tushare_source._derive_priced_crowdedness(records)
+    assert status == "Known"
+    assert payload["label"] in {"crowded", "extreme"}
+    assert payload["percentile"] > 0.75
+
+
 # ---------------------------------------------------------------------------
 # _derive_short_increase — L8.cap.short_increase
 # ---------------------------------------------------------------------------
@@ -666,6 +679,7 @@ def test_fetch_bucket_a_batch_emits_all_14_dp_ids() -> None:
         "L5.fcst.guidance_change", "L5.surprise.beat_miss",
         "L8.fin.eps_downward", "L8.fin.goodwill_impairment",
         "L8.fin.revenue_profit_miss",
+        "L6.priced.crowdedness",
         "L8.cap.crowdedness", "L8.cap.short_increase",
         "L8.cap.liquidity_short",
         "L8.op.cost_overrun",
@@ -707,6 +721,7 @@ def test_fetch_bucket_a_batch_handles_empty_data() -> None:
         "L5.fcst.guidance_change", "L5.surprise.beat_miss",
         "L8.fin.eps_downward", "L8.fin.goodwill_impairment",
         "L8.fin.revenue_profit_miss",
+        "L6.priced.crowdedness",
         "L8.cap.crowdedness", "L8.cap.short_increase",
         "L8.cap.liquidity_short",
         "L8.op.cost_overrun",
