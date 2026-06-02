@@ -1187,6 +1187,10 @@ def handle_onboard(cfg: ServerConfig, body: dict) -> HandlerResult:
         return 400, _error_envelope("BAD_TS_CODE", "invalid or missing ts_code", status=400)
     if not _INDUSTRY_ID_RE.match(industry_id):
         return 400, _error_envelope("BAD_INDUSTRY", "invalid industry_id", status=400)
+    # L4: cap the free-text name (ts_code/industry_id are already length-capped)
+    # before it is written verbatim into the versioned universe.yaml.
+    if len(name) > 128:
+        return 400, _error_envelope("BAD_NAME", "name too long (max 128 chars)", status=400)
     valid = {i["industry_id"] for i in onboard_mod.list_industry_ids()}
     if industry_id not in valid:
         return 400, _error_envelope(
@@ -1194,9 +1198,29 @@ def handle_onboard(cfg: ServerConfig, body: dict) -> HandlerResult:
             status=400, details={"valid": sorted(valid)})
     if onboard_mod.already_in_pool(ts_code):
         return 409, _error_envelope("ALREADY_IN_POOL", f"{ts_code} already in pool", status=409)
+    # H2: bounded active-job guard. Reserve a concurrency slot atomically; reject
+    # a duplicate in-flight job for the same ts_code (409) or an over-capacity
+    # request (429) BEFORE spawning the unbounded worker thread.
+    reserved, reason = onboard_mod.try_reserve_onboard_slot(ts_code)
+    if not reserved:
+        if reason == "duplicate":
+            return 409, _error_envelope(
+                "ONBOARD_IN_PROGRESS", f"{ts_code} already has an onboard job in progress",
+                status=409)
+        return 429, _error_envelope(
+            "ONBOARD_BUSY",
+            f"too many onboard jobs in progress (max {onboard_mod.MAX_ACTIVE_ONBOARD_JOBS})",
+            status=429)
     do_codex = bool(body.get("do_codex", True))
-    job_id = onboard_mod.start_onboard_job(
-        cfg.hot_db_path, ts_code, name or ts_code, industry_id, do_codex=do_codex)
+    try:
+        job_id = onboard_mod.start_onboard_job(
+            cfg.hot_db_path, ts_code, name or ts_code, industry_id,
+            do_codex=do_codex, _reserved=True)
+    except Exception:
+        # start failed before the worker took ownership of the slot — release it
+        # so a retry isn't permanently blocked.
+        onboard_mod.release_onboard_slot(ts_code)
+        raise
     return 202, _ok_envelope({
         "job_id": job_id, "ts_code": ts_code, "status": "pending",
         "steps": onboard_mod.ONBOARD_STEPS,
@@ -1304,7 +1328,7 @@ class _Handler(BaseHTTPRequestHandler):
         if cfg is None:
             return
         self.send_header("Access-Control-Allow-Origin", cfg.cors_origin)
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Access-Control-Max-Age", "600")
 

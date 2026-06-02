@@ -156,3 +156,121 @@ def test_onboard_job_without_codex_is_preliminary_terminal(tmp_path: Path, monke
     assert final is not None and final["status"] == "ready_preliminary"
     assert final["preliminary"]["signal"] == "AVOID"
     assert final.get("full") is None
+
+
+def _wait_job(db: Path, job_id: str, terminal: set[str]):
+    final = None
+    for _ in range(200):
+        final = onboard.get_job(db, job_id)
+        if final and final["status"] in terminal:
+            return final
+        time.sleep(0.02)
+    return final
+
+
+def test_onboard_job_error_score_sets_status_error(tmp_path: Path, monkeypatch) -> None:
+    """M4: _score returns {"error": ...} on a parse failure (it never raises).
+    A preliminary score carrying an "error" key must end the job as 'error',
+    not ready_preliminary/ready_full (don't report a non-scored stock OK)."""
+    db = tmp_path / "jobs.sqlite"
+
+    def fake_run_onboard(db_path, ts_code, name, industry_id, *,
+                         do_codex=True, year=2025, progress=None,
+                         on_preliminary=None):
+        prelim = {"ts_code": ts_code, "error": "score line not parsed",
+                  "raw_tail": "..."}
+        if on_preliminary:
+            on_preliminary(prelim)
+        return {"ts_code": ts_code, "preliminary": prelim}
+
+    monkeypatch.setattr(onboard, "run_onboard", fake_run_onboard)
+    job_id = onboard.start_onboard_job(db, "300998.SZ", "解析失败股", "AI_COMPUTE",
+                                       do_codex=False)
+    final = _wait_job(db, job_id, {"ready_preliminary", "ready_full", "error"})
+    assert final is not None and final["status"] == "error"
+    assert "score line not parsed" in (final.get("error") or "")
+
+
+def test_onboard_job_error_full_score_sets_status_error(tmp_path: Path, monkeypatch) -> None:
+    """M4 (full path): a good preliminary but an errored full score → 'error'."""
+    db = tmp_path / "jobs.sqlite"
+
+    def fake_run_onboard(db_path, ts_code, name, industry_id, *,
+                         do_codex=True, year=2025, progress=None,
+                         on_preliminary=None):
+        prelim = {"ts_code": ts_code, "mode": "neutral", "signal": "WATCH",
+                  "short": 0.1, "medium": 0.1, "long": 0.1, "top_path": None}
+        if on_preliminary:
+            on_preliminary(prelim)
+        full = {"ts_code": ts_code, "error": "score line not parsed"}
+        return {"ts_code": ts_code, "preliminary": prelim, "full": full}
+
+    monkeypatch.setattr(onboard, "run_onboard", fake_run_onboard)
+    job_id = onboard.start_onboard_job(db, "300997.SZ", "全量失败股", "AI_COMPUTE",
+                                       do_codex=True)
+    final = _wait_job(db, job_id, {"ready_preliminary", "ready_full", "error"})
+    assert final is not None and final["status"] == "error"
+    assert "full score failed" in (final.get("error") or "")
+    # preliminary is still persisted so the UI can show what it got.
+    assert final["preliminary"]["signal"] == "WATCH"
+
+
+def test_try_reserve_onboard_slot_duplicate_and_capacity(monkeypatch) -> None:
+    """H2: the admission guard rejects a duplicate ts_code and over-capacity
+    requests. We reset the module state and pin a small cap for the test."""
+    with onboard._ACTIVE_JOBS_LOCK:
+        onboard._ACTIVE_JOBS.clear()
+    monkeypatch.setattr(onboard, "MAX_ACTIVE_ONBOARD_JOBS", 2)
+    try:
+        ok, reason = onboard.try_reserve_onboard_slot("000001.SZ")
+        assert ok and reason is None
+        # same ts_code again → duplicate (case-insensitive)
+        ok, reason = onboard.try_reserve_onboard_slot("000001.sz")
+        assert not ok and reason == "duplicate"
+        # second distinct code fills the cap
+        ok, _ = onboard.try_reserve_onboard_slot("000002.SZ")
+        assert ok
+        # third distinct code → at capacity
+        ok, reason = onboard.try_reserve_onboard_slot("000003.SZ")
+        assert not ok and reason == "at_capacity"
+        # releasing one frees a slot
+        onboard.release_onboard_slot("000001.SZ")
+        ok, reason = onboard.try_reserve_onboard_slot("000003.SZ")
+        assert ok and reason is None
+    finally:
+        with onboard._ACTIVE_JOBS_LOCK:
+            onboard._ACTIVE_JOBS.clear()
+
+
+def test_handle_onboard_rejects_long_name(tmp_path: Path) -> None:
+    """L4: name longer than 128 chars is rejected with 400 (before any job)."""
+    cfg = server.ServerConfig(hot_db_path=tmp_path / "x.sqlite")
+    st, _ = server.handle_onboard(cfg, {
+        "ts_code": "600519.SH", "industry_id": "DOMESTIC_CONSUMPTION",
+        "name": "x" * 129,
+    })
+    assert st == 400
+
+
+def test_handle_onboard_guard_duplicate_and_capacity(tmp_path: Path, monkeypatch) -> None:
+    """H2 at the HTTP layer: a reserved (in-flight) ts_code → 409, and an
+    over-capacity request → 429. Pre-reserve via the public helper so no real
+    job thread is spawned (admission is checked before start)."""
+    cfg = server.ServerConfig(hot_db_path=tmp_path / "x.sqlite")
+    with onboard._ACTIVE_JOBS_LOCK:
+        onboard._ACTIVE_JOBS.clear()
+    monkeypatch.setattr(onboard, "MAX_ACTIVE_ONBOARD_JOBS", 1)
+    try:
+        # Reserve 600519.SH out-of-band → the request for it must 409.
+        ok, _ = onboard.try_reserve_onboard_slot("600519.SH")
+        assert ok
+        st, _ = server.handle_onboard(cfg, {
+            "ts_code": "600519.SH", "industry_id": "DOMESTIC_CONSUMPTION"})
+        assert st == 409  # duplicate in-flight job
+        # A *different*, not-in-pool code now hits the capacity cap (1) → 429.
+        st, _ = server.handle_onboard(cfg, {
+            "ts_code": "000999.SZ", "industry_id": "AI_COMPUTE"})
+        assert st == 429
+    finally:
+        with onboard._ACTIVE_JOBS_LOCK:
+            onboard._ACTIVE_JOBS.clear()

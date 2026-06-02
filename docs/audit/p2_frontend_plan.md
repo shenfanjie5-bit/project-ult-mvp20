@@ -79,3 +79,12 @@
 4. ~~A P2b 可用性~~ ✅ 完成（门面/杀子进程/skipped）。
 5. C（A股遗留）：hermetic 修 `test_list_only_company_with_tier_filter`(已 spawn 任务) + 000977 beat_probability stale-evidence。
 6. 提交范围：`mvp20/onboard.py`+`tests/test_onboard.py` 已提交 (e3bede2)；前端/Tauri 全 gitignored 不进 git；本 doc 未提交。
+
+## 多 agent 审查 + 修复（2026-06-03）
+6 reviewer + 对抗式核验 workflow → raised 31 / confirmed 27 / rejected 4；去重 17 唯一问题。
+3 个并行 fix agent(文件不重叠)实现,**我独立验证**(非采信自报):full suite 1031 passed/0 failed、H1 实证 scoped-generate 只动目标股、前端 tsc+eslint+cargo 全绿。
+- High 已修:**H1**(generate-overlays 加 `--only-ts-code`,onboard 不再全量重写→止住跨股 coverage 漂移)、**H2**(onboard 并发上限2 + 409/429)、**H3**(Tauri check-and-spawn 持单锁 + start_lock + 删 footer 重复启动按钮)。
+- Medium 已修:M1/M2(universe `os.replace` 原子写 + `_ONBOARD_PIPELINE_LOCK` 串行)、M4(score 含 error→status=error)、M5(compile snapshot 校验+改正注释)、M6(refetchInterval error 短路)、M7(SystemGate 连续2失败才坍缩)、M8(StepList 由后端 steps 驱动)。
+- Low/Nit 已修:L1 sort、L2 HK/US 缓存、L3 CORS+POST、L4 name≤128、L6 回滚、L7 PROJECT_ULT_ROOT、N1/N2/N3。
+- **暂缓**:L8(tauri.conf CSP)——无法验证 WebKit、不盲改。
+后端 6 文件(`onboard.py`/`server.py`/`cli.py`/`overlays.py`/`tushare_industry_map.yaml`/`test_onboard.py`)可提交;前端/Tauri 修复在磁盘 gitignored。

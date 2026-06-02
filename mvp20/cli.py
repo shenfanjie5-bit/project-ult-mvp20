@@ -565,6 +565,17 @@ def validate_providers_command(providers_path: Path, manifest: Path) -> None:
         "values. Use only when intentionally re-baselining."
     ),
 )
+@click.option(
+    "--only-ts-code",
+    "only_ts_code",
+    default=None,
+    help=(
+        "Scope generation to a single ts_code (e.g. 600519.SH). Only that "
+        "stock's overlay shell is (re)generated; no other stock overlay and no "
+        "industry overlay is touched. Used by onboarding so adding one stock "
+        "does not reset other stocks' event-driven Inactive nodes."
+    ),
+)
 def generate_overlays_command(
     universe_path: Path,
     industries_path: Path,
@@ -573,6 +584,7 @@ def generate_overlays_command(
     stock_overlays_dir: Path,
     period: str,
     force: bool,
+    only_ts_code: str | None,
 ) -> None:
     """Generate industry overlays and company-industry stock overlay shells."""
 
@@ -584,6 +596,7 @@ def generate_overlays_command(
         stock_overlays_dir=stock_overlays_dir,
         period=period,
         force=force,
+        only_ts_code=only_ts_code,
     )
     _emit_result(result)
 

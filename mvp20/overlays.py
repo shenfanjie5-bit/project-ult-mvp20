@@ -1289,14 +1289,49 @@ def generate_overlay_files(
     stock_overlays_dir: Path,
     period: str = DEFAULT_PERIOD,
     force: bool = False,
+    only_ts_code: str | None = None,
 ) -> dict[str, int]:
+    """Generate industry + stock overlay shells.
+
+    ``only_ts_code`` (case-insensitive) scopes generation to a single stock:
+    its overlay shell(s) are (re)generated and NO other stock overlay or any
+    industry overlay is touched. This is the onboarding path — a full,
+    universe-wide regeneration would otherwise reset every *other* stock's
+    event-driven Inactive nodes back to Unknown via merge_preserve (those
+    transient Inactive nodes are intentionally NOT preserved), degrading their
+    data_coverage. When ``only_ts_code`` is None the behaviour is unchanged
+    (full regeneration of every industry + stock overlay).
+    """
     display_names = industry_display_names(industries_path)
     industries = load_industries(industries_path)
     memberships = expand_memberships(universe_path, industries_path)
+    if only_ts_code is not None:
+        want = only_ts_code.upper()
+        memberships = [m for m in memberships if m.ts_code.upper() == want]
 
     industry_overlays_dir.mkdir(parents=True, exist_ok=True)
     stock_overlays_dir.mkdir(parents=True, exist_ok=True)
     industry_graphs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Scoped single-stock generation must not rewrite other stocks' overlays —
+    # and regenerating the shared industry overlays would re-touch the files
+    # every stock inherits from, so skip them entirely in the scoped path.
+    if only_ts_code is not None:
+        for membership in memberships:
+            out_dir = stock_overlays_dir / membership.industry_id
+            out_dir.mkdir(parents=True, exist_ok=True)
+            overlay = build_stock_overlay(membership, period=period)
+            stock_path = out_dir / f"{membership.ts_code}.yaml"
+            existing_stock = _load_yaml(stock_path) if stock_path.exists() else None
+            merged_stock = merge_preserve_existing_overlay(
+                overlay, existing_stock, force=force
+            )
+            _write_yaml_if_changed(stock_path, merged_stock)
+        return {
+            "industry_overlay_count": 0,
+            "stock_overlay_count": len(memberships),
+            "company_count": len((_load_yaml(universe_path).get("constituents") or [])),
+        }
 
     for industry in industries:
         industry_id = str(industry["id"])
