@@ -217,7 +217,6 @@ ONBOARD_STEPS = [
     "derive", "compile", "score_preliminary",          # → ready_preliminary
     "codex_fill", "recompile", "rescore",              # → ready_full
 ]
-_PRELIMINARY_DONE_IDX = ONBOARD_STEPS.index("score_preliminary")
 
 
 def _onboard_db_init(db_path: Path) -> None:
@@ -352,6 +351,7 @@ def run_onboard(
     db_path: Path, ts_code: str, name: str, industry_id: str, *,
     do_codex: bool = True, year: int = 2025,
     progress: Callable[[int, str], None] | None = None,
+    on_preliminary: Callable[[dict], None] | None = None,
 ) -> dict:
     """Synchronous onboarding pipeline for one stock. Returns the result dict
     (preliminary score, and full score if do_codex). Raises on hard failure."""
@@ -407,6 +407,10 @@ def run_onboard(
     step(6)
     preliminary = _score(ts_code, db_path)
     result: dict = {"ts_code": ts_code, "preliminary": preliminary}
+    # Surface the preliminary score the moment it's ready so the frontend can
+    # show it while the (minutes-long) codex fill continues running.
+    if on_preliminary:
+        on_preliminary(preliminary)
 
     if not do_codex:
         return result
@@ -447,11 +451,18 @@ def start_onboard_job(
 
     def _worker() -> None:
         def prog(idx: int, step_name: str) -> None:
-            status = "ready_preliminary" if idx == _PRELIMINARY_DONE_IDX + 1 else "running"
             _job_update(db_path, job_id, step=step_name, step_idx=idx, status="running")
+
+        def on_prelim(prelim: dict) -> None:
+            # Persist the preliminary score mid-run (status stays "running").
+            # The frontend keys off the *presence* of `preliminary` to render the
+            # early score card while the codex fill is still in flight.
+            _job_update(db_path, job_id,
+                        preliminary_json=json.dumps(prelim, ensure_ascii=False))
+
         try:
             res = run_onboard(db_path, ts_code, name, industry_id,
-                              do_codex=do_codex, progress=prog)
+                              do_codex=do_codex, progress=prog, on_preliminary=on_prelim)
             _job_update(db_path, job_id, status="ready_full" if do_codex else "ready_preliminary",
                         step="done", step_idx=len(ONBOARD_STEPS),
                         preliminary_json=json.dumps(res.get("preliminary"), ensure_ascii=False),

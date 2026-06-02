@@ -9,6 +9,8 @@ The successful onboard pipeline is covered separately by an end-to-end run.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,3 +85,74 @@ def test_handle_industries_returns_active() -> None:
     cfg = server.ServerConfig()
     st, body = server.handle_industries(cfg, {})
     assert st == 200 and len(body["data"]["industries"]) == 12
+
+
+def test_onboard_job_surfaces_preliminary_then_full(tmp_path: Path, monkeypatch) -> None:
+    """The job must expose the preliminary score *while still running* (so the
+    frontend can show it during the minutes-long codex fill), then the full
+    score once codex completes. Uses a fake run_onboard so the test is hermetic
+    (no CLI / network) and Events instead of sleeps for synchronisation."""
+    db = tmp_path / "jobs.sqlite"
+    seen_prelim = threading.Event()
+    proceed = threading.Event()
+
+    def fake_run_onboard(db_path, ts_code, name, industry_id, *,
+                         do_codex=True, year=2025, progress=None,
+                         on_preliminary=None):
+        if progress:
+            progress(6, "score_preliminary")
+        prelim = {"ts_code": ts_code, "mode": "neutral", "signal": "WATCH",
+                  "short": -0.18, "medium": -0.18, "long": -0.14, "top_path": None}
+        if on_preliminary:
+            on_preliminary(prelim)
+        seen_prelim.set()
+        proceed.wait(timeout=5)        # hold mid-run so the test can observe state
+        full = {**prelim, "short": 0.05, "signal": "WATCH"}
+        return {"ts_code": ts_code, "preliminary": prelim, "full": full}
+
+    monkeypatch.setattr(onboard, "run_onboard", fake_run_onboard)
+    job_id = onboard.start_onboard_job(db, "300999.SZ", "测试股", "AI_COMPUTE", do_codex=True)
+
+    assert seen_prelim.wait(timeout=5)
+    mid = onboard.get_job(db, job_id)
+    assert mid is not None and mid["status"] == "running"      # codex still in flight
+    assert mid.get("preliminary") and mid["preliminary"]["signal"] == "WATCH"
+    assert mid.get("full") is None                              # full not ready yet
+
+    proceed.set()
+    final = None
+    for _ in range(100):
+        final = onboard.get_job(db, job_id)
+        if final and final["status"] in ("ready_full", "error"):
+            break
+        time.sleep(0.02)
+    assert final is not None and final["status"] == "ready_full"
+    assert final["full"] and final["full"]["short"] == 0.05
+    assert final["preliminary"]["signal"] == "WATCH"
+
+
+def test_onboard_job_without_codex_is_preliminary_terminal(tmp_path: Path, monkeypatch) -> None:
+    """do_codex=False → job ends at ready_preliminary with no full score."""
+    db = tmp_path / "jobs.sqlite"
+
+    def fake_run_onboard(db_path, ts_code, name, industry_id, *,
+                         do_codex=True, year=2025, progress=None,
+                         on_preliminary=None):
+        prelim = {"ts_code": ts_code, "mode": "neutral", "signal": "AVOID",
+                  "short": -0.4, "medium": -0.3, "long": -0.2, "top_path": None}
+        if on_preliminary:
+            on_preliminary(prelim)
+        return {"ts_code": ts_code, "preliminary": prelim}
+
+    monkeypatch.setattr(onboard, "run_onboard", fake_run_onboard)
+    job_id = onboard.start_onboard_job(db, "300999.SZ", "测试股", "AI_COMPUTE", do_codex=False)
+
+    final = None
+    for _ in range(100):
+        final = onboard.get_job(db, job_id)
+        if final and final["status"] in ("ready_preliminary", "ready_full", "error"):
+            break
+        time.sleep(0.02)
+    assert final is not None and final["status"] == "ready_preliminary"
+    assert final["preliminary"]["signal"] == "AVOID"
+    assert final.get("full") is None
