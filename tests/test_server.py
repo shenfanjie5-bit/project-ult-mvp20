@@ -177,31 +177,55 @@ def test_admin_alerts_handled_by_mvp20_bff(running_server) -> None:
         assert body["data"]["fixture"] is True
 
 
-# Skeleton-wired adapter routes — should all 200 because vendor packages are
-# installed in editable mode under `upstream/`. If vendor import fails (e.g.
-# in a stripped environment without `pip install -e ./upstream/<name>`), the
-# adapter falls back to 503 UPSTREAM_UNAVAILABLE — that case is exercised by
-# test_adapter_import_fallback_returns_503.
+# Skeleton-wired adapter routes — each is served by a vendor adapter that
+# returns a 200 fixture envelope ONLY when its upstream package is importable
+# (installed in editable mode under `upstream/` via the documented per-vendor
+# `pip install -e ./upstream/<name>` loop). When a vendor import fails (e.g.
+# the CI image installs only `pip install -e ".[dev]"`, which does NOT pull in
+# the `upstream/` packages — the `[vendor]` extras is declarative-only and not
+# pip-installable), the adapter correctly falls back to 503 UPSTREAM_UNAVAILABLE.
+# That fallback path is asserted by test_adapter_import_fallback_returns_503.
+#
+# So the 200-expectation here is conditional on the vendor being present: each
+# case is paired with its adapter module name and skipped when that adapter's
+# `_AVAILABLE` flag is False, rather than fabricating an install. This keeps the
+# test green both locally (all vendors installed -> all run) and in CI (vendors
+# absent -> all skip with a clear reason).
 _ADAPTER_ROUTES = [
-    "/api/project-ult/graph/test",
-    "/api/project-ult/data/canonical/some_table",
-    "/api/project-ult/data/raw/some_table",
-    "/api/project-ult/entities",
-    "/api/project-ult/entities/ENT_X",
-    "/api/project-ult/reasoner/results",
-    "/api/project-ult/cycles/cycle-2026q1",
-    "/api/stocks/300750",
-    "/api/pool/observation",
-    "/api/world-state/latest",
-    "/api/project-ult/audit/audit-x",
-    "/api/audit/replay/foo",
-    "/api/project-ult/backtests",
-    "/api/backtest/list",
+    ("/api/project-ult/graph/test", "graph_engine"),
+    ("/api/project-ult/data/canonical/some_table", "data_platform"),
+    ("/api/project-ult/data/raw/some_table", "data_platform"),
+    ("/api/project-ult/entities", "entity_registry"),
+    ("/api/project-ult/entities/ENT_X", "entity_registry"),
+    ("/api/project-ult/reasoner/results", "reasoner_runtime"),
+    ("/api/project-ult/cycles/cycle-2026q1", "main_core"),
+    ("/api/stocks/300750", "main_core"),
+    ("/api/pool/observation", "main_core"),
+    ("/api/world-state/latest", "main_core"),
+    ("/api/project-ult/audit/audit-x", "audit_eval"),
+    ("/api/audit/replay/foo", "audit_eval"),
+    ("/api/project-ult/backtests", "audit_eval"),
+    ("/api/backtest/list", "audit_eval"),
 ]
 
 
-@pytest.mark.parametrize("path", _ADAPTER_ROUTES)
-def test_adapter_routes_return_200(running_server, path: str) -> None:
+def _adapter_available(adapter_module: str) -> bool:
+    """True when the vendor package behind ``mvp20.adapters.<adapter_module>``
+    is importable (i.e. the upstream editable install is present)."""
+    import importlib
+
+    mod = importlib.import_module(f"mvp20.adapters.{adapter_module}")
+    return bool(getattr(mod, "_AVAILABLE", False))
+
+
+@pytest.mark.parametrize("path,adapter_module", _ADAPTER_ROUTES)
+def test_adapter_routes_return_200(running_server, path: str, adapter_module: str) -> None:
+    if not _adapter_available(adapter_module):
+        pytest.skip(
+            f"vendor package for {adapter_module!r} not installed "
+            f"(upstream/ editable install absent); the 503 fallback is "
+            f"covered by test_adapter_import_fallback_returns_503"
+        )
     host, port, *_ = running_server
     status, _, body = _get(host, port, path)
     assert status == 200, f"{path} expected 200, got {status}; body={body}"
