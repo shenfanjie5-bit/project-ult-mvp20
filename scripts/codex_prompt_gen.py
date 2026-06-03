@@ -629,11 +629,300 @@ def _format_schema_block(nodes: list[dict]) -> list[str]:
 _INLINE_VALUE_MAXLEN = 600
 
 
+# ---------------------------------------------------------------------------
+# Industry-level source aggregation (P-fix: industry L0 prompt evidence).
+#
+# Root cause this block addresses
+# --------------------------------
+# An industry-level L0 prompt looks up its ``source_dependencies`` against the
+# ``INDUSTRY:<id>`` sentinel ts_code. But the realtime collectors store those
+# deps in TWO other places, never under ``INDUSTRY:<id>``:
+#
+#   * Per-stock fundamentals/text (``L5.is.*`` / ``L5.bs.*`` / ``L5.cf.*`` /
+#     ``L4.*`` / ``L9.disclosure.qa_recent`` / ``L9.media.social_buzz`` /
+#     ``L1.company.main_business``) are keyed by the constituent ts_code
+#     (``000063.SZ`` …) — 221-328 rows each.
+#   * Market-wide catalyst/macro feeds (``L9.media.report`` /
+#     ``L9.industry.compete_risk`` / ``L9.industry.policy_change`` /
+#     ``L9.macro.*``) are keyed by the ``MARKET:CN`` sentinel — exactly 1 row
+#     each (the shared 财联社 telegraph stream).
+#
+# ``read_hot_snapshot('INDUSTRY:AI_COMPUTE')`` resolves NEITHER (the sentinel
+# fan-out only adds ``MARKET:<market>`` for *real* stock ts_codes via
+# ``_ts_code_to_market``, which returns ``None`` for an ``INDUSTRY:`` key), so
+# every L0 dep rendered as "(missing in SQLite)" and codex correctly refused
+# to fabricate → 27 Unknown / no_local_evidence nodes.
+#
+# The fix: for the industry path, resolve each dep through a tier ladder:
+#   1. industry-sentinel direct hit (already industry-level, e.g.
+#      ``L0.cost.raw_material`` from the akshare commodity fetch),
+#   2. AGGREGATE across the industry's constituents (mean/median + per-member
+#      sample for numeric scalars; per-member latest text for dict/text deps),
+#   3. fall back to the ``MARKET:CN`` sentinel row (market-wide feeds).
+# ---------------------------------------------------------------------------
+
+
+# Deps that are inherently market-wide (single MARKET:<market> sentinel row,
+# no per-constituent fan-out). For an industry prompt these resolve via the
+# MARKET:CN fallback rather than constituent aggregation.
+_MARKET_LEVEL_DEP_PREFIXES = (
+    "L9.media.report",
+    "L9.industry.",
+    "L9.macro.",
+)
+
+# How many constituents to surface verbatim in a per-member sample (keeps the
+# prompt bounded — the aggregate stats already summarise the whole set).
+_INDUSTRY_SAMPLE_N = 6
+
+
+def _load_industry_constituents(industry_id: str, root: Path) -> list[str]:
+    """Return the constituent ts_codes whose ``industry_ids`` include
+    ``industry_id`` (read from ``config/mvp20.universe.yaml``).
+
+    Mirrors the universe-read pattern used in ``mvp20.audit`` /
+    ``mvp20.onboard``. Returns ``[]`` on missing / unparseable universe so
+    the caller degrades gracefully (deps just render "(missing …)" as before).
+    """
+
+    universe_path = root / "config" / "mvp20.universe.yaml"
+    if not universe_path.exists():
+        return []
+    try:
+        data = yaml.safe_load(universe_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return []
+    out: list[str] = []
+    for c in data.get("constituents") or []:
+        ts = c.get("ts_code")
+        if not ts:
+            continue
+        ids = c.get("industry_ids") or []
+        if isinstance(ids, list) and industry_id in [str(i) for i in ids]:
+            out.append(str(ts))
+    return out
+
+
+def _is_market_level_dep(dep: str) -> bool:
+    return any(
+        dep == p or dep.startswith(p) for p in _MARKET_LEVEL_DEP_PREFIXES
+    )
+
+
+def _primary_numeric(value: Any) -> tuple[float, str] | None:
+    """Extract the headline numeric from a source value dict, if any.
+
+    Returns ``(number, field_name)`` or ``None``. Recognises the value
+    shapes the fundamentals collectors emit:
+      * ``{"scalar": N, "unit": ...}``   → most L5.is.* / L5.cf.* / L5.bs.*
+      * ``{"yoy_pct": N, ...}``          → L5.is.revenue_growth
+      * ``{"sga_rd_ratio_revenue": N}``  → L5.is.sga_rd
+    Falls back to the first finite numeric leaf so unknown-but-numeric deps
+    still aggregate instead of silently degrading to a text list.
+    """
+
+    if not isinstance(value, dict):
+        return None
+    for key in ("scalar", "yoy_pct", "sga_rd_ratio_revenue", "ratio", "value"):
+        v = value.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            f = float(v)
+            if f == f:  # not NaN
+                return f, key
+    for k, v in value.items():
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            f = float(v)
+            if f == f:
+                return f, k
+    return None
+
+
+def _fmt_num(n: float) -> str:
+    """Compact human number: keep ratios precise, abbreviate large counts."""
+
+    if abs(n) >= 1e8:
+        return f"{n / 1e8:.2f}亿"
+    if abs(n) >= 1e4:
+        return f"{n / 1e4:.2f}万"
+    if abs(n) < 1 and n != 0:
+        return f"{n:.4f}"
+    return f"{n:.2f}"
+
+
+def _aggregate_industry_dep_value(
+    dep: str,
+    constituents: list[str],
+    db_path: Path,
+    *,
+    snapshot_cache: dict[str, dict] | None = None,
+) -> str | None:
+    """Aggregate one source dep across an industry's constituents.
+
+    Reads each constituent's per-stock value (via ``read_hot_snapshot`` so
+    sentinel fan-out still applies per member) and produces an inline-able
+    summary string:
+
+      * Numeric deps → ``n=K members; mean=…; median=…; latest_period=…;
+        members[ts=val,…]`` so the LLM sees the cross-constituent
+        distribution AND can quote an individual member's exact figure.
+      * Text/dict deps → ``n=K members; <ts>: <compact value>; …`` for the
+        first ``_INDUSTRY_SAMPLE_N`` members that have the dep.
+
+    ``snapshot_cache`` memoises ``read_hot_snapshot`` per ts_code so a whole
+    prompt (many deps × the same constituents) reads each member once.
+
+    Returns ``None`` when no constituent has the dep (caller then falls back
+    to the MARKET sentinel / "(missing …)").
+    """
+
+    if not constituents:
+        return None
+
+    # (ts_code, value) for every member that actually has this dep.
+    present: list[tuple[str, Any]] = []
+    for ts in constituents:
+        if snapshot_cache is not None:
+            snap = snapshot_cache.get(ts)
+            if snap is None:
+                snap = read_hot_snapshot(db_path, ts)
+                snapshot_cache[ts] = snap
+        else:
+            snap = read_hot_snapshot(db_path, ts)
+        entry = snap.get(dep)
+        if entry is None:
+            continue
+        present.append((ts, entry.get("value")))
+    if not present:
+        return None
+
+    # Numeric path: aggregate when a majority of members expose a headline
+    # number (defends against a stray numeric leaf in an otherwise-text dep).
+    numerics: list[tuple[str, float, str]] = []
+    periods: set[str] = set()
+    for ts, val in present:
+        pn = _primary_numeric(val)
+        if pn is not None:
+            numerics.append((ts, pn[0], pn[1]))
+        if isinstance(val, dict):
+            p = val.get("period") or val.get("current_period") or val.get(
+                "end_date"
+            )
+            if p:
+                periods.add(str(p))
+
+    if numerics and len(numerics) >= max(2, len(present) // 2):
+        field = numerics[0][2]
+        vals = sorted(v for _, v, _ in numerics)
+        k = len(vals)
+        mean = sum(vals) / k
+        mid = k // 2
+        median = vals[mid] if k % 2 else (vals[mid - 1] + vals[mid]) / 2
+        sample = "; ".join(
+            f"{ts}={_fmt_num(v)}" for ts, v, _ in numerics[:_INDUSTRY_SAMPLE_N]
+        )
+        period_note = (
+            f"; latest_period={sorted(periods)[-1]}" if periods else ""
+        )
+        more = (
+            f"; (+{len(numerics) - _INDUSTRY_SAMPLE_N} more)"
+            if len(numerics) > _INDUSTRY_SAMPLE_N
+            else ""
+        )
+        return (
+            f"[industry-aggregate over {k} constituents] field={field}; "
+            f"mean={_fmt_num(mean)}; median={_fmt_num(median)}; "
+            f"min={_fmt_num(vals[0])}; max={_fmt_num(vals[-1])}{period_note}; "
+            f"members[{sample}{more}]"
+        )
+
+    # Text / dict path: list each member's compact value (capped).
+    parts: list[str] = [
+        f"[industry-aggregate over {len(present)} constituents (text)]"
+    ]
+    for ts, val in present[:_INDUSTRY_SAMPLE_N]:
+        try:
+            vs = json.dumps(val, ensure_ascii=False)
+        except (TypeError, ValueError):
+            vs = str(val)
+        if len(vs) > 180:
+            vs = vs[:180] + "…"
+        parts.append(f"{ts}: {vs}")
+    if len(present) > _INDUSTRY_SAMPLE_N:
+        parts.append(f"(+{len(present) - _INDUSTRY_SAMPLE_N} more constituents)")
+    return " ｜ ".join(parts)
+
+
+def _resolve_dep_value_text(
+    dep: str,
+    snapshot: dict,
+    *,
+    industry_constituents: list[str] | None,
+    db_path: Path,
+    snapshot_cache: dict[str, dict] | None = None,
+) -> str:
+    """Resolve one source dep to an inline value string.
+
+    Company path (``industry_constituents is None``): legacy behaviour —
+    direct snapshot lookup, "(missing in SQLite)" when absent.
+
+    Industry path: tier ladder — industry-sentinel direct hit → constituent
+    aggregate → MARKET:CN sentinel fallback → "(missing …)".
+    """
+
+    entry = snapshot.get(dep)
+    if entry is not None:
+        v = entry.get("value")
+        try:
+            value_str = json.dumps(v, ensure_ascii=False)
+        except (TypeError, ValueError):
+            value_str = str(v)
+        if len(value_str) > _INLINE_VALUE_MAXLEN:
+            value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+        return value_str
+
+    # Company prompt: no aggregation, preserve original semantics.
+    if industry_constituents is None:
+        return "(missing in SQLite)"
+
+    # Industry prompt — market-wide feeds resolve via MARKET:CN; everything
+    # else aggregates across constituents.
+    if not _is_market_level_dep(dep):
+        agg = _aggregate_industry_dep_value(
+            dep, industry_constituents, db_path, snapshot_cache=snapshot_cache
+        )
+        if agg is not None:
+            value_str = agg
+            if len(value_str) > _INLINE_VALUE_MAXLEN:
+                value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+            return value_str
+
+    # MARKET:CN sentinel fallback (market-wide catalyst / macro deps, or a
+    # per-stock dep that no constituent happened to carry).
+    market_snap = read_hot_snapshot(db_path, "MARKET:CN", include_sentinels=False)
+    m_entry = market_snap.get(dep)
+    if m_entry is not None:
+        v = m_entry.get("value")
+        try:
+            value_str = json.dumps(v, ensure_ascii=False)
+        except (TypeError, ValueError):
+            value_str = str(v)
+        status = m_entry.get("data_status")
+        prefix = f"[MARKET:CN, status={status}] " if status else "[MARKET:CN] "
+        value_str = prefix + value_str
+        if len(value_str) > _INLINE_VALUE_MAXLEN:
+            value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+        return value_str
+
+    return "(missing in SQLite)"
+
+
 def _build_source_value_table(
     fillable_nodes: list[dict],
     governance: dict,
     ts_code: str,
     db_path: Path,
+    *,
+    industry_constituents: list[str] | None = None,
 ) -> list[tuple[str, str, str]]:
     """For each (fillable dp_id, source_dependency) pair, look up the
     current SQLite value and format it for inlining into the prompt.
@@ -642,31 +931,36 @@ def _build_source_value_table(
     (``INDUSTRY:<id>`` / ``MARKET:<x>``) already in place naturally
     resolves industry/macro-level dependencies for company dp_ids.
 
-    Returns a list of ``(dp_id, source_dp_id, value_text)`` rows. The
-    value text is a compact JSON dump truncated to ``_INLINE_VALUE_MAXLEN``
-    chars. Missing rows surface ``"(missing in SQLite)"`` so codex sees
-    explicitly that no local evidence exists for that dependency — better
-    than silently dropping the row, which would invite hallucination.
+    When ``industry_constituents`` is supplied (industry-level prompt), each
+    dep is resolved through the tier ladder in ``_resolve_dep_value_text``:
+    industry-sentinel direct hit → aggregate across constituents → MARKET:CN
+    fallback. This surfaces REAL evidence for industry L0 fields whose deps
+    are only ever stored per-stock or under MARKET:CN, not under the
+    ``INDUSTRY:<id>`` key the snapshot is read against.
+
+    Returns a list of ``(dp_id, source_dp_id, value_text)`` rows. Missing
+    rows surface ``"(missing in SQLite)"`` so codex sees explicitly that no
+    local evidence exists for that dependency — better than silently dropping
+    the row, which would invite hallucination.
     """
 
     snapshot = read_hot_snapshot(db_path, ts_code) if db_path.exists() else {}
+    # Memoise per-constituent snapshots so a whole industry prompt reads each
+    # member once across all (dep × constituent) aggregations.
+    snapshot_cache: dict[str, dict] = {}
     rows: list[tuple[str, str, str]] = []
     for node in fillable_nodes:
         dp_id = node.get("dp_id") or ""
         gov_entry = (governance.get("data_points") or {}).get(dp_id) or {}
         deps = gov_entry.get("source_dependencies") or []
         for dep in deps:
-            entry = snapshot.get(dep)
-            if entry is None:
-                value_str = "(missing in SQLite)"
-            else:
-                v = entry.get("value")
-                try:
-                    value_str = json.dumps(v, ensure_ascii=False)
-                except (TypeError, ValueError):
-                    value_str = str(v)
-                if len(value_str) > _INLINE_VALUE_MAXLEN:
-                    value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+            value_str = _resolve_dep_value_text(
+                dep,
+                snapshot,
+                industry_constituents=industry_constituents,
+                db_path=db_path,
+                snapshot_cache=snapshot_cache,
+            )
             rows.append((dp_id, dep, value_str))
     return rows
 
@@ -982,10 +1276,16 @@ def build_industry_prompt(
     parts.append("")
 
     # Fix B (B1): inline upstream SQLite values so codex can quote them
-    # verbatim. Industry-level ts_code is the INDUSTRY:<id> sentinel.
+    # verbatim. Industry-level ts_code is the INDUSTRY:<id> sentinel; the
+    # L0 deps are stored per-constituent (L5.*/L9.disclosure.*/…) or under
+    # MARKET:CN (L9.media.report/L9.industry.*), never under INDUSTRY:<id>.
+    # Passing the universe constituents lets _build_source_value_table
+    # AGGREGATE per-constituent evidence + fall back to MARKET:CN.
     if include_source_values:
+        constituents = _load_industry_constituents(industry_id, root)
         source_rows = _build_source_value_table(
             fillable_l0, governance, industry_ts_code, db_path,
+            industry_constituents=constituents,
         )
         parts.extend(_format_source_value_section(source_rows))
 
