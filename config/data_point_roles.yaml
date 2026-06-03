@@ -3053,7 +3053,11 @@ data_points:
     derived_target: risk_discount
   L9.capital.inst_buy_sell:
     field_role: score_component
-    score_target: expectation_gap
+    # F4: institutional net-buy (龙虎榜 top_inst) is a CAPITAL-FLOW signal, not
+    # an earnings-surprise one. Route it to funding_score (which folds into the
+    # capital_sentiment final-score component) instead of expectation_gap, where
+    # it was semantically mis-bucketed.
+    score_target: funding_score
     participates_in_score: true
     calculation_type: weighted_contribution
     aggregation_policy: weighted_sum
