@@ -1589,3 +1589,289 @@ def test_e2e_guidance_pair_counts_one_expectation_gap_node():
     # below the ~2.0 two pinned 1.0 nodes would have produced).
     eg_contribution = sum(abs(r["score"]) for r in eg_nodes.values())
     assert eg_contribution < 1.0
+
+
+# ---------------------------------------------------------------------------
+# F1 / F3 regression: four recently-added A-share dp_ids produced correct
+# VALUES but contributed ZERO to the score because their magnitude lived under
+# a ``scalar`` (or ``magnitude``) key that no ``_realtime_signal`` shape read,
+# so the reducer returned None and ``synthesize_realtime_nodes`` dropped them.
+# These tests pin the real payload shapes (from the derive.py producers) →
+# correct NON-None signed signal, the node-emission, and that raw PEG stays
+# data-only because L6.state.peg_match is the scored form of the SAME PEG.
+#
+# Real payload keys (mvp20/derive.py):
+#   L6.mult.ev_ebitda  → {"scalar": <EV/EBITDA>, "unit": "ratio", ...}  (valuation_rerating)
+#   L6.mult.forward_pe → {"scalar": <fwd P/E>,   "unit": "ratio", ...}  (valuation_rerating)
+#   L6.priced.news_age → {"scalar": m, "magnitude": m, "age_days": ...} (priced_in_discount)
+#   L6.mult.peg        → {"scalar": <PEG>, "pe": .., "growth_pct": ...}  (valuation_rerating; data-only)
+#   L6.state.peg_match → {"scalar": s, "score": s, "band": ...}         (valuation_rerating; scored)
+# ---------------------------------------------------------------------------
+
+
+# 16. L6.mult.ev_ebitda → valuation_rerating (signed; HIGH multiple = NEGATIVE)
+
+
+def test_field_ev_ebitda_expensive_is_negative():
+    # Log-ratio re-center -tanh(ln(ev/13)/1.4): expensive → negative, cheap →
+    # positive, at the reference (13) → 0. Monotonic: a richer multiple is
+    # strictly MORE negative (no premature flooring across the AI-compute range).
+    rich = _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 370.4618}, "valuation_rerating"
+    )
+    mid = _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 98.2539}, "valuation_rerating"
+    )
+    less_rich = _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 68.9253}, "valuation_rerating"
+    )
+    assert rich == pytest.approx(-math.tanh(math.log(370.4618 / 13.0) / 1.4))
+    assert rich < 0
+    # The most expensive name is strictly the MOST negative.
+    assert rich < mid < less_rich < 0
+    # Not pinned at the floor even at EV/EBITDA 370 — discrimination preserved.
+    assert rich > -1.0
+    # A CHEAP multiple (below the reference) is mildly POSITIVE.
+    cheap = _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 8.0}, "valuation_rerating"
+    )
+    assert cheap == pytest.approx(-math.tanh(math.log(8.0 / 13.0) / 1.4))
+    assert cheap > 0
+    # At the reference → neutral.
+    assert _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 13.0}, "valuation_rerating"
+    ) == pytest.approx(0.0)
+    # Non-positive / missing / non-numeric scalar → None (no fabricated signal).
+    assert _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 0.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": -5.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.ev_ebitda", {"unit": "ratio"}, "valuation_rerating"
+    ) is None
+
+
+# 17. L6.mult.forward_pe → valuation_rerating (signed; HIGH multiple = NEGATIVE)
+
+
+def test_field_forward_pe_expensive_is_negative():
+    # Log-ratio re-center -tanh(ln(fpe/22)/1.1). Same direction/shape as
+    # ev_ebitda; distinct multiple (forward earnings, not trailing PE/PB).
+    rich = _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": 117.7751}, "valuation_rerating"
+    )
+    less_rich = _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": 45.2778}, "valuation_rerating"
+    )
+    assert rich == pytest.approx(-math.tanh(math.log(117.7751 / 22.0) / 1.1))
+    assert rich < 0
+    assert rich < less_rich < 0       # higher fwd-PE → more negative
+    assert rich > -1.0                # 118 fwd-PE still not floored
+    # A CHEAP forward P/E (below 22) is mildly POSITIVE.
+    cheap = _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": 12.0}, "valuation_rerating"
+    )
+    assert cheap == pytest.approx(-math.tanh(math.log(12.0 / 22.0) / 1.1))
+    assert cheap > 0
+    # At the reference → neutral.
+    assert _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": 22.0}, "valuation_rerating"
+    ) == pytest.approx(0.0)
+    # Non-positive / missing → None.
+    assert _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": -1.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.forward_pe", {"unit": "ratio"}, "valuation_rerating"
+    ) is None
+
+
+# 18. L6.priced.news_age → priced_in_discount (magnitude; fresh news = larger)
+
+
+def test_field_news_age_fresh_is_positive_magnitude():
+    # The producer already time-decays the magnitude into ``magnitude``/``scalar``
+    # ∈ [0, _NEWS_AGE_PEAK]. The rule surfaces it as a [0, 1] magnitude (a fresh
+    # catalyst → larger discount). Sign is ignored downstream, so it must be ≥ 0.
+    fresh = _realtime_signal(
+        "L6.priced.news_age",
+        {"scalar": 0.4653, "magnitude": 0.4653, "age_days": 11},
+        "priced_in_discount",
+    )
+    assert fresh == pytest.approx(0.4653)
+    assert fresh > 0
+    # A fresher catalyst → strictly larger magnitude.
+    fresher = _realtime_signal(
+        "L6.priced.news_age", {"magnitude": 0.5345}, "priced_in_discount"
+    )
+    assert fresher > fresh
+    # Falls back to ``scalar`` when ``magnitude`` key is absent (same value).
+    assert _realtime_signal(
+        "L6.priced.news_age", {"scalar": 0.30}, "priced_in_discount"
+    ) == pytest.approx(0.30)
+    # Clipped into [0, 1].
+    assert _realtime_signal(
+        "L6.priced.news_age", {"magnitude": 1.5}, "priced_in_discount"
+    ) == pytest.approx(1.0)
+    # Neither key present → None (absent → no node).
+    assert _realtime_signal(
+        "L6.priced.news_age", {"age_days": 3}, "priced_in_discount"
+    ) is None
+
+
+# 19. L6.mult.peg → valuation_rerating: deliberately DATA-ONLY (None). The PEG
+#     signal is carried by L6.state.peg_match (the banded scored form), so raw
+#     peg must NOT also be scored (would double-count PEG into valuation_rerating).
+
+
+def test_field_raw_peg_is_data_only_none():
+    # The bare PEG ratio matches NO _realtime_signal shape → None (not scored).
+    assert _realtime_signal(
+        "L6.mult.peg",
+        {"scalar": 1.9973, "pe": 318.68, "growth_pct": 159.55,
+         "growth_basis": "revenue_yoy"},
+        "valuation_rerating",
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.peg", {"scalar": 0.495}, "valuation_rerating"
+    ) is None
+
+
+def test_peg_match_carries_peg_signal():
+    # COVERAGE: the PEG signal reaches valuation_rerating via peg_match, whose
+    # payload carries an explicit ``score`` ∈ [-1, 1] (PEG<1 → +1 undervalued,
+    # >2 → -1 expensive). This is why raw peg is left data-only above.
+    undervalued = _realtime_signal(
+        "L6.state.peg_match",
+        {"scalar": 1.0, "score": 1.0, "band": "undervalued", "peg": 0.495},
+        "valuation_rerating",
+    )
+    expensive = _realtime_signal(
+        "L6.state.peg_match",
+        {"scalar": -0.9946, "score": -0.9946, "band": "fair", "peg": 1.9973},
+        "valuation_rerating",
+    )
+    assert undervalued == pytest.approx(1.0)
+    assert undervalued > 0
+    assert expensive == pytest.approx(-0.9946)
+    assert expensive < 0
+
+
+# --- synthesize_realtime_nodes: the 4 dp_ids now EMIT a scoring node ---------
+
+
+def test_synthesize_emits_nodes_for_the_four_fixed_dp_ids():
+    """The exact F1 regression: each real payload, run through the synthesis
+    gates, now produces a standalone-leaf node with the correct signed score
+    (was dropped → ZERO contribution). Raw peg stays absent (peg_match scores)."""
+
+    reg = _registry({
+        "L6.mult.ev_ebitda": _gov("L6.mult.ev_ebitda", target="valuation_rerating"),
+        "L6.mult.forward_pe": _gov("L6.mult.forward_pe", target="valuation_rerating"),
+        "L6.priced.news_age": _gov("L6.priced.news_age", target="priced_in_discount"),
+        "L6.mult.peg": _gov("L6.mult.peg", target="valuation_rerating"),
+        "L6.state.peg_match": _gov("L6.state.peg_match", target="valuation_rerating"),
+    })
+    snap = {
+        "L6.mult.ev_ebitda": {
+            "value": {"scalar": 370.4618, "unit": "ratio"},
+            "data_status": "Known", "confidence": 0.6,
+            "source": "derive:l6_mult_ev_ebitda", "updated_at": 1_700_000_000,
+        },
+        "L6.mult.forward_pe": {
+            "value": {"scalar": 117.7751, "unit": "ratio"},
+            "data_status": "Known", "confidence": 0.63,
+            "source": "derive:l6_mult_forward_pe", "updated_at": 1_700_000_000,
+        },
+        "L6.priced.news_age": {
+            "value": {"scalar": 0.4653, "magnitude": 0.4653, "age_days": 11},
+            "data_status": "Known", "confidence": 0.585,
+            "source": "derive:l6_priced_news_age", "updated_at": 1_700_000_000,
+        },
+        "L6.mult.peg": {
+            "value": {"scalar": 1.9973, "pe": 318.68, "growth_pct": 159.55},
+            "data_status": "Known", "confidence": 0.63,
+            "source": "derive:l6_mult_peg", "updated_at": 1_700_000_000,
+        },
+        "L6.state.peg_match": {
+            "value": {"scalar": -0.9946, "score": -0.9946, "band": "fair"},
+            "data_status": "Known", "confidence": 0.63,
+            "source": "derive:l6_state_peg_match", "updated_at": 1_700_000_000,
+        },
+    }
+    nodes = {
+        n["dp_id"]: n
+        for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="688256.SH"
+        )
+    }
+
+    # All three previously-dropped scored dp_ids now emit a node.
+    assert "L6.mult.ev_ebitda" in nodes
+    assert "L6.mult.forward_pe" in nodes
+    assert "L6.priced.news_age" in nodes
+
+    # ev_ebitda / forward_pe: HIGH multiple → NEGATIVE direction; the magnitude
+    # (abs of the signed signal) is stored on the node.
+    ev = nodes["L6.mult.ev_ebitda"]
+    assert ev["direction"] == "negative"
+    assert ev["value"]["score"] == pytest.approx(
+        abs(math.tanh(math.log(370.4618 / 13.0) / 1.4))
+    )
+    fpe = nodes["L6.mult.forward_pe"]
+    assert fpe["direction"] == "negative"
+    assert fpe["value"]["score"] == pytest.approx(
+        abs(math.tanh(math.log(117.7751 / 22.0) / 1.1))
+    )
+
+    # news_age: positive discount magnitude.
+    news = nodes["L6.priced.news_age"]
+    assert news["value"]["score"] == pytest.approx(0.4653)
+
+    # peg_match emits (it has always worked); raw peg is data-only → no node.
+    assert "L6.state.peg_match" in nodes
+    assert "L6.mult.peg" not in nodes
+
+
+# --- end-to-end: the 4 dp_ids move the final score in the correct direction --
+
+
+def test_e2e_ev_ebitda_expensive_lowers_score():
+    # A very expensive EV/EBITDA drives base_score strictly below a cheap one.
+    expensive = _base_score_for(
+        "L6.mult.ev_ebitda", "valuation_rerating", {"scalar": 370.4618}
+    )
+    cheap = _base_score_for(
+        "L6.mult.ev_ebitda", "valuation_rerating", {"scalar": 8.0}
+    )
+    assert expensive < cheap
+    assert expensive < 0  # expensive multiple drags valuation_rerating negative
+
+
+def test_e2e_forward_pe_expensive_lowers_score():
+    expensive = _base_score_for(
+        "L6.mult.forward_pe", "valuation_rerating", {"scalar": 117.7751}
+    )
+    cheap = _base_score_for(
+        "L6.mult.forward_pe", "valuation_rerating", {"scalar": 12.0}
+    )
+    assert expensive < cheap
+    assert expensive < 0
+
+
+def test_e2e_news_age_fresh_lowers_score():
+    # priced_in_discount SUBTRACTS its magnitude → a fresh catalyst lowers the
+    # base score vs no news (a node that doesn't emit). A bigger magnitude
+    # (fresher) lowers it more.
+    fresh = _base_score_for(
+        "L6.priced.news_age", "priced_in_discount",
+        {"scalar": 0.5345, "magnitude": 0.5345},
+    )
+    stale = _base_score_for(
+        "L6.priced.news_age", "priced_in_discount",
+        {"scalar": 0.10, "magnitude": 0.10},
+    )
+    # Fresher (larger discount) → strictly lower than a near-decayed one.
+    assert fresh < stale

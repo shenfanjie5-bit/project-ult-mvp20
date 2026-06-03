@@ -560,6 +560,49 @@ _INVENTORY_TURNOVER_DAYS_SCALE = 120.0  # ≈ IQR of inventory days
 # ±5% swing toward ±1, so no universe median/scale is needed for this field.
 _LABOR_COST_YOY_SCALE = 5.0   # % yoy per ~1 tanh unit
 
+# Valuation-MULTIPLE → valuation_rerating re-center (F1 fix). ``L6.mult.ev_ebitda``
+# and ``L6.mult.forward_pe`` are DISTINCT expensive-vs-cheap multiples (NOT a
+# re-count of PE/PB — those drive valuation_rerating via the percentile sink, and
+# PEG is scored separately via L6.state.peg_match), so they are NEW valuation
+# evidence. A HIGH multiple = expensive = mean-reversion / de-rating expectation =
+# NEGATIVE for valuation_rerating; a CHEAP multiple (below the reference) is mildly
+# POSITIVE. There is NO cross-sectional / peer percentile sink for these two
+# multiples (unlike PE/PB), so we re-center each on its OWN bounded monotonic map.
+#
+# Map: ``-tanh( ln(multiple / REF) / SCALE )``. A LOG-ratio (not a raw difference)
+# is used because both ratios are heavily right-skewed across the AI-compute cohort
+# (observed forward_pe spans ~45→118; ev_ebitda spans ~69→370) — a linear
+# ``-tanh((m-REF)/SCALE)`` would floor the whole expensive sector at -1.0 with no
+# discrimination, whereas the log map keeps the cohort separable (688256 fwd_pe 118
+# / ev 370 stays strictly more negative than 300502 fwd_pe 45 / ev 69) without ever
+# pinning at the bound. REF is the "neutral growth" multiple (signal 0); SCALE sets
+# how fast a richer multiple saturates.
+#
+# CALIBRATION — defensible anchors for a growth-stock universe (AI-compute trades
+# rich, so the cohort SHOULD read negative; the goal is relative discrimination):
+#   * forward_pe REF=22  (a market-ish forward P/E for a profitable grower),
+#                 SCALE=1.1 → fwd_pe 22→0, 30→-0.27, 45→-0.58, 50→-0.63, 118→-0.91.
+#   * ev_ebitda  REF=13  (a neutral EV/EBITDA), SCALE=1.4 → ev 13→0, 20→-0.30,
+#                 40→-0.67, 69→-0.83, 98→-0.89, 370→-0.98.
+# RECOMPUTE these if the universe's multiple distribution shifts. The same
+# universe-mixing caveat as the fundamental-quality block applies (a single
+# reference mixes industries); a peer-relative percentile is the future refinement
+# once an ev_ebitda/forward_pe percentile sink exists.
+_FORWARD_PE_REF = 22.0
+_FORWARD_PE_SCALE = 1.1
+_EV_EBITDA_REF = 13.0
+_EV_EBITDA_SCALE = 1.4
+
+# News-age "still being priced-in" discount (F1 fix). ``L6.priced.news_age``
+# targets priced_in_discount (a MAGNITUDE in [0, 1]; sign ignored downstream — the
+# discount roll-up only subtracts the magnitude). The producer already computes a
+# time-decayed ``magnitude`` ∈ [0, _NEWS_AGE_PEAK=0.6] (fresh catalyst → larger
+# discount, decaying with a ~30d half-life), so the rule just surfaces that bounded
+# magnitude. The generic fallbacks can't read it because the payload carries it
+# under a ``magnitude`` / ``scalar`` key (no score/percentile/yoy), so it was
+# dropped → contributed ZERO. Reading ``magnitude`` makes a fresh announcement
+# reach the priced_in_discount cluster.
+
 # Same-disclosure dedup: ``{secondary_dp_id: primary_dp_id}``. Both fields in a
 # pair are derived from the SAME company 业绩预告 (earnings pre-announcement) and
 # target ``expectation_gap``, so emitting both double-counts the disclosure. The
@@ -700,6 +743,44 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
             return 0.0
         return None
 
+    # NOTE on ``L6.mult.peg`` (valuation_rerating): deliberately NOT scored here.
+    # The raw PEG ratio is already banded into a signed valuation_rerating score
+    # by ``L6.state.peg_match`` (derive.derive_l6_state_peg_match reads
+    # peg.scalar → score ∈ [-1, 1]: PEG<1 undervalued +1, 1..2 linear, >2
+    # expensive -1), which DOES reach the score. Scoring raw peg again would
+    # double-count the SAME PEG into valuation_rerating, so peg is left
+    # data-only (its bare ``scalar`` falls through every generic shape → None).
+    # peg_match is the scored form (see test_peg_match_carries_peg_signal).
+
+    if dp_id == "L6.mult.ev_ebitda":
+        # valuation_rerating. ``scalar`` is EV/EBITDA. HIGH = expensive =
+        # de-rating expectation → NEGATIVE; below the reference → mildly
+        # POSITIVE. Distinct multiple (NOT a re-count of PE/PB — see the
+        # constants block). Log-ratio re-center so the right-skewed AI-compute
+        # cohort stays separable without flooring. EBITDA-positive only (the
+        # producer returns None for non-positive EBITDA), so ``scalar`` > 0.
+        ev = _num(value.get("scalar"))
+        if ev is None or ev <= 0:
+            return None
+        return -_clip(
+            math.tanh(math.log(ev / _EV_EBITDA_REF) / _EV_EBITDA_SCALE),
+            -1.0, 1.0,
+        )
+
+    if dp_id == "L6.mult.forward_pe":
+        # valuation_rerating. ``scalar`` is forward P/E. HIGH = expensive →
+        # NEGATIVE; below the reference → mildly POSITIVE. Distinct multiple
+        # (forward earnings, NOT trailing PE/PB). Log-ratio re-center (same
+        # rationale as ev_ebitda). The producer returns None for non-positive
+        # forward EPS, so ``scalar`` > 0.
+        fpe = _num(value.get("scalar"))
+        if fpe is None or fpe <= 0:
+            return None
+        return -_clip(
+            math.tanh(math.log(fpe / _FORWARD_PE_REF) / _FORWARD_PE_SCALE),
+            -1.0, 1.0,
+        )
+
     if dp_id == "L5.bs.leverage":
         # fundamental_score. ``leverage_ratio`` is debt/assets (e.g. 0.66).
         # Higher leverage = weaker balance sheet = NEGATIVE. 0.5 is neutral:
@@ -801,6 +882,18 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
         if d20 is None:
             return None
         return _clip(max(d20, 0.0) / 0.20, 0.0, 1.0)
+
+    if dp_id == "L6.priced.news_age":
+        # priced_in_discount (magnitude; sign ignored downstream). The producer
+        # already computes a time-decayed ``magnitude`` ∈ [0, _NEWS_AGE_PEAK]
+        # (fresh catalyst → larger discount, ~30d half-life). Surface it as the
+        # magnitude. Prefer ``magnitude``; fall back to ``scalar`` (same value).
+        mag = _num(value.get("magnitude"))
+        if mag is None:
+            mag = _num(value.get("scalar"))
+        if mag is None:
+            return None
+        return _clip(mag, 0.0, 1.0)
 
     return None
 
