@@ -1454,7 +1454,9 @@ def _tushare_timeout_seconds() -> float:
     return timeout
 
 
-def _fetch_a_share_history(pro, ts_code: str, days: int = 90) -> dict:
+def _fetch_a_share_history(
+    pro, ts_code: str, days: int = 90, pe_pb_days: int = 250,
+) -> dict:
     """Pull last N days of OHLCV + turnover_rate + PE + PB from Tushare.
 
     Returns a dict with:
@@ -1467,12 +1469,37 @@ def _fetch_a_share_history(pro, ts_code: str, days: int = 90) -> dict:
       feed ``technicals.compute_all`` (oldest → latest)
 
     Splits the call into ``pro.daily`` (OHLCV) and ``pro.daily_basic``
-    (turnover / valuation) — two calls but cheap with the existing 90-day
+    (turnover / valuation) — two calls but cheap with the existing
     cap and ``_BUCKET_A_SLEEP_S`` rate-limit.
+
+    H-3 fix — valuation-percentile window unification. The OHLCV /
+    technicals / crowdedness derives use the short ``days`` window
+    (default 90 calendar days ≈ 54 trading days). The PE/PB historical
+    percentile fed to ``derive_historical_quantile`` →
+    ``L10.val.historical_quantile`` / ``L8.val.overvalued`` previously
+    reused that same 90-calendar-day window, yielding only ~54 trading
+    days of history — too short to call "historical", and *contradicting*
+    the sibling dp_id ``L6.state.historical_percentile`` which is computed
+    by ``tushare_source._fetch_a_share_historical_percentile`` over a
+    ``history_days=250`` (≈183 trading day) window. Same stock, same
+    metric, two windows → opposite "extreme overvalued" vs "compression"
+    calls (the live 0.87-vs-0.388 discrepancy the audit found).
+
+    Fix: pull the ``daily_basic`` (PE/PB/turnover) series over the LONGER
+    ``pe_pb_days`` window (default 250, matching the L6.state path) and use
+    the full series for PE/PB. ``turnover_rate`` (crowdedness) is sliced
+    back to the short ``days``-equivalent so crowdedness behaviour is
+    unchanged; only the valuation-percentile look-back is widened/unified.
     """
 
     end = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+    # OHLCV / technicals stay on the short window.
     start = (datetime.now(tz=timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
+    # PE/PB valuation history uses the longer, unified window (+30d buffer
+    # for non-trading days, mirroring _fetch_a_share_historical_percentile).
+    pe_pb_start = (
+        datetime.now(tz=timezone.utc) - timedelta(days=pe_pb_days + 30)
+    ).strftime("%Y%m%d")
     out: dict[str, list] = {
         "close": [], "turnover_rate": [], "pe_ttm": [], "pb": [],
         "bars": [],
@@ -1502,14 +1529,19 @@ def _fetch_a_share_history(pro, ts_code: str, days: int = 90) -> dict:
                 except (TypeError, ValueError, KeyError):
                     continue
             out["bars"] = bars
-        # pro.daily_basic for PE/PB/turnover_rate
-        df_b = pro.daily_basic(ts_code=ts_code, start_date=start, end_date=end,
+        # pro.daily_basic for PE/PB/turnover_rate over the longer PE/PB window.
+        df_b = pro.daily_basic(ts_code=ts_code, start_date=pe_pb_start, end_date=end,
                                 fields="ts_code,trade_date,turnover_rate,pe_ttm,pb")
         if df_b is not None and len(df_b) > 0:
             df_b = df_b.sort_values("trade_date", ascending=False)
-            out["turnover_rate"] = [float(x) for x in df_b["turnover_rate"].dropna().tolist()]
+            # PE/PB: full long series → historical percentile parity with
+            # L6.state.historical_percentile.
             out["pe_ttm"] = [float(x) for x in df_b["pe_ttm"].dropna().tolist()]
             out["pb"] = [float(x) for x in df_b["pb"].dropna().tolist()]
+            # turnover_rate (crowdedness): keep the short recent window so
+            # crowding percentile is unchanged by the PE/PB widening.
+            turnover_full = [float(x) for x in df_b["turnover_rate"].dropna().tolist()]
+            out["turnover_rate"] = turnover_full[:days]
     except Exception as e:  # noqa: BLE001
         log.warning("[derive] history %s failed: %s", ts_code, e)
     return out

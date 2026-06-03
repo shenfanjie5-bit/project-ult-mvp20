@@ -899,6 +899,143 @@ def test_derive_overvalued_none_inputs():
 
 
 # ---------------------------------------------------------------------------
+# H-3: valuation-percentile look-back window unification.
+#
+# ``_fetch_a_share_history`` (derive.py) feeds PE/PB into
+# ``derive_historical_quantile`` → L10.val.historical_quantile / L8.val.overvalued.
+# Previously it reused the short OHLCV window (90 calendar days ≈ 54 trading
+# days), contradicting the sibling L6.state.historical_percentile path
+# (``tushare_source._fetch_a_share_historical_percentile``, history_days=250 ≈
+# 183 trading days). The fix decouples the PE/PB window (``pe_pb_days``, default
+# 250) from the OHLCV window so both valuation-percentile paths agree.
+#
+# These tests are hermetic: a stub ``pro`` backed by in-memory pandas frames,
+# no network and no DB.
+# ---------------------------------------------------------------------------
+
+
+class _HistRecorderPro:
+    """Stub Tushare ``pro`` that records the start/end window per endpoint and
+    serves canned ``daily`` / ``daily_basic`` frames built from a PE/PB series.
+    """
+
+    def __init__(self, pe_series_desc, pb_series_desc, turnover_desc):
+        import pandas as pd
+        self._pd = pd
+        # Build trade_date strings newest→oldest; the producer re-sorts anyway.
+        n = max(len(pe_series_desc), len(pb_series_desc), len(turnover_desc))
+        self._dates = [f"2026{(m % 12) + 1:02d}{(m % 27) + 1:02d}{i:02d}"[-8:]
+                       for i, m in enumerate(range(n))]
+        self._pe = list(pe_series_desc)
+        self._pb = list(pb_series_desc)
+        self._turn = list(turnover_desc)
+        self.calls: dict[str, dict] = {}
+
+    def daily(self, **kw):
+        self.calls["daily"] = dict(kw)
+        # Minimal OHLCV frame; close mirrors PE just to have data.
+        n = len(self._pe)
+        return self._pd.DataFrame({
+            "ts_code": ["X"] * n,
+            "trade_date": self._dates[:n],
+            "open": [10.0] * n, "high": [11.0] * n, "low": [9.0] * n,
+            "close": [10.0] * n, "vol": [1000.0] * n,
+        })
+
+    def daily_basic(self, **kw):
+        self.calls["daily_basic"] = dict(kw)
+        n = max(len(self._pe), len(self._pb), len(self._turn))
+        def _pad(xs):
+            return list(xs) + [None] * (n - len(xs))
+        return self._pd.DataFrame({
+            "ts_code": ["X"] * n,
+            "trade_date": self._dates[:n],
+            "turnover_rate": _pad(self._turn),
+            "pe_ttm": _pad(self._pe),
+            "pb": _pad(self._pb),
+        })
+
+
+def test_fetch_a_share_history_uses_longer_pe_pb_window():
+    """H-3: the daily_basic (PE/PB) call must reach further back than the
+    daily (OHLCV) call — i.e. the valuation window is decoupled and widened.
+
+    With days=90 and pe_pb_days=250 the daily_basic start_date must be
+    strictly EARLIER (smaller YYYYMMDD) than the daily start_date.
+    """
+
+    pro = _HistRecorderPro(
+        pe_series_desc=[20.0] * 200, pb_series_desc=[3.0] * 200,
+        turnover_desc=[1.5] * 200,
+    )
+    out = derive_mod._fetch_a_share_history(pro, "600519.SH", days=90, pe_pb_days=250)
+
+    daily_start = pro.calls["daily"]["start_date"]
+    basic_start = pro.calls["daily_basic"]["start_date"]
+    # Same end date, but PE/PB window starts earlier (longer look-back).
+    assert pro.calls["daily"]["end_date"] == pro.calls["daily_basic"]["end_date"]
+    assert basic_start < daily_start, (
+        f"PE/PB window ({basic_start}) must start before OHLCV window ({daily_start})"
+    )
+    # PE/PB use the full long series; turnover is sliced back to the short
+    # `days` window so crowdedness behaviour is unchanged.
+    assert len(out["pe_ttm"]) == 200
+    assert len(out["pb"]) == 200
+    assert len(out["turnover_rate"]) == 90
+
+
+def test_history_quantile_and_state_percentile_agree_on_same_series():
+    """H-3 parity: given the SAME PE/PB series, the derive.py valuation
+    percentile (derive_historical_quantile, consumed by L8.val.overvalued)
+    and the tushare_source.py L6.state.historical_percentile computation must
+    produce the SAME percentile. They differed live only because the two
+    code paths pulled DIFFERENT-length windows — once the window is unified
+    the math is identical.
+    """
+
+    from mvp20.sources import tushare_source as ts
+
+    # A 183-point PE series (the longer, unified window). Current PE sits at a
+    # known rank so the percentile is unambiguous.
+    pe_series_desc = [float(v) for v in range(1, 184)][::-1]  # 183, 182, ..., 1
+    current_pe = pe_series_desc[0]  # 183 → above all but itself
+
+    # --- derive.py path: derive_historical_quantile (current vs history) ---
+    quant = derive_historical_quantile(
+        current_pe, pe_series_desc, None, [],
+    )
+    overvalued = derive_overvalued(quant)
+    derive_pe_pct = quant["pe_percentile"]
+
+    # --- tushare_source.py path: replicate _fetch_a_share_historical_percentile
+    # percentile math on the IDENTICAL series (this is the exact computation in
+    # that function: n_below / len over the positive series). ---
+    pe_pos = [v for v in pe_series_desc if v and v > 0]
+    n_below = sum(1 for v in pe_pos if v < current_pe)
+    state_pe_pct = n_below / len(pe_pos)
+
+    # Same window length → identical percentile (no 54-vs-183 contradiction).
+    assert derive_pe_pct == pytest.approx(state_pe_pct, abs=1e-9)
+    assert quant["history_window_days"] == 183
+    # And the L8.val.overvalued severity is driven by that same percentile.
+    assert overvalued["max_quantile"] == pytest.approx(state_pe_pct, abs=1e-9)
+
+    # Guard the helper used by the L6.state path is the same ranking idea as
+    # derive's _percentile_rank for an in-range value (mid-series → ~0.5).
+    mid = 92.0  # middle of 1..183
+    assert derive_mod._percentile_rank(mid, pe_series_desc) == pytest.approx(
+        sum(1 for v in pe_pos if v < mid) / len(pe_pos), abs=1e-9
+    )
+    # `ts` import kept meaningful: assert the L6.state default window matches
+    # the derive pe_pb_days default (both ~250), so production runs align.
+    import inspect
+    sig = inspect.signature(ts._fetch_a_share_historical_percentile)
+    derive_sig = inspect.signature(derive_mod._fetch_a_share_history)
+    assert sig.parameters["history_days"].default == \
+        derive_sig.parameters["pe_pb_days"].default == 250
+
+
+# ---------------------------------------------------------------------------
 # Mock-guard regression: derive's valuation reads must reject ``mock:*`` rows.
 #
 # ``derive_all`` itself needs a live Tushare client for price/PE/PB history,

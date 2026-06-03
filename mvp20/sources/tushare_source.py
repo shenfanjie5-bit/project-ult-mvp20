@@ -2063,18 +2063,48 @@ def _fetch_a_share_financials(
     rows: list[tuple] = []
     total_mv_by_ts_code = total_mv_by_ts_code or {}
     for ts_code in a_codes:
-        # ── pro.income (利润表) — latest 5 quarters for YoY growth calc ──
+        # ── pro.income (利润表) — last ~12 filings for YoY growth calc ──
+        # H-1b: Tushare returns multiple rows per end_date (``update_flag='0'``
+        # original filing vs ``'1'`` restated). Pull ``limit=12`` (≥5 DISTINCT
+        # quarters even with restatement duplicates) and dedup by ``end_date``,
+        # preferring the row with non-null ``total_revenue`` then
+        # ``update_flag='1'`` — mirroring the cashflow dedup below. Without this
+        # a duplicated latest period both (a) pushes the same-period prior-year
+        # record out of the narrow ``limit=5`` window, so the H-1 YoY lookup
+        # (``_find_record(records, _yoy_period(period))``) finds nothing and
+        # skips — observed live on 300308/000063/000977/688041, which kept a
+        # stale wrong-period growth value — and (b) makes ``records[1]`` a
+        # same-period twin → QoQ collapses to ~0.
         try:
             df = pro.income(
-                ts_code=ts_code, limit=5,
-                fields=("ts_code,end_date,total_revenue,operate_profit,"
+                ts_code=ts_code, limit=12,
+                fields=("ts_code,end_date,update_flag,total_revenue,operate_profit,"
                         "n_income,basic_eps,oper_cost,sell_exp,admin_exp,rd_exp"),
             )
             if df is not None and len(df) > 0:
-                records = df.to_dict(orient="records")
-                # Sort by end_date desc (Tushare returns latest first usually,
-                # but defensively sort)
-                records.sort(key=lambda r: r.get("end_date") or "", reverse=True)
+                by_period: dict[str, dict] = {}
+                for _r in df.to_dict(orient="records"):
+                    ed = _r.get("end_date")
+                    if not ed:
+                        continue
+                    prior = by_period.get(ed)
+                    if prior is None:
+                        by_period[ed] = _r
+                        continue
+                    prior_rev = _safe(prior, "total_revenue")
+                    cur_rev = _safe(_r, "total_revenue")
+                    cur_flag = (_r.get("update_flag") or "")
+                    prior_flag = (prior.get("update_flag") or "")
+                    # Prefer non-null revenue; if both present, prefer the
+                    # restated ('1') filing.
+                    if cur_rev is not None and prior_rev is None:
+                        by_period[ed] = _r
+                    elif (cur_rev is not None and prior_rev is not None
+                          and cur_flag == "1" and prior_flag != "1"):
+                        by_period[ed] = _r
+                # Order by end_date desc — latest reporting period first, one
+                # row per distinct period.
+                records = [by_period[ed] for ed in sorted(by_period.keys(), reverse=True)]
                 rec = records[0]
                 period = rec.get("end_date")
                 rev = _safe(rec, "total_revenue")
@@ -2153,15 +2183,42 @@ def _fetch_a_share_financials(
                         }, ensure_ascii=False),
                         "Known", 0.85, "tushare:income", now,
                     ))
-                # L5.is.revenue_growth — YoY = current vs ~4 periods ago
-                if rev is not None and len(records) >= 4:
-                    yoy_rec = records[3]  # 4 quarters back (approx YoY)
-                    yoy_rev = _safe(yoy_rec, "total_revenue")
+                # L5.is.revenue_growth — YoY = current vs the SAME end-date
+                # one calendar year prior (H-1 fix). Tushare income rows are
+                # cumulative YTD, so positional ``records[3]`` ("~4 quarters
+                # back") mismatched the period whenever the latest filing was
+                # a mid-year cut (e.g. current=20260331 but records[3] could be
+                # 20250630/20250930). Select the same-period prior-year record
+                # via ``_find_record(records, _yoy_period(period))`` — the
+                # convention already used by ``_derive_labor_cost`` /
+                # ``_derive_cost_overrun``. If that record is absent, skip
+                # (emit nothing) rather than back into a wrong-period compare.
+                #
+                # H-2 fix: emit ``yoy_pct`` / ``qoq_pct`` as PERCENT (×100), not
+                # a raw ratio. This matches the sibling A-share dp_id
+                # ``L5.fina.revenue_yoy`` (Tushare ``or_yoy`` is already a
+                # percent) and the consumers that scale by /50:
+                #   * aggregator ``_to_scalar`` → ``tanh(yoy/50)`` (50% YoY ≈ 0.76)
+                #   * derive ``L11.mid.orders_revenue`` → ``rev_yoy/50``
+                # so +159.55% revenue growth emits yoy_pct≈159.55 (was 1.5955,
+                # which the /50 consumer read as ~0.03 — essentially no signal).
+                # NOTE: the US/FMP emitter of ``L5.is.revenue_growth``
+                # (fmp_source.py) still stores a RATIO; that file is out of
+                # scope here. The A-share derive consumer
+                # ``derive_l6_sens_growth_margin`` reads ``L5.fina.revenue_yoy``
+                # (percent) FIRST for A-shares and only falls back to
+                # ``L5.is.revenue_growth`` for US, so this percent change does
+                # not collide with that ratio-oriented fallback heuristic.
+                if rev is not None:
+                    yoy_rec = _find_record(records, _yoy_period(str(period or "")))
+                    yoy_rev = _safe(yoy_rec, "total_revenue") if yoy_rec else None
                     if yoy_rev and yoy_rev != 0:
-                        yoy_pct = (rev - yoy_rev) / yoy_rev
-                        # QoQ from previous quarter (records[1])
+                        yoy_pct = (rev - yoy_rev) / yoy_rev * 100.0
+                        # QoQ from the immediately-prior period (records[1] —
+                        # records are sorted end_date desc above). Stored as
+                        # percent for payload-internal consistency with yoy_pct.
                         prev_rev = _safe(records[1], "total_revenue") if len(records) > 1 else None
-                        qoq_pct = ((rev - prev_rev) / prev_rev) if prev_rev else None
+                        qoq_pct = ((rev - prev_rev) / prev_rev * 100.0) if prev_rev else None
                         rows.append((
                             ts_code, "L5.is.revenue_growth",
                             json.dumps({
@@ -3573,14 +3630,20 @@ def _fetch_a_share_historical_percentile(
 
     The spec calls out two similar percentile-style dp_ids:
 
-      * ``L10.val.historical_quantile`` — emitted by ``mvp20/derive.py``
-        with PE/PB percentiles over a 90-day window.
+      * ``L10.val.historical_quantile`` / ``L8.val.overvalued`` — emitted by
+        ``mvp20/derive.py`` (``derive_historical_quantile`` /
+        ``derive_overvalued``). As of the H-3 window-unification fix that
+        path pulls its PE/PB history over the SAME ~250-trading-day
+        ``pe_pb_days`` window used here, so the two percentiles agree for a
+        given trade date (previously derive.py used a 90-calendar-day /
+        ~54-trading-day window, producing a contradictory percentile).
       * ``L6.state.historical_percentile`` — same semantic, distinct dp_id.
 
     Editing derive.py to dual-emit is owned by a different upstream PR, so
     we cover the spec by independently computing this dp_id from
     ``daily_basic`` history. We use a ~1-year (250 trading day) window
-    here, mirroring the convention used by chip-distribution endpoints.
+    here, mirroring the convention used by chip-distribution endpoints and
+    now matched by the derive.py valuation-percentile path.
 
     Per-stock daily_basic call costs ~1 RPC each; throttle to 0.13s sleep
     so the 116-stock window adds ~15s wall time after the prior bursts.
