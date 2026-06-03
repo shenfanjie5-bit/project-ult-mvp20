@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from datetime import datetime, timezone
@@ -116,6 +117,8 @@ SUPPORTED_DP_IDS = {
     "L9.macro.rates",             # same source, event-shaped when LPR moves
     "L7.env.liquidity",           # cn_m M0/M1/M2 (state)
     "L9.macro.liquidity",         # cn_m event-shaped when M2 yoy shifts
+    "L7.env.fx",                  # fx_daily USDCNH — RMB regime tilt (MARKET:CN)
+    "L9.macro.fx",                # fx_daily USDCNH — RMB depreciation risk (MARKET:CN)
     "L9.macro.cpi_employment",    # cn_cpi + cn_ppi
     "L7.env.market_trend",         # index_daily market benchmark trend
     "L7.env.style",                # index_daily 成长 vs 价值 regime tilt (MARKET:CN)
@@ -230,6 +233,15 @@ _LAST_MACRO_FETCH: dict[str, object] = {
     "ts": 0,        # unix epoch of last real Tushare fetch
     "rows": [],     # cached row list (with original updated_at preserved)
 }
+
+# ── FX tilt tuning (L7.env.fx / L9.macro.fx via fx_daily) ──────────────────
+# Window: ~20 trading rows ≈ one trading month of USDCN* close-to-close move.
+_FX_WINDOW = 20
+# tanh scale: a 2% RMB move over the window maps to magnitude ≈ 0.76. RMB is
+# tightly managed so 2% in a month is already a notable tilt.
+_FX_SCALE_PCT = 2.0
+# L9 risk fires only when USDCNH rises (RMB depreciates) > 1.0% over window.
+_FX_RISK_THRESHOLD_PCT = 1.0
 
 # ---------------------------------------------------------------------------
 # X3b: per-stock Tushare financial-statement cache (5-min TTL)
@@ -1965,6 +1977,117 @@ def _emit_spec_aliases(rows: list[tuple]) -> None:
         log.info("[tushare] X1 spec aliases: emitted %d alias rows", n)
 
 
+# ── 龙虎榜机构净买入 normalization (L9.capital.inst_buy_sell) ──────────────
+# top_inst 的 buy/sell 单位是元；float_values（流通市值，来自 top_list）也是
+# 元。机构净买入 / 流通市值 给出一个无量纲的信号强度，tanh 压到 [0,1)。
+# 0.5% 的单日机构净买入占流通市值已是很强的信号。
+_INST_NETBUY_SCALE_RATIO = 0.005
+
+
+def _compute_inst_buy_sell_payload(
+    list_records: list[dict],
+    inst_records: list[dict],
+    trade_date: str,
+) -> dict:
+    """Build the ``L9.capital.inst_buy_sell`` payload for one ts_code.
+
+    Combines the 龙虎榜 daily summary (``top_list`` — net_amount per reason,
+    流通市值) with the institutional-seat detail (``top_inst`` — per-seat
+    机构 buy/sell amounts) into a single payload that is BOTH
+
+      * backward-compatible with the legacy consumers / alias test
+        (keys ``on_top_list``, ``entries``, ``trade_date`` preserved
+        verbatim), AND
+      * scorable by ``mvp20.aggregator._to_scalar`` via a top-level
+        ``score`` (magnitude in [0,1]) + ``direction``
+        (positive/negative/neutral) pair.
+
+    Institutional net buy = Σ top_inst.buy − Σ top_inst.sell (元). When
+    top_inst is empty (permission-locked seat detail) we fall back to the
+    top_list per-reason ``net_amount`` sum (万元 → 元) so the signal is
+    still signed rather than silently zero.
+
+    Magnitude = tanh(|inst_net_buy| / (float_values × _INST_NETBUY_SCALE_RATIO))
+    when 流通市值 is known; otherwise we tanh the raw 万元 net_amount on a
+    coarse 5000万 scale so the sign/strength is still meaningful.
+    """
+
+    entries = [
+        {
+            "reason": r.get("reason"),
+            "net_amount": _safe_num(r.get("net_amount")),
+            "pct_change": _safe_num(r.get("pct_change")),
+        }
+        for r in list_records
+    ]
+
+    # 流通市值 (元) — take the first non-null float_values across the
+    # stock's top_list rows (identical across reasons for the same day).
+    float_values = None
+    for r in list_records:
+        fv = _safe_num(r.get("float_values"))
+        if fv:
+            float_values = fv
+            break
+
+    # Institutional seat buy/sell (元) from top_inst.
+    inst_buy = 0.0
+    inst_sell = 0.0
+    seat_count = 0
+    for r in inst_records:
+        b = _safe_num(r.get("buy"))
+        s = _safe_num(r.get("sell"))
+        if b is not None:
+            inst_buy += b
+        if s is not None:
+            inst_sell += s
+        seat_count += 1
+    inst_net_buy = inst_buy - inst_sell
+
+    # Fallback: no seat detail → use top_list net_amount (万元 → 元).
+    used_fallback = seat_count == 0
+    if used_fallback:
+        net_amount_wan = 0.0
+        for e in entries:
+            na = e.get("net_amount")
+            if na is not None:
+                net_amount_wan += na
+        inst_net_buy = net_amount_wan * 1e4  # 万元 → 元
+
+    # Magnitude + direction.
+    if float_values:
+        denom = float_values * _INST_NETBUY_SCALE_RATIO
+        ratio = inst_net_buy / denom if denom else 0.0
+        magnitude = abs(math.tanh(ratio))
+    else:
+        # Coarse 5000万元 scale when 流通市值 missing.
+        magnitude = abs(math.tanh(inst_net_buy / 5.0e7))
+
+    if inst_net_buy > 0:
+        direction = "positive"
+    elif inst_net_buy < 0:
+        direction = "negative"
+    else:
+        direction = "neutral"
+
+    return {
+        "on_top_list": True,
+        "entries": entries,
+        "trade_date": trade_date,
+        # ── scorable keys (consumed by aggregator._to_scalar + direction) ──
+        "score": round(magnitude, 4),
+        "direction": direction,
+        "inst_buy": round(inst_buy, 2),
+        "inst_sell": round(inst_sell, 2),
+        "inst_net_buy": round(inst_net_buy, 2),
+        "inst_seat_count": seat_count,
+        "float_values": float_values,
+        "normalized_by": "float_values" if float_values else "fixed_5000w",
+        "net_buy_source": "top_list_net_amount" if used_fallback else "top_inst",
+        "unit": "元",
+    }
+
+
 def _fetch_a_share_capital_events(pro, a_codes_set: set[str], now: int) -> list[tuple]:
     """L7 capital-flow events that Tushare exposes via trade-date-wide
     endpoints (one HTTP call covers all A-share constituents). Cheaper than
@@ -2005,31 +2128,72 @@ def _fetch_a_share_capital_events(pro, a_codes_set: set[str], now: int) -> list[
             log.warning("[tushare] margin_detail %s failed: %s", trade_date, e)
 
     # ── 龙虎榜（机构买卖）→ L9.capital.inst_buy_sell ──
+    # We combine pro.top_list (daily 龙虎榜 summary — net_amount per reason,
+    # 流通市值) with pro.top_inst (机构席位明细 — per-seat buy/sell amounts)
+    # to compute a *signed* institutional net-buy signal. Records-based
+    # grouping (not pandas .groupby) keeps the function stub-testable.
     for back in range(0, 8):
         trade_date = _previous_n_days(back)
         try:
-            df = pro.top_list(trade_date=trade_date,
-                              fields="ts_code,trade_date,reason,net_amount,float_values,pct_change")
-            if df is not None and len(df) > 0:
-                df = df[df["ts_code"].isin(a_codes_set)]
-                if len(df) > 0:
-                    # Group by ts_code — a stock can appear on the list with multiple reasons
-                    for ts_code, group in df.groupby("ts_code"):
-                        reasons = group[["reason", "net_amount", "pct_change"]].to_dict(orient="records")
-                        rows.append((
-                            ts_code, "L9.capital.inst_buy_sell",
-                            json.dumps({
-                                "on_top_list": True,
-                                "entries": reasons,
-                                "trade_date": trade_date,
-                            }, ensure_ascii=False),
-                            "Known", 0.85, "tushare:top_list", now,
-                        ))
-                    log.info("[tushare] top_list from %s rows=%d (filtered)",
-                             trade_date, len(df))
-                    break
+            df = pro.top_list(
+                trade_date=trade_date,
+                fields=("ts_code,trade_date,reason,net_amount,float_values,"
+                        "pct_change,l_buy,l_sell"),
+            )
         except Exception as e:  # noqa: BLE001
             log.warning("[tushare] top_list %s failed: %s", trade_date, e)
+            continue
+        if df is None or len(df) == 0:
+            continue
+
+        list_records = df.to_dict(orient="records") \
+            if hasattr(df, "to_dict") else list(df)
+        list_records = [r for r in list_records
+                        if r.get("ts_code") in a_codes_set]
+        if not list_records:
+            continue
+
+        # Institutional-seat detail for the same day (one call, all stocks).
+        # Permission-locked / empty → empty list → helper falls back to the
+        # top_list net_amount sum, so the signal is still signed.
+        inst_by_ts: dict[str, list[dict]] = {}
+        try:
+            inst_df = pro.top_inst(
+                trade_date=trade_date,
+                fields="ts_code,trade_date,exalter,side,buy,sell,net_buy",
+            )
+            if inst_df is not None and len(inst_df) > 0:
+                inst_records = inst_df.to_dict(orient="records") \
+                    if hasattr(inst_df, "to_dict") else list(inst_df)
+                for r in inst_records:
+                    code = r.get("ts_code")
+                    if code in a_codes_set:
+                        inst_by_ts.setdefault(code, []).append(r)
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] top_inst %s failed (seat detail "
+                        "unavailable; using net_amount fallback): %s",
+                        trade_date, e)
+
+        # Group top_list rows by ts_code (a stock may appear with multiple
+        # reasons) and emit one enriched row per stock.
+        list_by_ts: dict[str, list[dict]] = {}
+        for r in list_records:
+            list_by_ts.setdefault(r.get("ts_code"), []).append(r)
+
+        for ts_code, group in list_by_ts.items():
+            payload = _compute_inst_buy_sell_payload(
+                group, inst_by_ts.get(ts_code, []), trade_date,
+            )
+            rows.append((
+                ts_code, "L9.capital.inst_buy_sell",
+                json.dumps(payload, ensure_ascii=False),
+                "Known", 0.85, "tushare:top_list+top_inst", now,
+            ))
+        log.info("[tushare] top_list from %s rows=%d (filtered) → %d "
+                 "ts_codes (%d with seat detail)",
+                 trade_date, len(list_records), len(list_by_ts),
+                 len(inst_by_ts))
+        break
 
     # ── 大宗交易 → L7.flow.block_trade ──
     for back in range(0, 8):
@@ -3973,6 +4137,136 @@ def _emit_money_supply(pro, now: int) -> list[tuple]:
     return rows
 
 
+def _emit_fx_cnh(pro, now: int) -> list[tuple]:
+    """``L7.env.fx`` + ``L9.macro.fx`` — RMB / cross-border FX tilt.
+
+    Source: ``pro.fx_daily`` (银行间外汇市场日行情). We track the offshore
+    yuan ``USDCNH.FXCM`` (Tushare's most reliable fx_daily symbol; falls
+    back to onshore ``USDCNY.CFETS`` then ``USDCNY.FXCM``). USDCNH is the
+    USD price of 1 RMB's reciprocal — i.e. **rising USDCNH = RMB
+    *depreciation***, falling USDCNH = RMB *appreciation*.
+
+    We compute the close-to-close % change over the most recent ~20 trading
+    rows (``_FX_WINDOW`` = 20) and translate it into the two spec dp_ids:
+
+      * ``L7.env.fx`` (multiplier / market_regime_multiplier, neutral 1.0).
+        RMB appreciation is a mild risk-on tilt for A-shares (北向资金 +
+        外资定价), depreciation a mild risk-off. We emit a SIGNED leaf via
+        ``score`` (magnitude in [0,1], read by aggregator ``_to_scalar``)
+        and ``direction``:
+            RMB appreciated (USDCNH ↓) → direction "positive"
+            RMB depreciated (USDCNH ↑) → direction "negative"
+        Magnitude = tanh(|Δ%| / _FX_SCALE_PCT) so a ~2% 20-day move ≈ 0.76.
+
+      * ``L9.macro.fx`` (discount / risk_discount, neutral 0.0). Only RMB
+        *depreciation* beyond ``_FX_RISK_THRESHOLD_PCT`` registers as a
+        macro risk — emit Known with direction "negative"; otherwise
+        Inactive (no risk event, so the risk_discount stays neutral 0).
+
+    Returns ``[]`` when fx_daily is permission-locked / empty so the macro
+    batch dispatcher logs it and the freshness panel keeps the field
+    Unknown rather than fabricating a tilt. (``fetch_macro_china_batch``'s
+    per-fetcher try/except turns any raise here into a skipped fetcher.)
+    """
+
+    df = None
+    used_symbol = None
+    for symbol in ("USDCNH.FXCM", "USDCNY.CFETS", "USDCNY.FXCM"):
+        try:
+            cand = pro.fx_daily(
+                ts_code=symbol,
+                fields="ts_code,trade_date,bid_close,ask_close,tick_qty",
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] fx_daily %s failed: %s", symbol, e)
+            continue
+        if cand is not None and len(cand) > 0:
+            df = cand
+            used_symbol = symbol
+            break
+
+    if df is None or len(df) == 0:
+        log.info("[tushare] fx_daily: no data for any USDCN* symbol")
+        return []
+
+    df = df.sort_values("trade_date", ascending=False).head(_FX_WINDOW)
+    records = df.to_dict(orient="records")
+    if len(records) < 2:
+        log.info("[tushare] fx_daily %s: <2 rows, cannot compute tilt",
+                 used_symbol)
+        return []
+
+    def _mid(rec: dict) -> float | None:
+        # Prefer the bid/ask midpoint; fall back to whichever side exists.
+        bid = _safe_num(rec.get("bid_close"))
+        ask = _safe_num(rec.get("ask_close"))
+        if bid is not None and ask is not None:
+            return (bid + ask) / 2.0
+        return bid if bid is not None else ask
+
+    latest_mid = _mid(records[0])
+    oldest_mid = _mid(records[-1])
+    if latest_mid is None or oldest_mid is None or oldest_mid == 0:
+        log.info("[tushare] fx_daily %s: null close, cannot compute tilt",
+                 used_symbol)
+        return []
+
+    # USDCNH change: + means USD up vs RMB → RMB depreciation.
+    usdcnh_change_pct = (latest_mid / oldest_mid - 1.0) * 100.0
+    # RMB appreciation % = inverse sign of the USDCNH move.
+    rmb_appreciation_pct = -usdcnh_change_pct
+    magnitude = abs(math.tanh(usdcnh_change_pct / _FX_SCALE_PCT))
+
+    latest_date = records[0].get("trade_date")
+    window_days = len(records)
+
+    # L7.env.fx — signed regime multiplier leaf.
+    if rmb_appreciation_pct > 0:
+        env_direction = "positive"   # RMB strengthening → mild risk-on
+    elif rmb_appreciation_pct < 0:
+        env_direction = "negative"   # RMB weakening → mild risk-off
+    else:
+        env_direction = "neutral"
+    env_payload = {
+        "score": round(magnitude, 4),
+        "direction": env_direction,
+        "symbol": used_symbol,
+        "usdcnh_change_pct": round(usdcnh_change_pct, 4),
+        "rmb_appreciation_pct": round(rmb_appreciation_pct, 4),
+        "window_trading_days": window_days,
+        "latest_mid": round(latest_mid, 6),
+        "latest_date": latest_date,
+    }
+
+    # L9.macro.fx — risk_discount: only RMB depreciation past threshold is a
+    # risk event; otherwise Inactive so the discount stays neutral 0.
+    is_depreciation_risk = usdcnh_change_pct > _FX_RISK_THRESHOLD_PCT
+    macro_payload = {
+        "score": round(magnitude, 4) if is_depreciation_risk else 0.0,
+        "direction": "negative" if is_depreciation_risk else "neutral",
+        "symbol": used_symbol,
+        "usdcnh_change_pct": round(usdcnh_change_pct, 4),
+        "rmb_appreciation_pct": round(rmb_appreciation_pct, 4),
+        "threshold_pct": _FX_RISK_THRESHOLD_PCT,
+        "window_trading_days": window_days,
+        "latest_date": latest_date,
+    }
+
+    return [
+        (
+            "MARKET:CN", "L7.env.fx",
+            json.dumps(env_payload, ensure_ascii=False),
+            "Known", 0.8, "tushare:fx_daily", now,
+        ),
+        (
+            "MARKET:CN", "L9.macro.fx",
+            json.dumps(macro_payload, ensure_ascii=False),
+            "Known" if is_depreciation_risk else "Inactive",
+            0.8, "tushare:fx_daily", now,
+        ),
+    ]
+
+
 def _emit_cpi_ppi(pro, now: int) -> list[tuple]:
     """``L9.macro.cpi_employment`` — cn_cpi + cn_ppi merged into one row.
 
@@ -4560,6 +4854,7 @@ def fetch_macro_china_batch(now: int) -> list[tuple]:
         ("cn_pmi",           _emit_pmi),
         ("shibor_lpr",       _emit_rates),
         ("cn_m",             _emit_money_supply),
+        ("fx_daily",         _emit_fx_cnh),
         ("cn_cpi+cn_ppi",    _emit_cpi_ppi),
         ("market_trend",     _emit_market_trend),
         ("market_pe_quantile", _emit_market_pe_quantile),

@@ -806,6 +806,58 @@ def test_derive_runner_l6_multiples_inactive_when_inputs_missing(tmp_path: Path)
         assert json.loads(payload_json).get("_inactive") is True
 
 
+def test_derive_runner_inactive_reason_distinguishes_undefined_from_missing(tmp_path: Path):
+    """PEG label polish: when inputs are PRESENT but the formula is undefined
+    (PEG with growth<=0), ``missing_inputs`` must be empty and
+    ``inactive_reason='formula_undefined'`` — not a misleading list of present
+    inputs (the old behavior, e.g. 000977 PEG with -24% revenue growth). When an
+    input is genuinely absent it IS listed with reason 'missing_inputs'.
+    """
+
+    now = int(time.time())
+
+    # Case A: pe present + revenue_growth present but NEGATIVE → peg undefined.
+    db = tmp_path / "peg_undef.sqlite"
+    init_db(db)
+    upsert_realtime(db, [
+        ("000001.SZ", "L6.mult.pe",
+         {"scalar": 30.0, "unit": "ratio", "ttm": True},
+         "Known", 0.7, "tushare:daily_basic", now),
+        ("000001.SZ", "L5.is.revenue_growth",
+         {"yoy_pct": -24.3, "qoq_pct": -50.0, "current_period": "20260331",
+          "yoy_compare_period": "20250331"},
+         "Known", 0.8, "tushare:income.derived", now),
+    ])
+    DeriveRunner(db).run_all(["000001.SZ"])
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        status, payload_json = conn.execute(
+            "SELECT data_status, value_json FROM realtime_current "
+            "WHERE ts_code='000001.SZ' AND dp_id='L6.mult.peg'"
+        ).fetchone()
+    payload = json.loads(payload_json)
+    assert status == "Inactive"
+    assert payload["missing_inputs"] == []            # inputs present, not missing
+    assert payload["inactive_reason"] == "formula_undefined"
+
+    # Case B: revenue_growth genuinely ABSENT → listed + reason 'missing_inputs'.
+    db2 = tmp_path / "peg_missing.sqlite"
+    init_db(db2)
+    upsert_realtime(db2, [
+        ("000001.SZ", "L6.mult.pe",
+         {"scalar": 30.0, "unit": "ratio", "ttm": True},
+         "Known", 0.7, "tushare:daily_basic", now),
+    ])
+    DeriveRunner(db2).run_all(["000001.SZ"])
+    with sqlite3.connect(f"file:{db2}?mode=ro", uri=True) as conn:
+        payload_json = conn.execute(
+            "SELECT value_json FROM realtime_current "
+            "WHERE ts_code='000001.SZ' AND dp_id='L6.mult.peg'"
+        ).fetchone()[0]
+    payload = json.loads(payload_json)
+    assert "L5.is.revenue_growth" in payload["missing_inputs"]
+    assert payload["inactive_reason"] == "missing_inputs"
+
+
 def test_derive_runner_emits_news_age_with_injected_now(tmp_path: Path):
     """End-to-end: DeriveRunner injects its `now` into L6.priced.news_age so a
     recent announcement decays off the runner clock (not a hardcoded date)."""

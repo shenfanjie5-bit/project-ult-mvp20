@@ -2926,9 +2926,24 @@ class DeriveRunner:
                 result = None
 
             if result is None:
-                # Inactive emit
+                # Inactive emit. Distinguish genuinely-absent inputs from
+                # "all inputs present but the formula returned None" — e.g. PEG
+                # when growth<=0 is *undefined*, not missing-data. ``payloads[i]``
+                # is None iff ``input_dp_ids[i]`` had no usable row, so list only
+                # those as ``missing_inputs`` and tag the reason; previously this
+                # always listed every declared input, mislabeling present-but-
+                # undefined cases (e.g. 000977 PEG with -24% revenue growth).
                 neutral, status = self._neutral_for(output_dp)
-                payload = {"value": neutral, "_inactive": True, "missing_inputs": input_dp_ids}
+                absent_inputs = [
+                    dp for dp, p in zip(input_dp_ids, payloads) if p is None
+                ]
+                payload = {
+                    "value": neutral, "_inactive": True,
+                    "missing_inputs": absent_inputs,
+                    "inactive_reason": (
+                        "missing_inputs" if absent_inputs else "formula_undefined"
+                    ),
+                }
                 confidence = 0.3
                 data_status = status
             else:

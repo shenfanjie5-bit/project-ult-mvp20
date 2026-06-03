@@ -220,7 +220,13 @@ def test_top_headlines_cap_at_10(monkeypatch: pytest.MonkeyPatch) -> None:
         {
             "标题": f"研报-{i}",  # benign keyword
             "内容": f"内容 {i}",
-            "发布日期": base.strftime("%Y-%m-%d"),
+            # Derive 发布日期 AND 发布时间 from the SAME (base+i) instant so they
+            # stay consistent across a midnight boundary. Previously the date was
+            # pinned to ``base`` while the time advanced by i minutes — when base
+            # sat at 23:5x, records past midnight got time "00:0x" with the prior
+            # day's date, which ``_parse_cls_publish_epoch`` reads as ~24h ago →
+            # dropped by the 24h window → count_24h flaky (<20) near midnight.
+            "发布日期": (base + timedelta(minutes=i)).strftime("%Y-%m-%d"),
             "发布时间": (base + timedelta(minutes=i)).strftime("%H:%M:%S"),
         }
         for i in range(20)
