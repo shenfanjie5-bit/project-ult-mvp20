@@ -24,13 +24,18 @@ from mvp20.derive import (
     derive_historical_quantile,
     derive_overvalued,
     derive_run_up,
+    derive_l6_mult_ev_ebitda,
+    derive_l6_mult_forward_pe,
+    derive_l6_mult_peg,
     derive_l6_path_second_derivative,
     derive_l6_path_tag,
+    derive_l6_priced_news_age,
     derive_l6_priced_run_up_snapshot,
     derive_l6_sens_cashflow,
     derive_l6_sens_growth_margin,
     derive_l6_sens_rates,
     derive_l6_sens_risk_narrative,
+    derive_l6_state_peg_match,
     derive_l7_env_risk_appetite,
     derive_l7_mood_fomo,
     derive_l8_industry_demand_supply,
@@ -201,6 +206,214 @@ def test_l6_sens_risk_narrative():
         surprise={"rating_distribution": {"买入": 40, "Sell": 1}},
     )
     assert "multiplier" in out
+
+
+# ---- L6 valuation multiples (ev_ebitda / forward_pe / peg / peg_match) ----
+#
+# Sanity numbers mirror 688256.SH in runtime/hot.sqlite:
+#   mcap 865.85e9, EBITDA 2.3335e9, cash 1.379e9, debt 0,
+#   eps_avg 11.70, pe_ttm 318.68, revenue yoy 159.56%.
+
+
+def test_l6_mult_ev_ebitda_matches_688256():
+    out = derive_l6_mult_ev_ebitda(
+        mult_pe={"scalar": 318.68, "total_mv_cny": 865850540579.0,
+                 "total_share": 2.7e9},
+        debt_pressure={"ebitda_cny": 2333496610.75},
+        cash_debt={"cash": 1379151407.35, "debt": 0.0},
+    )
+    assert out is not None
+    # EV = mcap + debt - cash; EV/EBITDA ~ 370.
+    assert out["scalar"] == pytest.approx(370.46, abs=0.5)
+    assert out["ev_cny"] == pytest.approx(865850540579.0 - 1379151407.35, abs=1.0)
+
+
+def test_l6_mult_ev_ebitda_subtracts_cash_adds_debt():
+    out = derive_l6_mult_ev_ebitda(
+        mult_pe={"total_mv_cny": 100.0},
+        debt_pressure={"ebitda_cny": 10.0},
+        cash_debt={"cash": 30.0, "debt": 50.0},
+    )
+    # EV = 100 + 50 - 30 = 120; /10 = 12.0
+    assert out["scalar"] == pytest.approx(12.0)
+
+
+def test_l6_mult_ev_ebitda_inactive_when_ebitda_nonpositive_or_missing():
+    assert derive_l6_mult_ev_ebitda(
+        {"total_mv_cny": 1e9}, {"ebitda_cny": 0.0}, {"cash": 0, "debt": 0}) is None
+    assert derive_l6_mult_ev_ebitda(
+        {"total_mv_cny": 1e9}, {"ebitda_cny": -5.0}, None) is None
+    assert derive_l6_mult_ev_ebitda(
+        {"total_mv_cny": 1e9}, {}, None) is None
+    # mcap missing -> Inactive
+    assert derive_l6_mult_ev_ebitda(
+        {"scalar": 10.0}, {"ebitda_cny": 1e9}, None) is None
+    assert derive_l6_mult_ev_ebitda(None, None, None) is None
+
+
+def test_l6_mult_forward_pe_equals_price_over_eps():
+    out = derive_l6_mult_forward_pe(
+        mult_pe={"total_mv_cny": 865850540579.0, "total_share": 2.7e9},
+        fcst_eps={"eps_avg": 11.70111111111111},
+    )
+    assert out is not None
+    price = 865850540579.0 / 2.7e9
+    # Payload fields are rounded to 4 decimals (matches sibling multiples).
+    assert out["price_cny"] == pytest.approx(price, abs=1e-3)
+    assert out["scalar"] == pytest.approx(price / 11.70111111111111, abs=1e-3)
+
+
+def test_l6_mult_forward_pe_inactive_when_eps_nonpositive_or_missing():
+    assert derive_l6_mult_forward_pe(
+        {"total_mv_cny": 1e9, "total_share": 1e6}, {"eps_avg": 0.0}) is None
+    assert derive_l6_mult_forward_pe(
+        {"total_mv_cny": 1e9, "total_share": 1e6}, {"eps_avg": -2.0}) is None
+    # shares missing -> Inactive
+    assert derive_l6_mult_forward_pe(
+        {"total_mv_cny": 1e9}, {"eps_avg": 5.0}) is None
+    assert derive_l6_mult_forward_pe(None, None) is None
+
+
+def test_l6_mult_peg_uses_revenue_yoy_basis():
+    out = derive_l6_mult_peg(
+        mult_pe={"scalar": 318.6816},
+        revenue_growth={"yoy_pct": 159.5554734937324},
+    )
+    assert out is not None
+    # Payload scalar is rounded to 4 decimals.
+    assert out["scalar"] == pytest.approx(318.6816 / 159.5554734937324, abs=1e-4)
+    assert out["scalar"] == pytest.approx(2.0, abs=0.05)
+    assert out["growth_basis"] == "revenue_yoy"
+
+
+def test_l6_mult_peg_inactive_when_growth_or_pe_nonpositive():
+    # PEG undefined for flat/shrinking growth.
+    assert derive_l6_mult_peg({"scalar": 30.0}, {"yoy_pct": 0.0}) is None
+    assert derive_l6_mult_peg({"scalar": 30.0}, {"yoy_pct": -8.0}) is None
+    assert derive_l6_mult_peg({"scalar": -3.0}, {"yoy_pct": 20.0}) is None
+    assert derive_l6_mult_peg({}, {"yoy_pct": 20.0}) is None
+    assert derive_l6_mult_peg(None, None) is None
+
+
+def test_l6_state_peg_match_bands():
+    # PEG < 1.0 => undervalued (+1)
+    cheap = derive_l6_state_peg_match({"scalar": 0.8})
+    assert cheap["band"] == "undervalued"
+    assert cheap["score"] == pytest.approx(1.0)
+    # 1.0 <= PEG <= 2.0 => fair (linear +1 -> -1)
+    fair_lo = derive_l6_state_peg_match({"scalar": 1.0})
+    assert fair_lo["band"] == "fair" and fair_lo["score"] == pytest.approx(1.0)
+    fair_mid = derive_l6_state_peg_match({"scalar": 1.5})
+    assert fair_mid["band"] == "fair" and fair_mid["score"] == pytest.approx(0.0)
+    fair_hi = derive_l6_state_peg_match({"scalar": 2.0})
+    assert fair_hi["band"] == "fair" and fair_hi["score"] == pytest.approx(-1.0)
+    # PEG > 2.0 => expensive (-1)
+    rich = derive_l6_state_peg_match({"scalar": 2.0001})
+    assert rich["band"] == "expensive" and rich["score"] == pytest.approx(-1.0)
+
+
+def test_l6_state_peg_match_inactive_when_peg_missing_or_nonpositive():
+    assert derive_l6_state_peg_match({"scalar": 0.0}) is None
+    assert derive_l6_state_peg_match({"scalar": -1.0}) is None
+    assert derive_l6_state_peg_match({}) is None
+    assert derive_l6_state_peg_match(None) is None
+    # Tolerates a PEG payload carrying the value under "value" instead.
+    assert derive_l6_state_peg_match({"value": 0.5})["band"] == "undervalued"
+
+
+# ---------------------------------------------------------------------------
+# L6.priced.news_age — time-decay discount
+# ---------------------------------------------------------------------------
+
+
+def _ymd_n_days_ago(now_epoch: int, days: int) -> str:
+    from datetime import datetime, timedelta, timezone
+    dt = datetime.fromtimestamp(now_epoch, tz=timezone.utc) - timedelta(days=days)
+    return dt.strftime("%Y%m%d")
+
+
+def test_l6_priced_news_age_fresh_hits_peak():
+    """A same-day announcement is fully fresh => magnitude == damped peak."""
+
+    now = int(time.time())
+    today = _ymd_n_days_ago(now, 0)
+    out = derive_l6_priced_news_age(
+        {"top_announcements": [{"ann_date": today, "type": None}],
+         "count_recent": 4},
+        now,
+    )
+    assert out is not None
+    assert out["age_days"] == 0
+    # Calibration (FU-2): peak damped to 0.6, NOT 1.0.
+    assert out["scalar"] == pytest.approx(0.6, abs=1e-6)
+    assert out["peak"] == 0.6
+    assert out["halflife_days"] == 30.0
+    assert out["latest_ann_date"] == today
+    assert out["count_recent"] == 4
+
+
+def test_l6_priced_news_age_halflife_and_decay_to_zero():
+    """~30 days => half the peak; ~90 days => decayed toward 0 (<= ~0.1)."""
+
+    now = int(time.time())
+    mid = derive_l6_priced_news_age(
+        {"top_announcements": [{"ann_date": _ymd_n_days_ago(now, 30)}]}, now)
+    assert mid["age_days"] == 30
+    # half-life: 0.6 * 0.5 = 0.3
+    assert mid["scalar"] == pytest.approx(0.3, abs=1e-3)
+
+    old = derive_l6_priced_news_age(
+        {"top_announcements": [{"ann_date": _ymd_n_days_ago(now, 90)}]}, now)
+    assert old["age_days"] == 90
+    # 0.6 * 0.5**3 = 0.075 — small, does not saturate the cluster.
+    assert old["scalar"] == pytest.approx(0.075, abs=1e-3)
+    assert old["scalar"] < 0.1
+
+
+def test_l6_priced_news_age_picks_freshest_and_skips_unparseable_first():
+    """Most-recent-first list whose first item lacks a parseable date still
+    decays off the freshest *parseable* ann_date."""
+
+    now = int(time.time())
+    d10 = _ymd_n_days_ago(now, 10)
+    d40 = _ymd_n_days_ago(now, 40)
+    out = derive_l6_priced_news_age(
+        {"top_announcements": [
+            {"ann_date": None},          # unparseable first item
+            {"ann_date": d10},           # freshest parseable
+            {"ann_date": d40},
+        ]},
+        now,
+    )
+    assert out["age_days"] == 10
+    assert out["latest_ann_date"] == d10
+
+
+def test_l6_priced_news_age_inactive_paths():
+    now = int(time.time())
+    # No payload at all.
+    assert derive_l6_priced_news_age(None, now) is None
+    # Empty / missing announcement list.
+    assert derive_l6_priced_news_age({"count_recent": 0}, now) is None
+    assert derive_l6_priced_news_age({"top_announcements": []}, now) is None
+    # All ann_dates unparseable => Inactive.
+    assert derive_l6_priced_news_age(
+        {"top_announcements": [{"ann_date": "n/a"}, {"ann_date": "2026"}]}, now
+    ) is None
+
+
+def test_l6_priced_news_age_uses_as_of_when_now_absent():
+    """When the runner `now` is not supplied, "today" falls back to the
+    payload `as_of` so the decay stays deterministic in standalone use."""
+
+    as_of = "20260603"
+    # Announcement 11 days before as_of (mirrors 688256.SH: 20260523).
+    out = derive_l6_priced_news_age(
+        {"top_announcements": [{"ann_date": "20260523"}], "as_of": as_of})
+    assert out is not None
+    assert out["age_days"] == 11
+    # 0.6 * 0.5**(11/30) ≈ 0.465
+    assert out["scalar"] == pytest.approx(0.6 * 0.5 ** (11 / 30), abs=1e-3)
 
 
 def test_l11_short_score_weighted():
@@ -491,6 +704,169 @@ def test_derive_runner_inactive_when_inputs_missing(tmp_path: Path):
         if status == "Inactive":
             payload = json.loads(payload_json)
             assert payload.get("_inactive") is True
+
+
+def test_derive_runner_emits_l6_valuation_multiples(tmp_path: Path):
+    """End-to-end: the 4 valuation multiples are emitted Known by DeriveRunner.
+
+    Critically, EBITDA lives in ``L8.fin.debt_pressure`` which is persisted
+    ``Inactive`` for low-leverage names (the common case). This test seeds it
+    Inactive and asserts ``L6.mult.ev_ebitda`` still computes — exercising the
+    ``_INACTIVE_TOLERANT_INPUTS`` fallback in the runner. Numbers mirror
+    688256.SH.
+    """
+
+    db = tmp_path / "mult.sqlite"
+    init_db(db)
+    now = int(time.time())
+    upsert_realtime(db, [
+        # L6.mult.pe carries mcap + shares (persisted by the daily_basic
+        # collector, PART A).
+        ("688256.SH", "L6.mult.pe",
+         {"scalar": 318.6816, "unit": "ratio", "ttm": True,
+          "total_mv_cny": 865850540579.0, "total_share": 2.7e9},
+         "Known", 0.7, "tushare:daily_basic", now),
+        # EBITDA carrier persisted INACTIVE (no leverage alert) — must still
+        # be read by ev_ebitda via the inactive-tolerant fallback.
+        ("688256.SH", "L8.fin.debt_pressure",
+         {"ebitda_cny": 2333496610.75, "alert_severity": None,
+          "interest_debt_to_ebitda": 0.0},
+         "Inactive", 0.5, "tushare:balancesheet+fina_indicator.derived", now),
+        ("688256.SH", "L5.bs.cash_debt",
+         {"cash": 1379151407.35, "debt": 0.0, "net": 1379151407.35},
+         "Known", 0.85, "tushare:balancesheet", now),
+        ("688256.SH", "L5.fcst.eps_cf",
+         {"eps_avg": 11.70111111111111}, "Known", 0.8, "tushare:report_rc", now),
+        ("688256.SH", "L5.is.revenue_growth",
+         {"yoy_pct": 159.5554734937324}, "Known", 0.8, "tushare:income.derived", now),
+    ])
+
+    runner = DeriveRunner(db)
+    runner.run_all(["688256.SH"])
+
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        rows = conn.execute(
+            """SELECT dp_id, data_status, source, value_json
+                 FROM realtime_current
+                WHERE ts_code = '688256.SH' AND source LIKE 'derive:%'"""
+        ).fetchall()
+    by_dp = {r[0]: (r[1], r[2], r[3]) for r in rows}
+
+    for dp in ("L6.mult.ev_ebitda", "L6.mult.forward_pe",
+               "L6.mult.peg", "L6.state.peg_match"):
+        assert dp in by_dp, f"{dp} not emitted"
+        status, source, _ = by_dp[dp]
+        assert status == "Known", f"{dp} status={status}"
+        assert source == f"derive:{dp.replace('.', '_').lower()}"
+
+    ev = json.loads(by_dp["L6.mult.ev_ebitda"][2])
+    assert ev["scalar"] == pytest.approx(370.46, abs=0.5)
+
+    fpe = json.loads(by_dp["L6.mult.forward_pe"][2])
+    assert fpe["scalar"] == pytest.approx(
+        (865850540579.0 / 2.7e9) / 11.70111111111111, abs=1e-3)
+
+    peg = json.loads(by_dp["L6.mult.peg"][2])
+    assert peg["scalar"] == pytest.approx(2.0, abs=0.05)
+    assert peg["growth_basis"] == "revenue_yoy"
+
+    pm = json.loads(by_dp["L6.state.peg_match"][2])
+    assert pm["band"] == "fair"  # PEG ~ 2.0
+    assert -1.0 <= pm["score"] <= 1.0
+
+
+def test_derive_runner_l6_multiples_inactive_when_inputs_missing(tmp_path: Path):
+    """Without mcap/EBITDA/eps/growth, the 4 multiples emit Inactive."""
+
+    db = tmp_path / "mult_empty.sqlite"
+    init_db(db)
+    now = int(time.time())
+    # Seed only a bare PE scalar (no mcap/shares, no EBITDA, no eps, no growth).
+    upsert_realtime(db, [
+        ("000001.SZ", "L6.mult.pe",
+         {"scalar": 8.5, "unit": "ratio", "ttm": True},
+         "Known", 0.7, "tushare:daily_basic", now),
+    ])
+
+    runner = DeriveRunner(db)
+    runner.run_all(["000001.SZ"])
+
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        rows = conn.execute(
+            """SELECT dp_id, data_status, value_json FROM realtime_current
+                WHERE ts_code = '000001.SZ' AND source LIKE 'derive:%'"""
+        ).fetchall()
+    by_dp = {r[0]: (r[1], r[2]) for r in rows}
+
+    for dp in ("L6.mult.ev_ebitda", "L6.mult.forward_pe",
+               "L6.mult.peg", "L6.state.peg_match"):
+        assert dp in by_dp, f"{dp} not emitted"
+        status, payload_json = by_dp[dp]
+        assert status == "Inactive", f"{dp} expected Inactive, got {status}"
+        assert json.loads(payload_json).get("_inactive") is True
+
+
+def test_derive_runner_emits_news_age_with_injected_now(tmp_path: Path):
+    """End-to-end: DeriveRunner injects its `now` into L6.priced.news_age so a
+    recent announcement decays off the runner clock (not a hardcoded date)."""
+
+    from datetime import datetime, timedelta, timezone
+
+    db = tmp_path / "news.sqlite"
+    init_db(db)
+    now = int(time.time())
+    ann_date = (datetime.fromtimestamp(now, tz=timezone.utc)
+                - timedelta(days=10)).strftime("%Y%m%d")
+    upsert_realtime(db, [
+        ("300308.SZ", "L9.event.intraday_announcement",
+         {"count_recent": 3,
+          "top_announcements": [{"title": "x", "type": None,
+                                 "ann_date": ann_date, "url": None}],
+          "as_of": "1970-01-01T00:00:00Z"},  # stale as_of must be ignored
+         "Known", 0.65, "tushare:anns_d", now),
+    ])
+
+    runner = DeriveRunner(db)
+    runner.run_all(["300308.SZ"])
+
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        row = conn.execute(
+            """SELECT data_status, value_json FROM realtime_current
+                WHERE ts_code = '300308.SZ' AND dp_id = 'L6.priced.news_age'"""
+        ).fetchone()
+    assert row is not None, "L6.priced.news_age not emitted"
+    status, payload_json = row
+    assert status == "Known"
+    payload = json.loads(payload_json)
+    # Decay measured off the *runner* now => age == 10 (not from stale as_of).
+    assert payload["age_days"] == 10
+    assert payload["scalar"] == pytest.approx(0.6 * 0.5 ** (10 / 30), abs=1e-3)
+    assert 0.0 < payload["scalar"] <= 0.6
+
+
+def test_derive_runner_news_age_inactive_when_no_announcement(tmp_path: Path):
+    """No intraday_announcement row => L6.priced.news_age emits Inactive."""
+
+    db = tmp_path / "news_empty.sqlite"
+    init_db(db)
+    now = int(time.time())
+    upsert_realtime(db, [
+        ("300308.SZ", "L6.mult.pe",
+         {"scalar": 20.0, "unit": "ratio"}, "Known", 0.7, "tushare:daily_basic", now),
+    ])
+
+    runner = DeriveRunner(db)
+    runner.run_all(["300308.SZ"])
+
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
+        row = conn.execute(
+            """SELECT data_status, value_json FROM realtime_current
+                WHERE ts_code = '300308.SZ' AND dp_id = 'L6.priced.news_age'"""
+        ).fetchone()
+    assert row is not None, "L6.priced.news_age not emitted"
+    status, payload_json = row
+    assert status == "Inactive"
+    assert json.loads(payload_json).get("_inactive") is True
 
 
 # ---------------------------------------------------------------------------

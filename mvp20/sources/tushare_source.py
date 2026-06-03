@@ -118,6 +118,7 @@ SUPPORTED_DP_IDS = {
     "L9.macro.liquidity",         # cn_m event-shaped when M2 yoy shifts
     "L9.macro.cpi_employment",    # cn_cpi + cn_ppi
     "L7.env.market_trend",         # index_daily market benchmark trend
+    "L7.env.style",                # index_daily 成长 vs 价值 regime tilt (MARKET:CN)
     "L10.val.historical_quantile",  # market-wide PE_ttm quantile from daily_basic
     "L10.industry.fund_flow",     # moneyflow_ind_ths per active industry
     # ── akshare-replacement batch (8 dp_ids moved off akshare onto permitted
@@ -1316,7 +1317,7 @@ def fetch_batch(
             df = pro.daily_basic(
                 trade_date=trade_date,
                 fields=("ts_code,trade_date,close,turnover_rate,pe_ttm,pb,"
-                        "volume_ratio,ps_ttm,total_mv"),
+                        "volume_ratio,ps_ttm,total_mv,total_share"),
             )
             if df is not None and len(df) > 0:
                 # Filter to universe
@@ -1345,6 +1346,7 @@ def fetch_batch(
             pb = _safe(rec, "pb")
             ps = _safe(rec, "ps_ttm")
             total_mv = _safe(rec, "total_mv")
+            total_share = _safe(rec, "total_share")
             turnover_rate = _safe(rec, "turnover_rate")
             volume_ratio = _safe(rec, "volume_ratio")
             trade_date = rec.get("trade_date")
@@ -1357,15 +1359,27 @@ def fetch_batch(
 
             # spec-aligned: L6.mult.pe / L6.mult.pb / L6.mult.ps
             # (was L6.priced.intraday_*)
+            # The L6.mult.pe payload also carries mcap + share count so the
+            # snapshot-derive layer can compute EV/EBITDA and forward P/E
+            # without re-pulling daily_basic. Tushare daily_basic reports
+            # ``total_mv`` in 万元 and ``total_share`` in 万股 — we convert both
+            # to base units (元 and raw shares, ×10000) so the persisted keys
+            # are unit-unambiguous. (See derive.py: derive_l6_mult_ev_ebitda /
+            # derive_l6_mult_forward_pe.)
             for dp_id, val in (("L6.mult.pe", pe), ("L6.mult.pb", pb),
                                 ("L6.mult.ps", ps)):
                 if val is None:
                     continue
+                payload = {"scalar": float(val), "unit": "ratio",
+                           "ttm": True, "trade_date": trade_date}
+                if dp_id == "L6.mult.pe":
+                    if total_mv is not None:
+                        payload["total_mv_cny"] = float(total_mv) * 10000.0
+                    if total_share is not None:
+                        payload["total_share"] = float(total_share) * 10000.0
                 rows.append((
                     ts_code, dp_id,
-                    json.dumps({"scalar": float(val), "unit": "ratio",
-                                "ttm": True, "trade_date": trade_date},
-                               ensure_ascii=False),
+                    json.dumps(payload, ensure_ascii=False),
                     "Known", 0.7, "tushare:daily_basic", now,
                 ))
             # spec L7.trade.volume_turnover bundles turnover_rate + volume_ratio
@@ -1622,7 +1636,7 @@ def fetch_core_batch(
             df = pro.daily_basic(
                 trade_date=trade_date,
                 fields=("ts_code,trade_date,close,turnover_rate,pe_ttm,pb,"
-                        "volume_ratio,ps_ttm,total_mv"),
+                        "volume_ratio,ps_ttm,total_mv,total_share"),
             )
             if df is not None and len(df) > 0:
                 df = df[df["ts_code"].isin(a_codes_set)]
@@ -1642,19 +1656,30 @@ def fetch_core_batch(
             pe = _safe(rec, "pe_ttm")
             pb = _safe(rec, "pb")
             ps = _safe(rec, "ps_ttm")
+            total_mv = _safe(rec, "total_mv")
+            total_share = _safe(rec, "total_share")
             turnover_rate = _safe(rec, "turnover_rate")
             volume_ratio = _safe(rec, "volume_ratio")
             trade_date = rec.get("trade_date")
 
+            # L6.mult.pe payload carries mcap + share count (both in base units:
+            # `total_mv_cny` 元 = total_mv万元 ×10000, `total_share` raw shares =
+            # total_share万股 ×10000) for the snapshot-derive layer — see
+            # derive_l6_mult_ev_ebitda / derive_l6_mult_forward_pe.
             for dp_id, val in (("L6.mult.pe", pe), ("L6.mult.pb", pb),
                                ("L6.mult.ps", ps)):
                 if val is None:
                     continue
+                payload = {"scalar": float(val), "unit": "ratio",
+                           "ttm": True, "trade_date": trade_date}
+                if dp_id == "L6.mult.pe":
+                    if total_mv is not None:
+                        payload["total_mv_cny"] = float(total_mv) * 10000.0
+                    if total_share is not None:
+                        payload["total_share"] = float(total_share) * 10000.0
                 rows.append((
                     ts_code, dp_id,
-                    json.dumps({"scalar": float(val), "unit": "ratio",
-                                "ttm": True, "trade_date": trade_date},
-                               ensure_ascii=False),
+                    json.dumps(payload, ensure_ascii=False),
                     "Known", 0.7, "tushare:daily_basic", now,
                 ))
             if turnover_rate is not None or volume_ratio is not None:
@@ -1830,6 +1855,7 @@ def fetch_market_env_batch(
     rows: list[tuple] = []
     for label, fn in (
         ("market_trend", _emit_market_trend),
+        ("market_style", _emit_market_style),
         ("passive_northbound", _emit_passive_northbound),
     ):
         try:
@@ -2425,14 +2451,27 @@ def _fetch_a_share_financials(
                         }, ensure_ascii=False),
                         "Known", 0.85, "tushare:balancesheet", now,
                     ))
-                if goodwill is not None or fix_assets is not None:
+                # B1: Tushare reports the 商誉 (goodwill) line as null when the
+                # company carries no goodwill — common for organically-grown /
+                # fabless names (e.g. 寒武纪 688256). That is "zero goodwill", not
+                # "unknown": so when the balance sheet was fetched (total_assets
+                # present) treat a missing goodwill as 0 so goodwill_to_assets=0
+                # (clean, no impairment risk) reaches fundamental_score via the
+                # aggregator's ``-clip(gw*2.5)`` consumer, instead of being
+                # dropped as missing (a silent coverage gap). ``fix_assets`` is
+                # left as-is (None stays None — not imputable).
+                goodwill_eff = goodwill if goodwill is not None else (
+                    0.0 if total_assets else None
+                )
+                if goodwill_eff is not None or fix_assets is not None:
                     rows.append((
                         ts_code, "L5.bs.goodwill_ppe",
                         json.dumps({
-                            "goodwill": float(goodwill) if goodwill is not None else None,
+                            "goodwill": float(goodwill_eff) if goodwill_eff is not None else None,
                             "fix_assets_ppe": float(fix_assets) if fix_assets is not None else None,
-                            "goodwill_to_assets": (goodwill / total_assets) if (goodwill is not None and total_assets) else None,
+                            "goodwill_to_assets": (goodwill_eff / total_assets) if (goodwill_eff is not None and total_assets) else None,
                             "unit": "元", "period": period,
+                            "goodwill_imputed_zero": goodwill is None and total_assets is not None,
                         }, ensure_ascii=False),
                         "Known", 0.85, "tushare:balancesheet", now,
                     ))
@@ -3994,6 +4033,16 @@ _CN_MARKET_TREND_INDEXES = (
     ("chinext", "399006.SZ", "创业板指"),
 )
 
+# Growth-vs-value style pair for the MARKET:CN ``L7.env.style`` sentinel.
+# 巨潮/国证 成长 vs 价值 indices: probed read-only via ``index_daily`` and
+# confirmed to return ~60 trading days of data on the current Tushare tier
+# (the 沪深300 成长/价值 pair 000918.SH / 000919.SH returned 0 rows, so it is
+# NOT used). ``growth_minus_value`` = growth_20d_ret − value_20d_ret, both as
+# decimal ratios, which keeps the tilt naturally small (observed ~+0.05).
+_CN_STYLE_GROWTH = ("399370.SZ", "国证成长")
+_CN_STYLE_VALUE = ("399371.SZ", "国证价值")
+_CN_STYLE_WINDOW_DAYS = 20
+
 
 def _ratio_change(first: float | None, last: float | None) -> float | None:
     try:
@@ -4108,6 +4157,100 @@ def _emit_market_trend(pro, now: int) -> list[tuple]:
         "MARKET:CN", "L7.env.market_trend",
         json.dumps(payload, ensure_ascii=False),
         "Known", 0.8, "tushare:index_daily", now,
+    )]
+
+
+def _index_window_return(pro, ts_code: str, start: str, end: str,
+                         window: int) -> tuple[float | None, str | None]:
+    """Return ``(window-day decimal return, latest_trade_date)`` for one index.
+
+    Mirrors the close-window math in ``_market_index_payload`` but for a single
+    configurable window (``_CN_STYLE_WINDOW_DAYS``). Returns ``(None, None)``
+    when the index returns no data or has too few closes for the window.
+    """
+
+    try:
+        df = pro.index_daily(
+            ts_code=ts_code,
+            start_date=start,
+            end_date=end,
+            fields="ts_code,trade_date,close,pct_chg,vol,amount",
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] index_daily %s failed: %s", ts_code, e)
+        return None, None
+    if df is None or len(df) == 0:
+        return None, None
+    records = df.to_dict(orient="records")
+    records.sort(key=lambda r: r.get("trade_date") or "", reverse=True)
+    closes = [
+        _safe_num(r.get("close")) for r in records
+        if _safe_num(r.get("close")) is not None
+    ]
+    if len(closes) <= window:
+        return None, str(records[0].get("trade_date") or "") or None
+    ret = _ratio_change(closes[window], closes[0])
+    return ret, str(records[0].get("trade_date") or "") or None
+
+
+def _emit_market_style(pro, now: int) -> list[tuple]:
+    """``L7.env.style`` — MARKET:CN growth-vs-value regime via index_daily.
+
+    Emits a ``market_regime_multiplier`` tilt the consumer
+    ``derive_l7_env_risk_appetite`` reads via ``style.growth_minus_value``:
+
+        growth_minus_value = growth_index_20d_ret − value_index_20d_ret
+
+    Both legs are ~20-trading-day decimal returns of the 国证成长 (399370.SZ)
+    vs 国证价值 (399371.SZ) indices, so the difference is a small tilt
+    (typically within roughly [-0.2, +0.2]); no extra scaling is applied. A
+    positive value = growth leading (risk-on tilt), negative = value leading.
+    Inactive when either index leg is unavailable.
+    """
+
+    start = _previous_n_days(90)
+    end = _today_yyyymmdd()
+    growth_code, growth_name = _CN_STYLE_GROWTH
+    value_code, value_name = _CN_STYLE_VALUE
+    window = _CN_STYLE_WINDOW_DAYS
+
+    growth_ret, growth_date = _index_window_return(pro, growth_code, start, end, window)
+    value_ret, value_date = _index_window_return(pro, value_code, start, end, window)
+
+    if growth_ret is None or value_ret is None:
+        return [(
+            "MARKET:CN", "L7.env.style",
+            json.dumps({"reason": "index_unavailable",
+                        "growth_code": growth_code,
+                        "value_code": value_code},
+                       ensure_ascii=False),
+            "Inactive", 0.0, "tushare:index_daily", now,
+        )]
+
+    gmv = float(growth_ret) - float(value_ret)
+    latest_dates = [d for d in (growth_date, value_date) if d]
+    payload = {
+        "growth_minus_value": gmv,
+        "scalar": gmv,
+        "growth_code": growth_code,
+        "growth_name": growth_name,
+        "value_code": value_code,
+        "value_name": value_name,
+        "window_days": window,
+        "growth_ret": float(growth_ret),
+        "value_ret": float(value_ret),
+        "regime": (
+            "growth" if gmv >= 0.02 else
+            "value" if gmv <= -0.02 else
+            "balanced"
+        ),
+        "latest_date": max(latest_dates) if latest_dates else None,
+        "scope": "A_share_market",
+    }
+    return [(
+        "MARKET:CN", "L7.env.style",
+        json.dumps(payload, ensure_ascii=False),
+        "Known", 0.75, "tushare:index_daily", now,
     )]
 
 

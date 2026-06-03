@@ -77,6 +77,7 @@ class _StubPro:
     def balancesheet(self, **kw):    return self._dispatch("balancesheet", **kw)
     def cashflow(self, **kw):        return self._dispatch("cashflow", **kw)
     def income(self, **kw):          return self._dispatch("income", **kw)
+    def index_daily(self, **kw):     return self._dispatch("index_daily", **kw)
 
 
 @pytest.fixture(autouse=True)
@@ -876,3 +877,182 @@ def test_revenue_growth_dedups_duplicate_end_date_filings() -> None:
     # twin → clearly non-zero: (259.55-240)/240*100 = 8.1458.
     assert payload["qoq_pct"] == pytest.approx(8.1458, abs=0.01)
     assert payload["qoq_pct"] != 0.0
+
+
+class _BalanceOnlyPro:
+    """Minimal ``pro`` stub serving a canned balancesheet, None elsewhere."""
+
+    def __init__(self, bs_records: list[dict[str, Any]]):
+        self._bs = _StubDF(bs_records)
+
+    def income(self, **kw):        return None
+    def cashflow(self, **kw):      return None
+    def balancesheet(self, **kw):  return self._bs
+    def dividend(self, **kw):      return None
+    def daily_basic(self, **kw):   return None
+
+
+def _goodwill_payload(rows: list[tuple]) -> dict:
+    matches = [r for r in rows if r[1] == "L5.bs.goodwill_ppe"]
+    assert len(matches) == 1, f"expected one goodwill_ppe row, got {len(matches)}"
+    return json.loads(matches[0][2])
+
+
+def test_goodwill_ppe_imputes_zero_when_null_and_balancesheet_present() -> None:
+    """B1: a null 商誉 line on a fetched balance sheet (total_assets present)
+    means "zero goodwill" (organically-grown / fabless name), not "unknown".
+    Impute 0 so goodwill_to_assets=0 (clean, no impairment risk) reaches
+    fundamental_score instead of being dropped as missing.
+    """
+
+    bs = _balancesheet_records("20260331", total_assets=1000.0,
+                               goodwill=None, fix_assets=200.0)
+    rows = tushare_source._fetch_a_share_financials(
+        _BalanceOnlyPro(bs), ["688256.SH"], now=1_700_000_000,
+    )
+    payload = _goodwill_payload(rows)
+    assert payload["goodwill"] == 0.0
+    assert payload["goodwill_to_assets"] == 0.0
+    assert payload["goodwill_imputed_zero"] is True
+
+
+def test_goodwill_ppe_not_imputed_without_balancesheet() -> None:
+    """B1 guard: with no total_assets (balance sheet absent / unfetched) and
+    no fix_assets, we must NOT fabricate a 0 goodwill — emit nothing.
+    """
+
+    bs = _balancesheet_records("20260331", goodwill=None)  # no total_assets
+    rows = tushare_source._fetch_a_share_financials(
+        _BalanceOnlyPro(bs), ["688256.SH"], now=1_700_000_000,
+    )
+    assert [r for r in rows if r[1] == "L5.bs.goodwill_ppe"] == []
+
+
+# ---------------------------------------------------------------------------
+# B4: L7.env.style — MARKET:CN growth-vs-value regime via index_daily
+# ---------------------------------------------------------------------------
+
+
+def _index_daily_frame(code: str, total_pct_over_window: float,
+                       n: int = 25) -> _StubDF:
+    """Synthetic ``index_daily`` frame: ``n`` daily closes whose close[window]
+    -> close[0] move equals ``total_pct_over_window`` (a decimal ratio), so the
+    ~20-day window return is exactly that value. Dates are most-recent-first.
+    """
+
+    window = tushare_source._CN_STYLE_WINDOW_DAYS
+    base = 100.0
+    # close at `window` bars ago = base; latest (index 0) = base*(1+ret).
+    latest = base * (1.0 + total_pct_over_window)
+    records = []
+    for i in range(n):
+        # Linear interpolation between latest (i=0) and base (i=window);
+        # beyond the window the exact value is irrelevant to the window return.
+        if i <= window:
+            close = latest + (base - latest) * (i / window)
+        else:
+            close = base
+        # trade_date descending so the helper's reverse-sort is exercised.
+        day = n - i
+        records.append({
+            "ts_code": code,
+            "trade_date": f"202605{day:02d}",
+            "close": round(close, 6),
+            "pct_chg": 0.0,
+        })
+    return _StubDF(records)
+
+
+def test_emit_market_style_growth_minus_value() -> None:
+    """Growth +8% vs value -4% over 20 trading days => gmv ≈ +0.12, a small
+    tilt; MARKET:CN row emitted Known with the documented payload keys."""
+
+    growth_code = tushare_source._CN_STYLE_GROWTH[0]
+    value_code = tushare_source._CN_STYLE_VALUE[0]
+
+    def _index_daily(ts_code, **_kw):
+        if ts_code == growth_code:
+            return _index_daily_frame(growth_code, 0.08)
+        if ts_code == value_code:
+            return _index_daily_frame(value_code, -0.04)
+        return _StubDF([])
+
+    pro = _StubPro(index_daily=_index_daily)
+    rows = tushare_source._emit_market_style(pro, now=1_700_000_000)
+    assert len(rows) == 1
+    ts_code, dp_id, value_json, status, conf, source, _now = rows[0]
+    assert ts_code == "MARKET:CN"
+    assert dp_id == "L7.env.style"
+    assert status == "Known"
+    assert source == "tushare:index_daily"
+
+    payload = json.loads(value_json)
+    assert payload["growth_ret"] == pytest.approx(0.08, abs=1e-6)
+    assert payload["value_ret"] == pytest.approx(-0.04, abs=1e-6)
+    # The consumer reads style.get("growth_minus_value").
+    assert payload["growth_minus_value"] == pytest.approx(0.12, abs=1e-6)
+    assert payload["scalar"] == pytest.approx(0.12, abs=1e-6)
+    # Small tilt: well within the documented [-0.2, +0.2] band.
+    assert -0.2 <= payload["growth_minus_value"] <= 0.2
+    assert payload["regime"] == "growth"
+    assert payload["window_days"] == tushare_source._CN_STYLE_WINDOW_DAYS
+    assert payload["growth_code"] == growth_code
+    assert payload["value_code"] == value_code
+
+
+def test_emit_market_style_value_leading_negative_tilt() -> None:
+    """Value leg outperforming => negative growth_minus_value, regime=value."""
+
+    growth_code = tushare_source._CN_STYLE_GROWTH[0]
+    value_code = tushare_source._CN_STYLE_VALUE[0]
+
+    def _index_daily(ts_code, **_kw):
+        if ts_code == growth_code:
+            return _index_daily_frame(growth_code, -0.03)
+        if ts_code == value_code:
+            return _index_daily_frame(value_code, 0.05)
+        return _StubDF([])
+
+    rows = tushare_source._emit_market_style(
+        _StubPro(index_daily=_index_daily), now=1)
+    payload = json.loads(rows[0][2])
+    assert payload["growth_minus_value"] == pytest.approx(-0.08, abs=1e-6)
+    assert payload["regime"] == "value"
+
+
+def test_emit_market_style_inactive_when_index_missing() -> None:
+    """If either index leg returns no data, emit a single Inactive MARKET:CN
+    row (mirrors _emit_market_trend's no-data behaviour)."""
+
+    growth_code = tushare_source._CN_STYLE_GROWTH[0]
+
+    def _index_daily(ts_code, **_kw):
+        # Growth returns data, value returns nothing.
+        if ts_code == growth_code:
+            return _index_daily_frame(growth_code, 0.08)
+        return _StubDF([])
+
+    rows = tushare_source._emit_market_style(
+        _StubPro(index_daily=_index_daily), now=42)
+    assert len(rows) == 1
+    ts_code, dp_id, value_json, status, _conf, source, now = rows[0]
+    assert ts_code == "MARKET:CN"
+    assert dp_id == "L7.env.style"
+    assert status == "Inactive"
+    assert source == "tushare:index_daily"
+    assert now == 42
+    assert json.loads(value_json)["reason"] == "index_unavailable"
+
+
+def test_emit_market_style_inactive_when_index_daily_errors() -> None:
+    """index_daily raising is isolated per-leg => Inactive, no exception."""
+
+    rows = tushare_source._emit_market_style(
+        _StubPro(index_daily=RuntimeError("boom")), now=7)
+    assert len(rows) == 1
+    assert rows[0][3] == "Inactive"
+    assert json.loads(rows[0][2])["reason"] == "index_unavailable"
+
+
+def test_market_style_dp_id_in_supported_set() -> None:
+    assert "L7.env.style" in tushare_source.SUPPORTED_DP_IDS

@@ -102,6 +102,45 @@ def test_fetch_core_batch_emits_fast_market_and_flow_rows(monkeypatch):
     assert payload["turnover_rate_pct"] == 1.2
 
 
+def test_fetch_core_batch_pe_payload_carries_mcap_and_shares(monkeypatch):
+    """L6.mult.pe payload should carry mcap + share count in base units.
+
+    Tushare daily_basic reports total_mv in 万元 and total_share in 万股;
+    the collector converts both to base units (×10000) so the snapshot-derive
+    layer can compute EV/EBITDA and forward P/E.
+    """
+
+    class _MvPro(_StubPro):
+        def daily_basic(self, **_kw):
+            return _StubDF([
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260526",
+                    "pe_ttm": 8.5,
+                    "pb": 0.7,
+                    "ps_ttm": 1.1,
+                    "total_mv": 86585.0,      # 万元
+                    "total_share": 1234.0,    # 万股
+                },
+            ])
+
+    monkeypatch.setattr(tushare_source, "_get_pro_api", lambda: _MvPro())
+    rows = tushare_source.fetch_core_batch([{"ts_code": "000001.SZ"}], tick=0)
+    by_dp = {r[1]: r for r in rows}
+
+    pe_payload = json.loads(by_dp["L6.mult.pe"][2])
+    assert pe_payload["scalar"] == 8.5
+    assert pe_payload["total_mv_cny"] == 86585.0 * 10000.0
+    assert pe_payload["total_share"] == 1234.0 * 10000.0
+    # mcap / shares should yield a sane per-share price.
+    price = pe_payload["total_mv_cny"] / pe_payload["total_share"]
+    assert price == 86585.0 / 1234.0
+    # pb / ps payloads must NOT carry the mcap/share keys.
+    pb_payload = json.loads(by_dp["L6.mult.pb"][2])
+    assert "total_mv_cny" not in pb_payload
+    assert "total_share" not in pb_payload
+
+
 def test_fetch_core_batch_hk_hold_falls_back_to_recent_trade_day(monkeypatch):
     class _FallbackPro(_StubPro):
         def __init__(self):
@@ -196,6 +235,14 @@ def test_fetch_market_env_batch_isolates_sentinel_fetchers(monkeypatch):
     )
     monkeypatch.setattr(
         tushare_source,
+        "_emit_market_style",
+        lambda pro, now: [(
+            "MARKET:CN", "L7.env.style", "{}", "Known", 0.75,
+            "tushare:index_daily", now,
+        )],
+    )
+    monkeypatch.setattr(
+        tushare_source,
         "_emit_passive_northbound",
         lambda pro, now: [(
             "MARKET:CN", "L7.flow.passive_northbound", "{}", "Known", 0.8,
@@ -207,5 +254,6 @@ def test_fetch_market_env_batch_isolates_sentinel_fetchers(monkeypatch):
 
     assert {r[1] for r in rows} == {
         "L7.env.market_trend",
+        "L7.env.style",
         "L7.flow.passive_northbound",
     }

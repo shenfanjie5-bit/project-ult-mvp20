@@ -67,6 +67,7 @@ import math
 import os
 import sqlite3
 import statistics
+import inspect
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,6 +76,15 @@ from typing import Any, Callable, Iterable, Mapping
 log = logging.getLogger("mvp20.derive")
 
 DEFAULT_TUSHARE_TIMEOUT_SECONDS = 10.0
+
+# L6.priced.news_age time-decay calibration.
+#   * HALFLIFE: a catalyst loses ~half its priced-in magnitude every ~30
+#     calendar days, decaying to ~0 by ~90 days (exp(-90/30) ≈ 0.05).
+#   * PEAK: routine A-share filings are common and the priced_in_discount
+#     cluster is already strong, so we damp the freshest-announcement peak to
+#     0.6 rather than letting it auto-saturate at 1.0 (FU-2 calibration).
+_NEWS_AGE_HALFLIFE_DAYS = 30.0
+_NEWS_AGE_PEAK = 0.6
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +536,109 @@ def derive_l6_priced_run_up_snapshot(
         "source": "L5.surprise.preprice",
     }
     return payload
+
+
+def _parse_yyyymmdd_to_epoch_day(value: Any) -> int | None:
+    """Parse a ``"YYYYMMDD"`` string into a UTC day-ordinal (days since epoch).
+
+    Returns ``None`` for anything that does not parse as an 8-digit calendar
+    date. Used by the news-age decay to compute whole-day deltas without
+    intra-day jitter.
+    """
+
+    if value is None:
+        return None
+    s = str(value).strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        dt = datetime.strptime(s, "%Y%m%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return int(dt.timestamp() // 86400)
+
+
+def derive_l6_priced_news_age(
+    intraday_announcement: Mapping[str, Any] | None,
+    now: int | None = None,
+) -> dict | None:
+    """L6.priced.news_age — time-decayed "still being priced-in" discount.
+
+    A FRESH catalyst/announcement is still being absorbed by the market
+    (higher magnitude); the discount DECAYS toward 0 as the news ages. The
+    magnitude ∈ [0, _NEWS_AGE_PEAK] feeds the ``priced_in_discount`` cluster.
+
+    Inputs come from ``L9.event.intraday_announcement`` whose payload carries
+    ``top_announcements`` (most-recent-first; each item has ``ann_date`` as a
+    ``"YYYYMMDD"`` string) and ``count_recent``. We take the freshest parseable
+    ``ann_date`` as the catalyst date.
+
+    Formula (exponential decay, half-life ≈ 30 calendar days)::
+
+        age_days  = max(0, today − latest_ann_date)
+        magnitude = _NEWS_AGE_PEAK * 0.5 ** (age_days / _NEWS_AGE_HALFLIFE_DAYS)
+
+    Calibration (FU-2): the peak is damped to ``_NEWS_AGE_PEAK`` (0.6) rather
+    than 1.0 so routine filings — the common case, and ``type`` is usually
+    null so we cannot upweight only material ones — do not auto-saturate an
+    already-strong priced_in_discount cluster. A same-day announcement scores
+    0.6; ~30d → 0.3; ~90d → ~0.075; the result is clipped to [0, 1].
+
+    "today" is taken from the runner's ``now`` epoch (passed by
+    ``DeriveRunner._run_one`` to formulas that declare a ``now`` parameter),
+    keeping the derive deterministic. When called without ``now`` (e.g. a unit
+    test), it falls back to the payload's ``as_of`` timestamp if present and
+    finally to ``time.time()``.
+
+    Returns ``None`` (=> Inactive) when there is no announcement payload or no
+    parseable ``ann_date``.
+    """
+
+    if not isinstance(intraday_announcement, Mapping):
+        return None
+    top = intraday_announcement.get("top_announcements")
+    if not isinstance(top, (list, tuple)) or not top:
+        return None
+
+    # top_announcements is most-recent-first; take the freshest parseable
+    # ann_date but scan the rest in case the first item lacks a date.
+    latest_day: int | None = None
+    latest_ann_date: str | None = None
+    for item in top:
+        if not isinstance(item, Mapping):
+            continue
+        day = _parse_yyyymmdd_to_epoch_day(item.get("ann_date"))
+        if day is not None and (latest_day is None or day > latest_day):
+            latest_day = day
+            latest_ann_date = str(item.get("ann_date")).strip()
+    if latest_day is None:
+        return None
+
+    # Resolve "today" deterministically: runner now -> payload as_of -> wall.
+    now_epoch = now
+    if now_epoch is None:
+        as_of = intraday_announcement.get("as_of")
+        as_of_day = _parse_yyyymmdd_to_epoch_day(as_of)
+        if as_of_day is not None:
+            now_epoch = as_of_day * 86400
+        else:
+            now_epoch = int(time.time())
+    today_day = int(now_epoch // 86400)
+
+    age_days = max(0, today_day - latest_day)
+    magnitude = _NEWS_AGE_PEAK * (0.5 ** (age_days / _NEWS_AGE_HALFLIFE_DAYS))
+    magnitude = _clip(magnitude, 0.0, 1.0)
+
+    return {
+        "scalar": round(magnitude, 4),
+        "magnitude": round(magnitude, 4),
+        "age_days": age_days,
+        "latest_ann_date": latest_ann_date,
+        "halflife_days": _NEWS_AGE_HALFLIFE_DAYS,
+        "peak": _NEWS_AGE_PEAK,
+        "count_recent": intraday_announcement.get("count_recent"),
+        "source": "L9.event.intraday_announcement",
+    }
 
 
 def derive_l8_val_overvalued_snapshot(
@@ -1105,6 +1218,200 @@ def derive_l6_sens_risk_narrative(
         elif sells > buys:
             factor *= 0.90
     return {"multiplier": _clip(factor, 0.5, 1.5), "drivers": drivers}
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: L6 valuation multiples (snapshot-derive)
+#
+# These compose persisted hard data already in ``realtime_current`` into the
+# spec's valuation_rerating multiples that no single collector emits because
+# their inputs live across several collect functions:
+#
+#   * ``L6.mult.ev_ebitda``  — (mcap + debt − cash) / EBITDA
+#   * ``L6.mult.forward_pe`` — mcap / (consensus forward EPS × shares)
+#   * ``L6.mult.peg``        — trailing PE / earnings-growth-percent
+#   * ``L6.state.peg_match`` — banded interpretation of PEG
+#
+# mcap (``total_mv_cny``, 元) and ``total_share`` (raw shares) are carried in
+# the ``L6.mult.pe`` payload by the Tushare daily_basic collector. EBITDA
+# comes from ``L8.fin.debt_pressure.ebitda_cny`` (which is often persisted
+# Inactive for low-leverage names — see ``_INACTIVE_TOLERANT_INPUTS`` in the
+# DeriveRunner so this formula can still read it). cash/debt come from
+# ``L5.bs.cash_debt``; forward EPS from ``L5.fcst.eps_cf.eps_avg``.
+# ---------------------------------------------------------------------------
+
+
+def derive_l6_mult_ev_ebitda(
+    mult_pe: Mapping[str, Any] | None,
+    debt_pressure: Mapping[str, Any] | None,
+    cash_debt: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.mult.ev_ebitda — Enterprise Value / EBITDA.
+
+    EV = market cap + total debt − cash. EBITDA (元) is read from
+    ``L8.fin.debt_pressure.ebitda_cny``. mcap (``total_mv_cny``) comes from
+    the ``L6.mult.pe`` payload (Tushare daily_basic). cash/debt come from
+    ``L5.bs.cash_debt`` (元).
+
+    Returns ``None`` (=> Inactive) when mcap or EBITDA is missing or EBITDA
+    is non-positive (EV/EBITDA is meaningless for non-positive EBITDA).
+    """
+
+    if not isinstance(mult_pe, Mapping) or not isinstance(debt_pressure, Mapping):
+        return None
+    mcap = mult_pe.get("total_mv_cny")
+    ebitda = debt_pressure.get("ebitda_cny")
+    if mcap is None or ebitda is None:
+        return None
+    mcap_f = _coerce_float(mcap, default=-1.0)
+    ebitda_f = _coerce_float(ebitda, default=0.0)
+    if mcap_f <= 0 or ebitda_f <= 0:
+        return None
+
+    cash = debt = 0.0
+    if isinstance(cash_debt, Mapping):
+        cash = _coerce_float(cash_debt.get("cash"), 0.0)
+        debt = _coerce_float(cash_debt.get("debt"), 0.0)
+
+    ev = mcap_f + debt - cash
+    ratio = ev / ebitda_f
+    return {
+        "scalar": round(ratio, 4),
+        "unit": "ratio",
+        "ev_cny": round(ev, 2),
+        "mcap_cny": mcap_f,
+        "debt_cny": debt,
+        "cash_cny": cash,
+        "ebitda_cny": ebitda_f,
+        "source": "L6.mult.pe+L8.fin.debt_pressure+L5.bs.cash_debt",
+    }
+
+
+def derive_l6_mult_forward_pe(
+    mult_pe: Mapping[str, Any] | None,
+    fcst_eps: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.mult.forward_pe — forward P/E = price / consensus forward EPS.
+
+    Computed in the share-unit-safe equivalent form
+    ``mcap / (eps_avg × total_share)`` so we never have to materialise a
+    per-share price. mcap (``total_mv_cny``) and ``total_share`` (raw shares)
+    are read from the ``L6.mult.pe`` payload; the consensus next-period EPS
+    (``eps_avg``) from ``L5.fcst.eps_cf``.
+
+    Returns ``None`` (=> Inactive) when mcap/shares/eps_avg are missing or
+    when eps_avg is non-positive (forward P/E is undefined for loss-making
+    consensus).
+    """
+
+    if not isinstance(mult_pe, Mapping) or not isinstance(fcst_eps, Mapping):
+        return None
+    mcap = mult_pe.get("total_mv_cny")
+    shares = mult_pe.get("total_share")
+    eps_avg = fcst_eps.get("eps_avg")
+    if mcap is None or shares is None or eps_avg is None:
+        return None
+    mcap_f = _coerce_float(mcap, default=-1.0)
+    shares_f = _coerce_float(shares, default=0.0)
+    eps_f = _coerce_float(eps_avg, default=0.0)
+    if mcap_f <= 0 or shares_f <= 0 or eps_f <= 0:
+        return None
+
+    price = mcap_f / shares_f
+    fwd_earnings = eps_f * shares_f
+    ratio = mcap_f / fwd_earnings  # == price / eps_avg
+    return {
+        "scalar": round(ratio, 4),
+        "unit": "ratio",
+        "price_cny": round(price, 4),
+        "eps_avg": eps_f,
+        "source": "L6.mult.pe+L5.fcst.eps_cf",
+    }
+
+
+def derive_l6_mult_peg(
+    mult_pe: Mapping[str, Any] | None,
+    revenue_growth: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.mult.peg — PEG = trailing PE / earnings-growth-percent.
+
+    PEG conventionally divides the P/E by the *earnings* growth rate (in
+    percent). There is no clean per-stock forward-earnings-growth dp_id in the
+    snapshot, so we use revenue YoY growth (``L5.is.revenue_growth.yoy_pct``,
+    already a percent) as the growth proxy and flag it via ``growth_basis``.
+    PE is the trailing ``L6.mult.pe.scalar`` (pe_ttm).
+
+    Returns ``None`` (=> Inactive) when PE or growth is missing, or when
+    growth_pct <= 0 (PEG is undefined / not meaningful for flat-or-shrinking
+    growth).
+    """
+
+    if not isinstance(mult_pe, Mapping) or not isinstance(revenue_growth, Mapping):
+        return None
+    pe = mult_pe.get("scalar")
+    growth_pct = revenue_growth.get("yoy_pct")
+    if pe is None or growth_pct is None:
+        return None
+    pe_f = _coerce_float(pe, default=0.0)
+    growth_f = _coerce_float(growth_pct, default=0.0)
+    if pe_f <= 0 or growth_f <= 0:
+        return None
+
+    peg = pe_f / growth_f
+    return {
+        "scalar": round(peg, 4),
+        "unit": "ratio",
+        "pe": pe_f,
+        "growth_pct": growth_f,
+        "growth_basis": "revenue_yoy",
+        "source": "L6.mult.pe+L5.is.revenue_growth",
+    }
+
+
+def derive_l6_state_peg_match(
+    mult_peg: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.state.peg_match — banded interpretation of PEG.
+
+    Bands follow the GARP convention already used by
+    ``derive_l8_val_overvalued_snapshot`` (PEG >= 2 rich, < 1 cheap):
+
+      * PEG <  1.0  -> "undervalued"  (score +1.0 — growth cheap vs price)
+      * 1.0 <= PEG <= 2.0 -> "fair"   (linearly scored +1..-1 across the band)
+      * PEG >  2.0  -> "expensive"    (score -1.0 — price rich vs growth)
+
+    The numeric ``score`` (∈ [-1, 1], positive = attractive) is what the
+    valuation_rerating aggregator consumes. Returns ``None`` (=> Inactive)
+    when PEG is unavailable.
+    """
+
+    if not isinstance(mult_peg, Mapping):
+        return None
+    peg = mult_peg.get("scalar")
+    if peg is None:
+        peg = mult_peg.get("value")
+    if peg is None:
+        return None
+    peg_f = _coerce_float(peg, default=-1.0)
+    if peg_f <= 0:
+        return None
+
+    if peg_f < 1.0:
+        band, score = "undervalued", 1.0
+    elif peg_f <= 2.0:
+        band = "fair"
+        # Linear: PEG 1.0 -> +1.0, PEG 2.0 -> -1.0.
+        score = _clip(1.0 - 2.0 * (peg_f - 1.0), -1.0, 1.0)
+    else:
+        band, score = "expensive", -1.0
+
+    return {
+        "scalar": round(score, 4),
+        "score": round(score, 4),
+        "band": band,
+        "peg": peg_f,
+        "source": "L6.mult.peg",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2223,6 +2530,34 @@ _FORMULA_REGISTRY: list[tuple[str, list[str], Callable[..., dict | None]]] = [
         "L9.media.report", "L9.event.intraday_news", "L5.surprise.sell_side",
     ], derive_l6_sens_risk_narrative),
 
+    # ---- Tier 2: L6 valuation multiples (snapshot-derive) ----
+    # mcap + shares are carried in the L6.mult.pe payload (Tushare
+    # daily_basic). EBITDA lives in L8.fin.debt_pressure which is frequently
+    # persisted Inactive for low-leverage names — `_INACTIVE_TOLERANT_INPUTS`
+    # lets ev_ebitda read it anyway. peg_match is registered after peg so it
+    # consumes the freshly-derived PEG via `emitted`.
+    ("L6.mult.ev_ebitda", [
+        "L6.mult.pe", "L8.fin.debt_pressure", "L5.bs.cash_debt",
+    ], derive_l6_mult_ev_ebitda),
+    ("L6.mult.forward_pe", [
+        "L6.mult.pe", "L5.fcst.eps_cf",
+    ], derive_l6_mult_forward_pe),
+    ("L6.mult.peg", [
+        "L6.mult.pe", "L5.is.revenue_growth",
+    ], derive_l6_mult_peg),
+    ("L6.state.peg_match", [
+        "L6.mult.peg",
+    ], derive_l6_state_peg_match),
+
+    # ---- Tier 2: L6 priced-in news-age decay (snapshot-derive) ----
+    # Time-decayed "still being priced-in" discount from the freshest
+    # L9.event.intraday_announcement ann_date. The formula declares a `now`
+    # parameter so DeriveRunner._run_one injects the runner's `now` epoch for
+    # a deterministic "today" (see the now-injection in _run_one).
+    ("L6.priced.news_age", [
+        "L9.event.intraday_announcement",
+    ], derive_l6_priced_news_age),
+
     # ---- Tier 1: L11 composites (depend on Tier 2-4 outputs) ----
     ("L11.short.score", [
         "L11.short.event_impact", "L11.short.flow_boost",
@@ -2246,6 +2581,35 @@ _FORMULA_REGISTRY: list[tuple[str, list[str], Callable[..., dict | None]]] = [
         "L11.short.score", "L11.mid.score", "L11.long.score", "L11.mode",
     ], derive_l11_trade_signal),
 ]
+
+
+# Output dp_ids whose formula declares a ``now`` parameter. The DeriveRunner
+# passes the runner's ``now`` epoch (seconds) to these as a trailing positional
+# arg so time-decay derives (e.g. ``L6.priced.news_age``) get a deterministic
+# "today" instead of calling ``time.time()`` themselves. Computed once at
+# import by signature introspection so adding a ``now`` param to a formula is
+# all that's needed to opt in.
+_FORMULAS_WANTING_NOW: frozenset[str] = frozenset(
+    output_dp
+    for output_dp, _inputs, fn in _FORMULA_REGISTRY
+    if "now" in inspect.signature(fn).parameters
+)
+
+
+# Input dp_ids whose payload carries a useful numeric field even when the row
+# is persisted with ``data_status="Inactive"``. The DeriveRunner normally
+# drops Inactive rows from the formula-input pool, but a few carrier rows are
+# Inactive by design while still holding hard data a derive needs:
+#
+#   * ``L8.fin.debt_pressure`` is emitted Inactive whenever no leverage alert
+#     fires (the common case for low-debt A-shares) yet still carries
+#     ``ebitda_cny`` — required by ``L6.mult.ev_ebitda``.
+#
+# For these, ``_run_one`` falls back to the raw snapshot row when the dp_id is
+# absent from the Known-filtered pool, passing the payload through so the
+# formula can judge usability itself. Formulas must still guard on the
+# specific field being present and valid (all of them do).
+_INACTIVE_TOLERANT_INPUTS: frozenset[str] = frozenset({"L8.fin.debt_pressure"})
 
 
 # Bootstrap proxy inputs for L11 sub-scores (event_impact, flow_boost, etc.).
@@ -2527,6 +2891,13 @@ class DeriveRunner:
                     input_confs.append(emitted[inp_dp].get("_input_conf", 0.5))
                 else:
                     row = usable.get(inp_dp)
+                    if row is None and inp_dp in _INACTIVE_TOLERANT_INPUTS:
+                        # Carrier row dropped by the Known filter (e.g.
+                        # L8.fin.debt_pressure persisted Inactive with no
+                        # leverage alert) but still holds hard data a formula
+                        # needs. Fall back to the raw snapshot row; the formula
+                        # guards on the specific field being valid.
+                        row = snapshot.get(inp_dp)
                     if row is None:
                         payloads.append(None)
                     else:
@@ -2542,8 +2913,14 @@ class DeriveRunner:
                             except (TypeError, ValueError):
                                 pass
 
+            # Inject the runner's `now` epoch into time-aware formulas (those
+            # declaring a `now` parameter, e.g. L6.priced.news_age) so their
+            # "today" is deterministic rather than wall-clock-dependent.
+            call_args = list(payloads)
+            if output_dp in _FORMULAS_WANTING_NOW:
+                call_args.append(now)
             try:
-                result = fn(*payloads)
+                result = fn(*call_args)
             except Exception as exc:  # noqa: BLE001
                 log.warning("[derive] %s for %s failed: %s", output_dp, ts_code, exc)
                 result = None
