@@ -775,11 +775,15 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
     # --- Discount targets (sign ignored downstream; return [0, 1] magnitude) ---
 
     if dp_id == "L8.val.overvalued":
-        # risk_discount. Higher overvaluation quantile → bigger risk.
+        # risk_discount. Higher overvaluation quantile → bigger risk. FU-1 (A):
+        # the SAME PE/PB percentile (max_quantile) already drives valuation_rerating
+        # via L6.state.historical_percentile / the L6.mult.* multiples, so the
+        # risk-side hit is largely redundant — scale it to HALF (0.5) rather than
+        # counting the valuation penalty at full weight through two channels.
         mq = _num(value.get("max_quantile"))
         if mq is None:
             return None
-        return _clip(mq, 0.0, 1.0)
+        return 0.5 * _clip(mq, 0.0, 1.0)
 
     if dp_id == "L8.val.priced_in":
         # risk_discount. priced_in_score already in 0..1.

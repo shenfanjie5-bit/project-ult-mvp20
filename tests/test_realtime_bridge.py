@@ -644,12 +644,14 @@ def test_field_overvalued_magnitude():
         {"max_quantile": 0.95, "severity": "high"},
         "risk_discount",
     )
-    assert sig == pytest.approx(0.95)
+    # FU-1 (A): overvalued's risk-side contribution is scaled to HALF — the same
+    # PE/PB percentile already drives valuation_rerating, so 0.95 → 0.475.
+    assert sig == pytest.approx(0.475)
     assert sig >= 0
-    # Clip to [0, 1].
+    # Clip to [0, 1] BEFORE the 0.5 scale → 1.4 clips to 1.0, then ×0.5 = 0.5.
     assert _realtime_signal(
         "L8.val.overvalued", {"max_quantile": 1.4}, "risk_discount"
-    ) == pytest.approx(1.0)
+    ) == pytest.approx(0.5)
     # Missing key → None.
     assert _realtime_signal(
         "L8.val.overvalued", {"severity": "high"}, "risk_discount"

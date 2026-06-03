@@ -77,10 +77,14 @@ market_rules:
     local_scores:
       local_funding_score: [funding_score]
       local_event_score: [event_impulse_score, expectation_gap]
-    discounts:
-      local_risk_discount: [risk_discount, uncertainty_discount, overheat_risk]
-      local_overheat_risk: [overheat_risk]
-      local_uncertainty_discount: [uncertainty_discount]
+    # FU-1 double-count fix: ``compute_final_score`` already subtracts the full
+    # company risk component {risk_discount, uncertainty_discount, volatility_risk,
+    # overheat_risk} ONCE (``base = ... - risk``). Re-listing those targets here
+    # made the market adapter subtract them a SECOND time — verified: the market
+    # discount total equalled the core risk EXACTLY (e.g. 601138 0.347 ×2). No
+    # A-share-LOCAL risk distinct from the company graph exists, so this is left
+    # empty until a genuinely market-specific risk dp_id is introduced.
+    discounts: {}
 
   US:
     identity:
@@ -135,10 +139,10 @@ market_rules:
     local_scores:
       local_funding_score: [funding_score]
       local_event_score: [event_impulse_score, expectation_gap]
-    discounts:
-      local_risk_discount: [risk_discount, uncertainty_discount, volatility_risk, overheat_risk]
-      local_overheat_risk: [overheat_risk]
-      local_uncertainty_discount: [uncertainty_discount]
+# FU-1 double-count fix: compute_final_score already subtracts the full company
+    # risk component ONCE; re-listing those targets here double-subtracted them. No
+    # market-LOCAL risk distinct from the company graph exists yet, so empty.
+    discounts: {}
 
   HK:
     identity:
@@ -193,7 +197,7 @@ market_rules:
     local_scores:
       local_funding_score: [funding_score]
       local_event_score: [event_impulse_score, expectation_gap]
-    discounts:
-      local_risk_discount: [risk_discount, uncertainty_discount, volatility_risk, overheat_risk]
-      local_overheat_risk: [overheat_risk]
-      local_uncertainty_discount: [uncertainty_discount]
+# FU-1 double-count fix: compute_final_score already subtracts the full company
+    # risk component ONCE; re-listing those targets here double-subtracted them. No
+    # market-LOCAL risk distinct from the company graph exists yet, so empty.
+    discounts: {}

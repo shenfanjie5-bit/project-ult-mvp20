@@ -48,7 +48,10 @@ def test_market_adapter_applies_local_multiplier_scores_and_discounts() -> None:
     assert out["horizon_multipliers"]["short"] > out["horizon_multipliers"]["long"]
     assert out["local_scores"]["local_funding_score"] == pytest.approx(0.2)
     assert out["local_scores"]["local_event_score"] == pytest.approx(0.3)
-    assert out["discounts"]["local_risk_discount"] == pytest.approx(0.1)
+    # FU-1 double-count fix: CN_A (like US/HK) no longer re-applies the company
+    # risk component {risk_discount,...} as a market-local discount (it is already
+    # subtracted once in compute_final_score), so discounts is empty.
+    assert out["discounts"] == {}
     assert out["adjusted_final_score"]["base_score"] > final["base_score"]
 
 
