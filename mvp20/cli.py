@@ -719,6 +719,12 @@ def compile_overlays_command(
     show_default=True,
 )
 @click.option(
+    "--industry-overlays-dir",
+    type=click.Path(path_type=Path),
+    default=Path("config/industry_overlays"),
+    show_default=True,
+)
+@click.option(
     "--db", "db_path", type=click.Path(path_type=Path),
     default=Path("runtime/hot.sqlite"), show_default=True,
 )
@@ -726,6 +732,7 @@ def score_company_command(
     ts_code: str,
     industry_id: str | None,
     stock_overlays_dir: Path,
+    industry_overlays_dir: Path,
     db_path: Path,
 ) -> None:
     """Score one company per spec §27.1/27.3/27.4 + classify mode (§30).
@@ -766,6 +773,34 @@ def score_company_command(
 
     overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8")) or {}
 
+    # ----- industry overlay (carries the Known L0 demand/supply/price/cost
+    # values that stock-overlay nodes inherit via inherit_from_industry).
+    # Without it those L0 nodes stay empty and never reach the score. Resolve
+    # the industry id from the --industry flag, then the overlay's own
+    # industry_id / industry_ids. Missing overlay → None (graceful). -------
+    resolved_industry_id = (
+        industry_id
+        or overlay.get("industry_id")
+        or (overlay.get("industry_ids") or [None])[0]
+    )
+    industry_overlay: dict | None = None
+    if resolved_industry_id:
+        industry_overlay_path = (
+            industry_overlays_dir / f"{resolved_industry_id}.yaml"
+        )
+        if industry_overlay_path.exists():
+            try:
+                industry_overlay = (
+                    yaml.safe_load(
+                        industry_overlay_path.read_text(encoding="utf-8")
+                    )
+                    or {}
+                )
+            except yaml.YAMLError as exc:
+                click.echo(
+                    f"# industry overlay parse failed ({exc}); skipping L0 inherit"
+                )
+
     # ----- realtime snapshot (best-effort, OK if hot.sqlite missing) -----
     # Read first so the aggregator can bridge realtime values into the score
     # (synthetic standalone-leaf nodes for participating dp_ids).
@@ -783,7 +818,7 @@ def score_company_command(
     try:
         from mvp20.aggregator import aggregate_company_graph  # type: ignore
         aggregated_nodes = aggregate_company_graph(
-            overlay, realtime_snapshot=realtime_data or None
+            overlay, industry_overlay, realtime_snapshot=realtime_data or None
         ) or {}
     except Exception as exc:  # noqa: BLE001 (lazy; A1 may not exist yet)
         click.echo(f"# aggregator unavailable ({exc}); using overlay-derived mock")

@@ -1101,8 +1101,11 @@ def test_fundamental_synthetic_node_now_increases_score():
     contrib = res["company_score"]["components"]["industry_contrib"]
     # Was +0.000; now the full +0.9 reaches the score via industry_contrib.
     # Single synthetic node: damped mean = Σ(0.9×1.0)/max(1.0, 1.0) = 0.9
-    # (Σconf=1.0 → floor=1.0 → unchanged from the raw signed score).
-    assert base == pytest.approx(0.9)
+    # (Σconf=1.0 → floor=1.0 → unchanged from the raw signed score). The raw
+    # 0.9 is surfaced as industry_contrib; F7 then bounds the value that
+    # reaches base_score via tanh(0.9/K) (pre-F7 base asserted 0.9).
+    from mvp20.scoring import _bound_industry_total
+    assert base == pytest.approx(_bound_industry_total(0.9))
     assert contrib == pytest.approx(0.9)
 
     # Synthetic dead-sink nodes are now collapsed into a SINGLE damped-mean
@@ -1134,8 +1137,10 @@ def test_optionality_synthetic_node_routes_through_industry():
     }
     agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
     res = score_company(overlay, aggregated_nodes=agg)
+    from mvp20.scoring import _bound_industry_total
     assert res["company_score"]["components"]["industry_contrib"] == pytest.approx(0.6)
-    assert res["core_final_score"]["base_score"] == pytest.approx(0.6)
+    # F7: raw 0.6 stays in industry_contrib; base_score is the bounded value.
+    assert res["core_final_score"]["base_score"] == pytest.approx(_bound_industry_total(0.6))
 
 
 def test_valuation_synthetic_node_counts_once_no_double_count():

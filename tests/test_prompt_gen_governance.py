@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -563,10 +564,37 @@ def test_get_governance_returns_none_for_unknown_dp() -> None:
 
 
 def test_list_only_industry_format(tmp_path: Path) -> None:
-    # Use the real AI_COMPUTE overlay since it is part of the repo and
-    # exercises the full governance lookup path.
+    # Hermetic: copy the real AI_COMPUTE overlay into a temp ``root`` and flip
+    # one Known L0 node back to Unknown so there is a deterministic *fillable*
+    # node. This exercises the full governance lookup path AND the
+    # "Tier distribution" rendering branch (which only emits when ≥1 node is
+    # fillable) without depending on how many real overlay nodes happen to be
+    # pre-filled — the committed overlay had 27 Unknown (fillable) L0 nodes,
+    # but the C1 closed-loop fill flipped them to Known/Inactive, which would
+    # otherwise leave Fillable: 0 and drop the tier-distribution section.
+    src = ROOT / "config" / "industry_overlays" / "AI_COMPUTE.yaml"
+    overlay = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
+    flipped = False
+    for node in overlay.get("nodes") or []:
+        if (
+            str(node.get("dp_id") or "").startswith("L0.")
+            and node.get("data_status") == "Known"
+        ):
+            node["data_status"] = "Unknown"
+            node["value"] = None
+            flipped = True
+            break
+    assert flipped, "expected at least one Known L0 node to flip to Unknown"
+
+    dst_dir = tmp_path / "config" / "industry_overlays"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    (dst_dir / "AI_COMPUTE.yaml").write_text(
+        yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
     report = codex_prompt_gen.build_list_only_report(
-        "AI_COMPUTE", None, model_tier_filter="all"
+        "AI_COMPUTE", None, root=tmp_path, model_tier_filter="all"
     )
     assert "list-only" in report
     assert "AI_COMPUTE" in report

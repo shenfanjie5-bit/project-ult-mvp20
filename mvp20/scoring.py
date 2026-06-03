@@ -27,6 +27,7 @@ into the contract documented in the task brief.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -106,23 +107,71 @@ SPEC28_DEFAULT_HORIZON_MIX: dict[str, dict[str, float]] = {
     },
 }
 
+#: F7 — saturating scale for the industry-fundamental block in the company
+#: score. ``compute_company_score`` sums an *unbounded* product chain over the
+#: industry variables (one term per participating node), so the raw
+#: ``industry_total`` grows with node count and dominates the other final-score
+#: channels (event / capital / risk / valuation_pressure / priced_in), which
+#: are damped into roughly ``[-1, 1]``. To put fundamental on the *same* scale
+#: — and stop it from inflating merely because an industry overlay has more
+#: filled nodes — the value that feeds ``total`` is squashed through
+#: ``tanh(industry_total / _INDUSTRY_TOTAL_SCALE)``. The raw sum is still
+#: surfaced as ``components["industry_contrib"]`` for transparency.
+#:
+#: K is the fundamental-vs-valuation DIAL. SMALLER K = less squashing = a strong
+#: industry/fundamental keeps more weight (growth-tilt: a great company can stay
+#: BUY despite a rich valuation). LARGER K = more squashing = fundamental matters
+#: less, so the valuation_rerating / priced-in drag dominates (valuation-aware:
+#: expensive run-ups → HOLD even with strong fundamentals).
+#:
+#: Calibrated on the post-L0-wiring A-share distribution (the filled-L0 AI_COMPUTE
+#: cohort is the only one where the bound bites — industry_total p75 ≈ 2.70; every
+#: other name sits near 0 where tanh is ~linear regardless of K). At K=2.0 the
+#: strongest fundamental names (e.g. 688256: industry_total ≈ 3.48 → bounded 0.79,
+#: base_score 0.327) clear the ~31%-BUY cutoff; K=2.70 squashed them to HOLD. The
+#: 31%-BUY threshold ≈ 0.30 holds across K≈2.0–2.7.
+#:
+#: TODO (market-regime adaptive — design pending, see calib discussion): K should
+#: NOT stay a fixed constant. It should shift with the broad-market regime —
+#: smaller K (growth-tilt) in a risk-on / bull tape, larger K (valuation-prudent)
+#: in a risk-off / bear tape — driven by the existing regime signal
+#: (L7.env.market_trend / market_regime_multiplier). Until that is wired, 2.0 is
+#: the fixed default.
+_INDUSTRY_TOTAL_SCALE = 2.0
+
+
+def _bound_industry_total(industry_total: float) -> float:
+    """F7 — squash the raw industry Σ onto ~[-1, 1] via
+    ``tanh(industry_total / _INDUSTRY_TOTAL_SCALE)``.
+
+    Single seam for the bound so both ``compute_company_score`` and the
+    final-score ``fundamental`` derivation share one definition (and tests /
+    calibration can exercise it directly).
+    """
+
+    return math.tanh(industry_total / _INDUSTRY_TOTAL_SCALE)
+
 #: Trading signal thresholds applied to the **market-adjusted** ``base_score``
 #: (the value ``score_company`` thresholds for ``trading_signal`` — i.e.
 #: ``market_adjusted_final_score["base_score"]``).
 #:
-#: T2 re-calibration (post sentiment de-bias): an analyst-sentiment de-bias
-#: removed a uniform positive skew, re-centering the market-adjusted signal
-#: basis. It now distributes across the 116-stock A-share universe as
-#: min −2.28 / p10 −1.10 / p25 −0.53 / median −0.215 / p75 +0.18 /
-#: p90 +0.47 / max +0.91. The OLD T1 thresholds (0.90 / 0.60 / 0.30) were
-#: calibrated for the prior positively-skewed scale and labelled 93/116 as
-#: AVOID. These T2 values are picked from the de-biased distribution to give
-#: BUY≈24% / HOLD≈16% / WATCH≈29% / AVOID≈31% — a balanced spread with the
-#: median stock (−0.215) landing in WATCH. The slightly-negative center
-#: (hence the negative HOLD/WATCH thresholds) is intentional: it reflects the
-#: priced-in (run-up) drag on the de-biased scale. These remain calibration
-#: constants to revisit if the field set / data distribution changes.
-SIGNAL_BUY_THRESHOLD = 0.20
+#: T2 re-calibration (post sentiment de-bias) set 0.20 / −0.10 / −0.45 on a
+#: pre-L0-wiring, pre-F7 distribution.
+#:
+#: T3 re-calibration (post L0-wiring + F7 bound): wiring the industry overlay
+#: (Part 1) and bounding the fundamental block via tanh (F7) shifted the
+#: ``base_score`` basis. Across the 121-stock A-share universe it now
+#: distributes as min −1.10 / p25 −0.25 / median +0.08 / p75 +0.33 /
+#: p90 +0.44 / max +1.40. Under the OLD BUY=0.20 this labelled 51/121 (42%)
+#: as BUY — too rich. BUY is re-anchored to 0.30 (≈ the cohort's p70), which
+#: lands 37/121 (31%) BUY — inside the 25–35% target — while the
+#: meaningfully-negative tail (16/121 ≈ 13% AVOID) is preserved. HOLD/WATCH
+#: stay at −0.10 / −0.45: −0.10 sits just below the new median so the broad
+#: middle reads HOLD, and −0.45 keeps the AVOID tail at the bottom ~13%.
+#: Resulting mix: BUY 31% / HOLD 36% / WATCH 20% / AVOID 13%. These remain
+#: calibration constants to revisit if the field set / data distribution
+#: changes.
+SIGNAL_BUY_THRESHOLD = 0.30
 SIGNAL_HOLD_THRESHOLD = -0.10
 SIGNAL_WATCH_THRESHOLD = -0.45
 # anything strictly below WATCH threshold => AVOID
@@ -324,7 +373,8 @@ def compute_company_score(
         {
           "score": float,                       # full company score
           "components": {
-              "industry_contrib": float,        # the Σ industry block
+              "industry_contrib": float,        # the RAW Σ industry block
+              "industry_contrib_bounded": float,# F7: tanh-bounded Σ → into score
               "event": float,
               "capital": float,
               "risk": float,
@@ -363,12 +413,20 @@ def compute_company_score(
     val_pressure = _coerce_float(valuation_pressure)
     priced_in = _coerce_float(priced_in_discount)
 
-    total = industry_total + event + capital - risk - val_pressure - priced_in
+    # F7 — bound the fundamental block onto the same ~[-1, 1] scale as the
+    # other final-score channels before summing. ``industry_total`` is the raw
+    # (unbounded) Σ; ``industry_bounded`` is what actually enters ``total`` so
+    # fundamental can't dominate / grow merely with node count. The raw sum is
+    # still reported in components["industry_contrib"] for transparency.
+    industry_bounded = _bound_industry_total(industry_total)
+
+    total = industry_bounded + event + capital - risk - val_pressure - priced_in
 
     return {
         "score": total,
         "components": {
             "industry_contrib": industry_total,
+            "industry_contrib_bounded": industry_bounded,
             "event": event,
             "capital": capital,
             "risk": risk,
@@ -1587,7 +1645,13 @@ def score_company(
     # input, and the event signal as part of the fundamental too (since
     # company-specific events are operational, not market-driven). Capital
     # sentiment / risk / priced-in are then injected once at the §27.4 level.
-    industry_contrib = company_score["components"]["industry_contrib"]
+    #
+    # F7 — use the *bounded* industry block (tanh-squashed, see
+    # _INDUSTRY_TOTAL_SCALE) so the fundamental that drives the final score /
+    # base_score / trading_signal sits on the same ~[-1, 1] scale as the other
+    # channels and can't grow merely with industry-node count. The raw Σ is
+    # still surfaced as components["industry_contrib"] for transparency.
+    industry_contrib = company_score["components"]["industry_contrib_bounded"]
     fundamental = industry_contrib + company_event_score
     if role_components:
         fundamental *= role_components.get("multiplier_stack", 1.0)

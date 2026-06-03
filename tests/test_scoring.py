@@ -207,9 +207,13 @@ class TestCompanyScore:
             valuation_pressure=0.0,
             priced_in_discount=0.0,
         )
-        # 0.3 + 0.4*0.5 + (-0.1) = 0.4
-        assert out["score"] == pytest.approx(0.4)
+        # Raw Σ industry_total = 0.3 + 0.4*0.5 + (-0.1) = 0.4 (surfaced as
+        # components["industry_contrib"] for transparency). F7 bounds the
+        # value that enters ``score`` via tanh(industry_total/K), so the
+        # score is the *bounded* fundamental (no other channels here).
+        from mvp20.scoring import _bound_industry_total
         assert out["components"]["industry_contrib"] == pytest.approx(0.4)
+        assert out["score"] == pytest.approx(_bound_industry_total(0.4))
         assert len(out["industry_contributions"]) == 3
 
     def test_discount_terms_subtract(self) -> None:
@@ -221,8 +225,15 @@ class TestCompanyScore:
             valuation_pressure=0.1,
             priced_in_discount=0.05,
         )
-        # 0.5 + 0.2 + 0.1 - 0.1 - 0.1 - 0.05
-        assert out["score"] == pytest.approx(0.55)
+        # F7: the fundamental block is bounded before summing, so
+        # score = tanh(0.5/K) + 0.2 + 0.1 - 0.1 - 0.1 - 0.05
+        # (was 0.5 + ... = 0.55 pre-F7; the raw 0.5 still lives in
+        # components["industry_contrib"]).
+        from mvp20.scoring import _bound_industry_total
+        assert out["components"]["industry_contrib"] == pytest.approx(0.5)
+        assert out["score"] == pytest.approx(
+            _bound_industry_total(0.5) + 0.2 + 0.1 - 0.1 - 0.1 - 0.05
+        )
 
     def test_multiplier_chain_applied(self) -> None:
         out = compute_company_score(
@@ -239,8 +250,12 @@ class TestCompanyScore:
             valuation_pressure=0.0,
             priced_in_discount=0.0,
         )
-        # 1.0 * 0.5 * 0.5 * 2.0 * 1.5 * 1.0 = 0.75
-        assert out["score"] == pytest.approx(0.75)
+        # Raw product chain = 1.0 * 0.5 * 0.5 * 2.0 * 1.5 * 1.0 = 0.75
+        # (in components["industry_contrib"]). F7 bounds the value that
+        # enters ``score`` → tanh(0.75/K).
+        from mvp20.scoring import _bound_industry_total
+        assert out["components"]["industry_contrib"] == pytest.approx(0.75)
+        assert out["score"] == pytest.approx(_bound_industry_total(0.75))
 
 
 # ---------------------------------------------------------------------------
@@ -501,19 +516,19 @@ class TestTradingSignal:
         carries the largest weight, so a strong-medium picture should
         push the mix higher than the simple average would.
 
-        T2 thresholds (BUY 0.20 / HOLD -0.10 / WATCH -0.45): pick a
+        T3 thresholds (BUY 0.30 / HOLD -0.10 / WATCH -0.45): pick a
         medium-only input where the weighted mix clears BUY but the naive
         simple average would not — this is what proves the weighting (not
         just the magnitude) is doing the work.
         """
 
         from mvp20.scoring import _trading_signal_from_mix
-        # short=0, medium=0.5, long=0 — default weights give
-        # 0 * 0.30 + 0.5 * 0.45 + 0 * 0.25 = 0.225 ⇒ BUY (≥ 0.20).
-        # The simple average would be 0.5 / 3 = 0.167 ⇒ only HOLD (≥ -0.10,
-        # < 0.20), so the BUY label here is attributable to medium's heavier
+        # short=0, medium=0.7, long=0 — default weights give
+        # 0 * 0.30 + 0.7 * 0.45 + 0 * 0.25 = 0.315 ⇒ BUY (≥ 0.30).
+        # The simple average would be 0.7 / 3 = 0.233 ⇒ only HOLD (≥ -0.10,
+        # < 0.30), so the BUY label here is attributable to medium's heavier
         # weight rather than the raw magnitude.
-        assert _trading_signal_from_mix(0.0, 0.5, 0.0) == "BUY"
+        assert _trading_signal_from_mix(0.0, 0.7, 0.0) == "BUY"
 
 
 # ---------------------------------------------------------------------------
@@ -877,9 +892,16 @@ def test_confidence_role_compresses_final_score_without_adding_signal() -> None:
 
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
+    from mvp20.scoring import _bound_industry_total
+
     assert result["company_score"]["components"]["industry_contrib"] == pytest.approx(1.0)
     assert result["role_components"]["confidence_multiplier"] == pytest.approx(0.5)
-    assert result["final_score"]["base_score"] == pytest.approx(0.5)
+    # F7: the fundamental (raw industry_contrib 1.0) is bounded via tanh
+    # before it drives base_score; the 0.5 confidence multiplier then halves
+    # it. Pre-F7 this asserted 1.0 * 0.5 = 0.5.
+    assert result["final_score"]["base_score"] == pytest.approx(
+        _bound_industry_total(1.0) * 0.5
+    )
 
 
 def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -> None:
@@ -959,11 +981,19 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
 
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
+    from mvp20.scoring import _bound_industry_total
+
     assert result["company_score"]["components"]["industry_contrib"] == pytest.approx(1.0)
     assert result["role_components"]["funding_score"] == pytest.approx(0.2)
     assert result["role_components"]["theme_multiplier"] == pytest.approx(1.5)
     assert result["role_components"]["risk_discount"] == pytest.approx(0.1)
-    assert result["core_final_score"]["base_score"] == pytest.approx(1.6)
+    # F7: fundamental (raw industry_contrib 1.0) is tanh-bounded, then the
+    # theme_multiplier (1.5) scales the fundamental block; funding_score (+0.2)
+    # and risk_discount (-0.1) net +0.1 on top. Pre-F7 this was
+    # 1.0*1.5 + 0.2 - 0.1 = 1.6; now bounded*1.5 + 0.1.
+    assert result["core_final_score"]["base_score"] == pytest.approx(
+        _bound_industry_total(1.0) * 1.5 + 0.1
+    )
     assert result["market_adapter"]["market_code"] == "US"
     assert result["final_score"]["base_score"] > result["core_final_score"]["base_score"]
 
@@ -1013,7 +1043,13 @@ def test_score_company_outputs_core_and_market_adjusted_scores() -> None:
 
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
-    assert result["core_final_score"]["base_score"] == pytest.approx(1.5)
+    from mvp20.scoring import _bound_industry_total
+
+    # F7: fundamental (raw industry_contrib 1.0) is tanh-bounded before the
+    # theme_multiplier (1.5) scales the fundamental block. Pre-F7: 1.0*1.5=1.5.
+    assert result["core_final_score"]["base_score"] == pytest.approx(
+        _bound_industry_total(1.0) * 1.5
+    )
     assert result["market_adapter"]["market_code"] == "CN_A"
     assert result["market_adjusted_final_score"] is result["final_score"]
     assert result["short_total"] == pytest.approx(result["final_score"]["short_total"])
