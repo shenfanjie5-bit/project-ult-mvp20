@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import signal
 import sys
 import time
@@ -54,7 +55,62 @@ load_dotenv()
 # pass, aggregator/coverage, server `WHERE data_status = 'Known'`) treat
 # "Known" as real, trustworthy data. "Mock" is deliberately outside that set
 # so fabricated rows can seed the pipeline without ever being scored as real.
+#
+# Note: "Mock" is also deliberately NOT "Inactive". ``compute_data_coverage``
+# (mvp20/coverage.py) counts ``data_status in {'Known','Inactive'}`` toward the
+# "known" weight, so tagging fabricated rows ``Inactive`` would silently inflate
+# coverage. ``Mock`` keeps them out of BOTH the score (via the source-aware
+# ``mock:*`` guard in derive.py / aggregator.py) and the coverage numerator.
 MOCK_DATA_STATUS = "Mock"
+
+# ---------------------------------------------------------------------------
+# Production dev-gate for fabricated (mock) data
+# ---------------------------------------------------------------------------
+#
+# Mock rows are fabricated sine-wave placeholders. They must NEVER feed a
+# production score. Two layers defend against that:
+#
+#   1. Read-side (already present, owned by a parallel task): every score-read
+#      path drops rows whose ``source`` starts ``"mock:"`` — see
+#      ``mvp20.derive._read_realtime_value_with_source`` and
+#      ``mvp20.aggregator.synthesize_realtime_nodes``. So even legacy ``mock:*``
+#      rows already sitting in ``runtime/hot.sqlite`` cannot reach the score.
+#
+#   2. Emission-side (this gate): in PRODUCTION mode the collector daemon
+#      refuses to run a mock data source at all, so no new fabricated rows are
+#      written to the production DB. Mock collection is opt-in via an explicit
+#      flag, so it never happens by accident on a prod host.
+#
+# Default = production = mock excluded. Opt in with either:
+#   - env  ``MVP20_ALLOW_MOCK=1``           (truthy: 1/true/yes/on)
+#   - CLI  ``--allow-mock``
+#
+# Hermetic tests that legitimately exercise the mock path (e.g. the collector
+# supervisor smoke test, or direct ``fetch_mock_batch`` unit tests) set the
+# flag / call the fetcher directly — they are unaffected. ``fetch_mock_batch``
+# itself is intentionally NOT gated (it is a pure fixture helper imported by
+# tests); the gate lives at the daemon boundary in ``main()``.
+MOCK_GATE_ENV = "MVP20_ALLOW_MOCK"
+
+# Source names whose fetcher fabricates mock rows (vs. pulling a real feed).
+# Only ``mock`` today; ``real``/``all`` compose strictly real sources.
+MOCK_SOURCE_NAMES = frozenset({"mock"})
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _mock_allowed(cli_allow_mock: bool) -> bool:
+    """Return True when fabricated mock collection is permitted.
+
+    Production default is False (mock excluded). Permitted only when the
+    operator explicitly opts in via ``--allow-mock`` or a truthy
+    ``MVP20_ALLOW_MOCK`` env var. Pure + env-driven so it is trivially
+    unit-testable.
+    """
+
+    if cli_allow_mock:
+        return True
+    return os.environ.get(MOCK_GATE_ENV, "").strip().lower() in _TRUTHY
 
 REALTIME_DP_IDS: list[tuple[str, str]] = [
     # (dp_id, primary_source_hint)
@@ -306,7 +362,30 @@ def main() -> int:
         "--max-cycles", type=int, default=0,
         help="Stop after N cycles (0 = forever). Useful for tests.",
     )
+    parser.add_argument(
+        "--allow-mock", action="store_true",
+        help=(
+            "Permit fabricated mock data collection (default OFF in "
+            "production). Also enableable via the MVP20_ALLOW_MOCK env var. "
+            "Fabricated rows never reach the score (source-aware mock guard), "
+            "but in production the daemon refuses to write them at all."
+        ),
+    )
     args = parser.parse_args()
+
+    # Production dev-gate: refuse fabricated mock sources unless explicitly
+    # allowed. This stops mock rows from ever being written to a production
+    # hot.sqlite. The read-side mock guard (derive/aggregator) is the second
+    # line of defence for any legacy rows already in the DB.
+    if args.source in MOCK_SOURCE_NAMES and not _mock_allowed(args.allow_mock):
+        print(
+            f"[collector] REFUSED: --source {args.source} fabricates mock data "
+            f"and is disabled in production. Set {MOCK_GATE_ENV}=1 or pass "
+            f"--allow-mock to enable it (dev/test only).",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
 
     init_db(args.hot_db)
     universe = load_universe(args.universe)

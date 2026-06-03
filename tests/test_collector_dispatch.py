@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -148,3 +151,170 @@ def test_core_dp_ids_emitted_by_real_tushare_source():
         assert src.count(f'"{dp_id}"') >= 2, (
             f"{dp_id} is expected to be emitted by tushare_source.py"
         )
+
+
+# ---------------------------------------------------------------------------
+# Production dev-gate: the daemon must refuse fabricated mock sources unless
+# explicitly opted in, so mock rows never reach a production hot.sqlite. The
+# read-side mock guard (derive/aggregator) handles legacy rows already in the
+# DB; this gate stops NEW ones from being written.
+# ---------------------------------------------------------------------------
+
+
+def test_mock_allowed_defaults_off(monkeypatch):
+    """Production default: mock collection is disabled (no flag, no env)."""
+
+    collector = _load_collector()
+    monkeypatch.delenv(collector.MOCK_GATE_ENV, raising=False)
+    assert collector._mock_allowed(cli_allow_mock=False) is False
+
+
+def test_mock_allowed_via_cli_flag(monkeypatch):
+    collector = _load_collector()
+    monkeypatch.delenv(collector.MOCK_GATE_ENV, raising=False)
+    assert collector._mock_allowed(cli_allow_mock=True) is True
+
+
+@pytest.mark.parametrize("val", ["1", "true", "TRUE", "yes", "on", " On "])
+def test_mock_allowed_via_truthy_env(monkeypatch, val):
+    collector = _load_collector()
+    monkeypatch.setenv(collector.MOCK_GATE_ENV, val)
+    assert collector._mock_allowed(cli_allow_mock=False) is True
+
+
+@pytest.mark.parametrize("val", ["", "0", "false", "no", "off", "garbage"])
+def test_mock_allowed_via_falsy_env(monkeypatch, val):
+    collector = _load_collector()
+    monkeypatch.setenv(collector.MOCK_GATE_ENV, val)
+    assert collector._mock_allowed(cli_allow_mock=False) is False
+
+
+def _run_main(collector, monkeypatch, argv: list[str]):
+    monkeypatch.setattr(collector.sys, "argv", ["collector.py", *argv])
+    return collector.main()
+
+
+def test_main_refuses_mock_in_production(tmp_path, monkeypatch, capsys):
+    """``--source mock`` without the gate must refuse (exit 2) and write
+    NOTHING to the hot DB — proving no fabricated rows can enter prod."""
+
+    collector = _load_collector()
+    monkeypatch.delenv(collector.MOCK_GATE_ENV, raising=False)
+
+    db = tmp_path / "hot.sqlite"
+    universe = tmp_path / "universe.yaml"
+    universe.write_text(
+        "constituents:\n  - ts_code: 000001.SZ\n", encoding="utf-8"
+    )
+
+    rc = _run_main(collector, monkeypatch, [
+        "--source", "mock",
+        "--hot-db", str(db),
+        "--universe", str(universe),
+        "--max-cycles", "1",
+    ])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "REFUSED" in err and collector.MOCK_GATE_ENV in err
+    # The refusal happens before init_db / any write — DB must not exist, or if
+    # it does (it should not), it must hold zero realtime rows.
+    if db.exists():
+        with sqlite3.connect(str(db)) as conn:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM realtime_current"
+            ).fetchone()[0]
+        assert n == 0
+    else:
+        assert not db.exists()
+
+
+def test_main_allows_mock_with_cli_flag(tmp_path, monkeypatch):
+    """``--allow-mock`` permits the mock path; rows are written but tagged
+    ``data_status='Mock'`` + ``source='mock:*'`` so the score-read drops them."""
+
+    collector = _load_collector()
+    monkeypatch.delenv(collector.MOCK_GATE_ENV, raising=False)
+
+    db = tmp_path / "hot.sqlite"
+    universe = tmp_path / "universe.yaml"
+    universe.write_text(
+        "constituents:\n  - ts_code: 000001.SZ\n", encoding="utf-8"
+    )
+
+    rc = _run_main(collector, monkeypatch, [
+        "--source", "mock",
+        "--allow-mock",
+        "--hot-db", str(db),
+        "--universe", str(universe),
+        "--max-cycles", "1",
+    ])
+
+    assert rc == 0
+    assert db.exists()
+    with sqlite3.connect(str(db)) as conn:
+        rows = conn.execute(
+            "SELECT data_status, source FROM realtime_current"
+        ).fetchall()
+    assert rows, "mock path with --allow-mock should write rows"
+    # Every written mock row is non-scoring: Mock status + mock:* source.
+    assert all(r[0] == "Mock" for r in rows)
+    assert all(str(r[1]).startswith("mock:") for r in rows)
+
+
+def test_main_allows_mock_with_env(tmp_path, monkeypatch):
+    collector = _load_collector()
+    monkeypatch.setenv(collector.MOCK_GATE_ENV, "1")
+
+    db = tmp_path / "hot.sqlite"
+    universe = tmp_path / "universe.yaml"
+    universe.write_text(
+        "constituents:\n  - ts_code: 000001.SZ\n", encoding="utf-8"
+    )
+
+    rc = _run_main(collector, monkeypatch, [
+        "--source", "mock",
+        "--hot-db", str(db),
+        "--universe", str(universe),
+        "--max-cycles", "1",
+    ])
+
+    assert rc == 0
+    assert db.exists()
+
+
+def test_main_real_source_unaffected_by_gate(tmp_path, monkeypatch):
+    """A non-mock source must run regardless of the mock gate (default OFF)."""
+
+    collector = _load_collector()
+    monkeypatch.delenv(collector.MOCK_GATE_ENV, raising=False)
+
+    db = tmp_path / "hot.sqlite"
+    universe = tmp_path / "universe.yaml"
+    universe.write_text(
+        "constituents:\n  - ts_code: 000001.SZ\n", encoding="utf-8"
+    )
+
+    # Stub the real dispatcher so we don't hit any live API.
+    captured: dict = {}
+
+    def _fake_real(u, tick):
+        captured["called"] = True
+        return [(
+            "000001.SZ", "test.real", "{}", "Known", 0.9,
+            "test:real", 1700000000,
+        )]
+
+    monkeypatch.setitem(collector.SOURCE_DISPATCH, "real", _fake_real)
+
+    rc = _run_main(collector, monkeypatch, [
+        "--source", "real",
+        "--hot-db", str(db),
+        "--universe", str(universe),
+        "--max-cycles", "1",
+    ])
+
+    assert rc == 0
+    assert captured.get("called") is True
+    assert "mock" in collector.MOCK_SOURCE_NAMES
+    assert "real" not in collector.MOCK_SOURCE_NAMES

@@ -28,6 +28,11 @@ def _run(*args: str, env_extra: dict | None = None) -> subprocess.CompletedProce
     # Use the mock source so tests don't touch live APIs / quotas.
     env.setdefault("COLLECTOR_SOURCE", "mock")
     env.setdefault("COLLECTOR_INTERVAL", "2")
+    # The collector daemon refuses fabricated mock sources in production
+    # (see scripts/collector.py MOCK_GATE_ENV). This smoke test legitimately
+    # exercises the mock path end-to-end, so opt in explicitly. The var
+    # propagates through the supervisor's nohup subshell into the python child.
+    env.setdefault("MVP20_ALLOW_MOCK", "1")
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
