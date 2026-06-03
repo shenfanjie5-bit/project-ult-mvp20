@@ -805,6 +805,23 @@ def _trading_signal_from_mix(short_t: float, medium_t: float, long_t: float,
 # ---------------------------------------------------------------------------
 
 
+#: ``score_target`` values whose magnitude is SUBTRACTED from the final
+#: score (see :func:`_role_components_from_flat`, where every one of these is
+#: rolled up with ``absolute=True`` and then fed to ``compute_*_score`` as a
+#: ``- risk_discount`` / ``- valuation_pressure`` / ``- priced_in_discount``
+#: term). A node tagged with one of these stores a POSITIVE magnitude but is
+#: an *effective negative* contributor, so ``_top_paths`` must never surface it
+#: as a "top positive" driver. Kept in sync with the target sets above.
+_SUBTRACTIVE_SCORE_TARGETS: frozenset[str] = frozenset({
+    # risk_discount group
+    "risk_discount", "uncertainty_discount", "volatility_risk", "overheat_risk",
+    # valuation_pressure
+    "valuation_pressure",
+    # priced_in_discount group
+    "priced_in_discount", "option_priced_in", "time_decay",
+})
+
+
 @dataclass(frozen=True)
 class _PathInfo:
     """Lightweight handle to a path's score + metadata, for ranking."""
@@ -813,6 +830,23 @@ class _PathInfo:
     score: float
     direction: float
     rationale: str
+    score_target: str | None = None
+
+    @property
+    def effective_score(self) -> float:
+        """Signed contribution to the FINAL score.
+
+        Most nodes contribute their raw ``score``. Nodes whose
+        ``score_target`` is a discount/risk target (see
+        :data:`_SUBTRACTIVE_SCORE_TARGETS`) store a positive magnitude that the
+        scorer SUBTRACTS, so their effective contribution is ``-abs(score)``.
+        Ranking on this value keeps penalties out of the "top positive" list
+        and lets them rank in the "top negative" list — without touching the
+        numeric final score (which is computed separately upstream)."""
+
+        if self.score_target in _SUBTRACTIVE_SCORE_TARGETS:
+            return -abs(self.score)
+        return self.score
 
 
 def _is_flat_aggregator_output(payload: Mapping[str, Any]) -> bool:
@@ -884,32 +918,47 @@ def _collect_path_infos(
         rationale = str(
             node.get("rationale") or node.get("name") or node_id or ""
         )
+        raw_target = node.get("score_target")
         paths.append(_PathInfo(
             node_id=str(node_id),
             score=score,
             direction=direction,
             rationale=rationale,
+            score_target=str(raw_target) if raw_target is not None else None,
         ))
     return paths
 
 
 def _top_paths(paths: Sequence[_PathInfo], n: int = 3) -> dict[str, list[dict[str, Any]]]:
-    """Pick top ``n`` positive paths (highest score) and top ``n`` negative
-    paths (lowest score). Returns lists of plain dicts (JSON-friendly)."""
+    """Pick top ``n`` positive paths and top ``n`` negative paths, ranked by
+    each path's EFFECTIVE contribution to the final score. Returns lists of
+    plain dicts (JSON-friendly).
+
+    Ranking uses :attr:`_PathInfo.effective_score` rather than the raw score so
+    that discount/risk nodes (``score_target`` in
+    :data:`_SUBTRACTIVE_SCORE_TARGETS`) — which store a positive magnitude but
+    are SUBTRACTED from the score — are correctly treated as negative
+    contributors. This keeps penalties (e.g. ``priced.run_up``, ``overvalued``)
+    out of the "top positive" headline list. The reported ``score`` is the
+    effective (signed) contribution so the magnitude reads honestly. This is a
+    display-only ordering — the numeric final score is computed upstream and is
+    unaffected."""
 
     positive = sorted(
-        (p for p in paths if p.score > 0), key=lambda p: -p.score
+        (p for p in paths if p.effective_score > 0),
+        key=lambda p: -p.effective_score,
     )[:n]
     negative = sorted(
-        (p for p in paths if p.score < 0), key=lambda p: p.score
+        (p for p in paths if p.effective_score < 0),
+        key=lambda p: p.effective_score,
     )[:n]
     return {
         "positive": [
-            {"node_id": p.node_id, "score": p.score, "rationale": p.rationale}
+            {"node_id": p.node_id, "score": p.effective_score, "rationale": p.rationale}
             for p in positive
         ],
         "negative": [
-            {"node_id": p.node_id, "score": p.score, "rationale": p.rationale}
+            {"node_id": p.node_id, "score": p.effective_score, "rationale": p.rationale}
             for p in negative
         ],
     }

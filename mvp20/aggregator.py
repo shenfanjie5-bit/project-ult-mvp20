@@ -108,6 +108,18 @@ _TREND_SIGN = {
     "down_moderate": -0.6,
 }
 
+# C-2 fix — a *qualitative* ``trend`` tag (``up``/``down``) is a weak cue, not a
+# saturated signal. Historically a bare ``trend: up`` returned ``abs(sign) =
+# 1.0``, letting a content-free directional tag (no rank / share / strength,
+# e.g. an analyst who wrote "不填具体排名和份额") pin a fundamental leaf at full
+# magnitude. A trend with no real numeric backing must stay SMALL: the trend's
+# direction-intensity (up_strong/up vs up_moderate vs mixed) scales WITHIN this
+# cap. Confidence gating happens downstream — ``_aggregate_parent`` already
+# multiplies every leaf score by its confidence, so we deliberately do NOT
+# re-apply confidence here (that would double-count it). Bare ``flat``/``stable``
+# (sign 0) still maps to 0.
+_BARE_TREND_MAGNITUDE_CAP = 0.2
+
 
 def _clip(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, x))
@@ -128,10 +140,13 @@ def _to_scalar(value: Any, node: dict | None = None) -> float:
     here we just want how strong the signal is.
 
     Resolution order:
-    1. Explicit ``score`` / ``intensity`` keys (passed through, clipped).
+    1. Explicit ``score`` / ``intensity`` / ``strength`` keys (passed through,
+       clipped) — an explicit numeric strength earns FULL magnitude.
     2. ``yoy_pct``: tanh(yoy/50) magnitude (50% YoY ≈ 0.76).
     3. ``magnitude``: strong/moderate/weak/none table.
-    4. ``trend``: ``up`` → 1.0, ``down`` → 1.0 (sign carried by direction).
+    4. ``trend``: a *qualitative* directional tag with no numeric strength →
+       a SMALL magnitude capped at ``_BARE_TREND_MAGNITUDE_CAP`` (×0.2),
+       scaled by the trend's own intensity. Never saturates to ±1.0 (C-2 fix).
     5. Numeric scalar at top level → clipped.
     6. Anything else → 0.
     """
@@ -167,12 +182,19 @@ def _to_scalar(value: Any, node: dict | None = None) -> float:
         if mag.lower() in _MAGNITUDE_TABLE:
             return _MAGNITUDE_TABLE[mag.lower()]
 
-    # 4. trend (sign collapsed into magnitude here — direction owned by node)
+    # 4. trend — a QUALITATIVE directional tag. We only reach here when steps
+    # 1-3 found no explicit numeric strength/score/intensity, no yoy_pct, and no
+    # ``magnitude`` word, i.e. the node has NO real numeric backing for its
+    # magnitude. Such a bare ``trend: up``/``down`` must NOT saturate to ±1.0
+    # (C-2). Cap it small and let the trend's direction-intensity scale within
+    # the cap: ``up``/``up_strong`` (sign ±1.0) → 0.2, ``up_moderate`` (±0.6) →
+    # 0.12, ``mixed`` (0.3) → 0.06, ``flat``/``stable`` (0.0) → 0.0. Sign is
+    # owned by the node's ``direction``; here we only emit the magnitude.
     trend = value.get("trend")
     if isinstance(trend, str):
         sign = _TREND_SIGN.get(trend.lower())
         if sign is not None:
-            return abs(sign)
+            return _BARE_TREND_MAGNITUDE_CAP * abs(sign)
 
     # 5. Some Optionality nodes carry split values — fall back to the future
     # piece's magnitude if no other signal present.
@@ -504,9 +526,30 @@ _ANALYST_RATING_SCALE = 0.46    # ≈ 2× std → ±2σ saturates the signal to 
 # median mixes industries and will mis-rank names in atypical sectors. An
 # industry-relative re-center (median/IQR within the peer group) is the intended
 # future refinement; until then read these as "vs the broad market", not "vs
-# peers".
+# peers". The gross-margin field below additionally carries an asymmetric lower
+# tail (M-2) so structurally thin-margin assemblers aren't floored at -1.0; the
+# net-margin / efficiency / cycle fields still use a symmetric universe scale.
 _GROSS_MARGIN_MEDIAN = 0.29   # gross-margin fraction
 _GROSS_MARGIN_SCALE = 0.22    # ≈ IQR; +1 IQR above median saturates to +1
+# M-2 fix — ASYMMETRIC lower tail for gross margin. Single-digit gross margin is
+# STRUCTURALLY NORMAL for servers / EMS / 代工 (assemblers pass through component
+# cost), so the symmetric universe scale floored thin-margin-but-profitable names
+# at -1.0 (000977 gm 6.6% → -1.0; 601138 gm 7.4% → -0.98), overstating
+# fundamental weakness. The negative side now uses a WIDER scale so a thin
+# structural margin reads MODERATELY negative (~-0.6) instead of saturating,
+# while a genuinely collapsed/negative margin still approaches -1.0 (direction
+# stays negative — never over-corrected to positive). The POSITIVE side keeps the
+# original scale, so healthy-margin names are bit-for-bit unchanged.
+#
+# Why not a per-industry median keyed on ``industry_id``? The repo's only
+# industry tag (e.g. ``AI_COMPUTE``) is too coarse: it bundles thin-margin EMS
+# (浪潮 6.6% / 工业富联 7.4%) with high-margin chip & cloud names (NVDA 71% / Meta
+# 82%), so the bucket median (~0.55) sits ABOVE the universe and re-centering the
+# EMS names on it makes them MORE negative, not less — the opposite of the goal.
+# An asymmetric tail fixes the structural-floor problem without that backfire and
+# without needing a finer (currently absent) business-model tag. A genuine
+# per-business-model median is the right future refinement once such a tag exists.
+_GROSS_MARGIN_SCALE_NEG = 0.35  # wider negative-side scale (structural thin-margin floor)
 _NET_MARGIN_MEDIAN = 0.12     # net-margin fraction
 _NET_MARGIN_SCALE = 0.16      # ≈ IQR
 _CCC_DAYS_MEDIAN = 36.0       # cash-conversion-cycle days (lower = better)
@@ -529,6 +572,48 @@ _LABOR_COST_YOY_SCALE = 5.0   # % yoy per ~1 tanh unit
 _REALTIME_DEDUP_PRIMARY: dict[str, str] = {
     "L9.company.earnings_guidance": "L5.fcst.guidance_change",
 }
+
+# C-3 fix — freshness gate for the price-run-up / priced-in path. ``L6.priced.
+# run_up`` turns a 20-day price move into a ``priced_in_discount``. When that
+# row is a stale snapshot (its ``updated_at`` lags the freshest data in the
+# snapshot by more than a few trading days) it can drive a full priced-in
+# penalty off a move that has already reversed (observed: a run_up frozen ~3
+# weeks behind the live price feed). These dp_ids' magnitude is multiplied by a
+# freshness weight derived from ``updated_at`` vs the snapshot's freshest
+# ``updated_at`` (the most robust, always-present asof signal at this layer —
+# the run_up value payload itself carries no observation date). The weight is
+# 1.0 up to ``_RUN_UP_FRESH_TRADING_DAYS`` of lag, then ramps linearly to 0.0
+# at ``_RUN_UP_STALE_TRADING_DAYS`` (a ~3-week-stale row is fully zeroed). Trading
+# days are approximated from calendar days via ``_TRADING_DAYS_PER_CALENDAR_DAY``.
+_FRESHNESS_GATED_DP_IDS: frozenset[str] = frozenset({"L6.priced.run_up"})
+_RUN_UP_FRESH_TRADING_DAYS = 5.0    # ≤ this lag → full weight
+_RUN_UP_STALE_TRADING_DAYS = 15.0   # ≥ this lag → fully zeroed
+_TRADING_DAYS_PER_CALENDAR_DAY = 5.0 / 7.0
+
+
+def _freshness_weight(
+    entry_updated_at: Any,
+    ref_updated_at: Any,
+) -> float:
+    """Down-weight a stale realtime row. ``entry_updated_at`` / ``ref_updated_at``
+    are unix epoch seconds (the ``updated_at`` on the entry and the freshest
+    ``updated_at`` in the snapshot). Returns a multiplier in [0, 1]: 1.0 when the
+    row lags the reference by ≤ ``_RUN_UP_FRESH_TRADING_DAYS``, ramping linearly
+    to 0.0 at ``_RUN_UP_STALE_TRADING_DAYS``. Missing / unparseable timestamps →
+    1.0 (fail-open: never invent staleness we can't measure)."""
+
+    entry_ts = _num(entry_updated_at)
+    ref_ts = _num(ref_updated_at)
+    if entry_ts is None or ref_ts is None:
+        return 1.0
+    lag_calendar_days = max(0.0, (ref_ts - entry_ts) / 86400.0)
+    lag_trading_days = lag_calendar_days * _TRADING_DAYS_PER_CALENDAR_DAY
+    if lag_trading_days <= _RUN_UP_FRESH_TRADING_DAYS:
+        return 1.0
+    if lag_trading_days >= _RUN_UP_STALE_TRADING_DAYS:
+        return 0.0
+    span = _RUN_UP_STALE_TRADING_DAYS - _RUN_UP_FRESH_TRADING_DAYS
+    return 1.0 - (lag_trading_days - _RUN_UP_FRESH_TRADING_DAYS) / span
 
 
 def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: str | None) -> float | None:
@@ -635,12 +720,17 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
 
     if dp_id == "L5.is.gross_margin":
         # fundamental_score. ``scalar`` is the gross-margin fraction. Higher =
-        # better → POSITIVE. Universe-relative re-center (see calibration block;
-        # industry-mixing caveat applies). 0.51 → +1.0, 0.29 → 0.0, 0.07 → -1.0.
+        # better → POSITIVE. Universe-relative re-center, with an ASYMMETRIC
+        # lower tail (M-2): the negative side uses a wider scale so a
+        # structurally thin (single-digit) margin reads moderately negative
+        # instead of flooring at -1.0, while genuinely collapsed margins still
+        # approach -1.0. 0.51 → +1.0, 0.29 → 0.0, 0.074 → ≈-0.62, ≤-0.06 → -1.0.
         gm = _num(value.get("scalar"))
         if gm is None:
             return None
-        return _clip((gm - _GROSS_MARGIN_MEDIAN) / _GROSS_MARGIN_SCALE, -1.0, 1.0)
+        delta = gm - _GROSS_MARGIN_MEDIAN
+        scale = _GROSS_MARGIN_SCALE if delta >= 0 else _GROSS_MARGIN_SCALE_NEG
+        return _clip(delta / scale, -1.0, 1.0)
 
     if dp_id == "L5.is.margins":
         # fundamental_score. ``net`` is the net-margin fraction (NOT operating).
@@ -851,10 +941,25 @@ def synthesize_realtime_nodes(
     The emitted node carries ``value={"score": abs(signal)}`` plus a
     ``direction`` so the sign survives ``_leaf_score``'s ``direction ×
     _to_scalar`` product. ``synthetic_realtime`` flags the origin for audit.
+
+    Freshness gate (C-3): dp_ids in ``_FRESHNESS_GATED_DP_IDS`` (the price-run-up
+    / priced-in path) have their magnitude scaled by ``_freshness_weight`` —
+    their ``updated_at`` vs the snapshot's freshest ``updated_at`` — so a stale
+    run_up row can't drive a full priced-in penalty off an already-reversed move.
     """
 
     if role_registry is None:
         return []
+
+    # Reference freshness = the freshest ``updated_at`` across the whole snapshot
+    # (the most robust asof signal available at this layer — individual run_up
+    # payloads carry no observation date). Used by the C-3 freshness gate below.
+    ref_updated_at = None
+    for _e in realtime_snapshot.values():
+        if isinstance(_e, Mapping):
+            _u = _num(_e.get("updated_at"))
+            if _u is not None and (ref_updated_at is None or _u > ref_updated_at):
+                ref_updated_at = _u
 
     out: list[dict] = []
     for dp_id, entry in realtime_snapshot.items():
@@ -889,6 +994,13 @@ def synthesize_realtime_nodes(
         signal = _realtime_signal(dp_id, entry.get("value"), rule.score_target)
         if signal is None:
             continue
+
+        # C-3 freshness gate: down-weight a stale price-run-up / priced-in row so
+        # a snapshot frozen weeks behind the live price can't drive a full
+        # priced-in penalty off an already-reversed move. Scoped to
+        # ``_FRESHNESS_GATED_DP_IDS`` so no other field's behaviour changes.
+        if dp_id in _FRESHNESS_GATED_DP_IDS:
+            signal *= _freshness_weight(entry.get("updated_at"), ref_updated_at)
 
         confidence = entry.get("confidence")
         try:

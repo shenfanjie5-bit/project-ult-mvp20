@@ -767,7 +767,12 @@ def test_field_goodwill_higher_is_strongly_negative():
 
 
 def test_field_gross_margin_higher_is_positive():
-    # clip((gm - 0.29) / 0.22, -1, 1). Above median → positive, below → negative.
+    # ASYMMETRIC re-center (M-2 fix): clip(delta/scale, -1, 1) where delta =
+    # gm - 0.29, scale = 0.22 above the median (POSITIVE side unchanged) and a
+    # WIDER 0.35 below it, so a structurally thin (single-digit) margin reads
+    # moderately negative instead of flooring at -1.0, while a genuinely
+    # collapsed margin still approaches -1.0.
+    # --- Positive side: unchanged from the symmetric scale ---
     # 0.51 → (0.51-0.29)/0.22 = 1.0 (saturates positive).
     assert _realtime_signal(
         "L5.is.gross_margin", {"scalar": 0.51}, "fundamental_score"
@@ -779,13 +784,26 @@ def test_field_gross_margin_higher_is_positive():
     assert _realtime_signal(
         "L5.is.gross_margin", {"scalar": 0.40}, "fundamental_score"
     ) == pytest.approx((0.40 - 0.29) / 0.22)
-    # 0.10 → (0.10-0.29)/0.22 ≈ -0.864 (below median → negative).
+    # --- Negative side: wider 0.35 scale (M-2). ---
+    # 0.10 → (0.10-0.29)/0.35 ≈ -0.543 (below median → negative, but NOT floored).
     assert _realtime_signal(
         "L5.is.gross_margin", {"scalar": 0.10}, "fundamental_score"
-    ) == pytest.approx((0.10 - 0.29) / 0.22)
+    ) == pytest.approx((0.10 - 0.29) / 0.35)
     assert _realtime_signal(
         "L5.is.gross_margin", {"scalar": 0.10}, "fundamental_score"
     ) < 0
+    # Structurally thin EMS/代工 margin (~7%) is moderately negative, NOT pinned
+    # at -1.0 (the bug M-2 fixes; previously (0.07-0.29)/0.22 = -1.0).
+    thin = _realtime_signal(
+        "L5.is.gross_margin", {"scalar": 0.07}, "fundamental_score"
+    )
+    assert thin == pytest.approx((0.07 - 0.29) / 0.35)
+    assert -0.8 < thin < -0.4
+    # A genuinely collapsed / negative gross margin still saturates to -1.0
+    # (direction stays negative — the asymmetry must NOT rescue a real loss).
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": -0.10}, "fundamental_score"
+    ) == pytest.approx(-1.0)
     # At the median → exactly neutral.
     assert _realtime_signal(
         "L5.is.gross_margin", {"scalar": 0.29}, "fundamental_score"
