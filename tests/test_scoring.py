@@ -207,13 +207,16 @@ class TestCompanyScore:
             valuation_pressure=0.0,
             priced_in_discount=0.0,
         )
-        # Raw Σ industry_total = 0.3 + 0.4*0.5 + (-0.1) = 0.4 (surfaced as
-        # components["industry_contrib"] for transparency). F7 bounds the
-        # value that enters ``score`` via tanh(industry_total/K), so the
-        # score is the *bounded* fundamental (no other channels here).
-        from mvp20.scoring import _bound_industry_total
+        # R-2b: ``industry_contrib`` is now the RAW weighted_sum Σ(score×weight)
+        # where weight = exposure×rev_share×prof_e×fin_s×val_s×confidence.
+        # weights: v1 conf1 → w=1.0; v2 exposure0.5 conf1 → w=0.5; v3 w=1.0.
+        # weighted_sum = 0.3*1 + 0.4*0.5 + (-0.1)*1 = 0.4 (surfaced for
+        # transparency). The value that enters ``score`` is the COVERAGE-WEIGHTED
+        # MEAN weighted_sum/weight_sum = 0.4 / (1.0+0.5+1.0) = 0.4/2.5 = 0.16
+        # (already in [-1,1]; no tanh). No other channels here, so score == mean.
         assert out["components"]["industry_contrib"] == pytest.approx(0.4)
-        assert out["score"] == pytest.approx(_bound_industry_total(0.4))
+        assert out["components"]["industry_contrib_bounded"] == pytest.approx(0.16)
+        assert out["score"] == pytest.approx(0.16)
         assert len(out["industry_contributions"]) == 3
 
     def test_discount_terms_subtract(self) -> None:
@@ -225,17 +228,27 @@ class TestCompanyScore:
             valuation_pressure=0.1,
             priced_in_discount=0.05,
         )
-        # F7: the fundamental block is bounded before summing, so
-        # score = tanh(0.5/K) + 0.2 + 0.1 - 0.1 - 0.1 - 0.05
-        # (was 0.5 + ... = 0.55 pre-F7; the raw 0.5 still lives in
-        # components["industry_contrib"]).
-        from mvp20.scoring import _bound_industry_total
+        # R-2b: the fundamental block is now the COVERAGE-WEIGHTED MEAN of the
+        # industry vars (already in [-1,1], no tanh). A single node's mean is
+        # the node score itself (the multipliers only scale its weight, which
+        # cancels in the 1-node mean), so mean = 0.5. The discount/additive
+        # channels then subtract/add unchanged:
+        #   score = 0.5 + 0.2 + 0.1 - 0.1 - 0.1 - 0.05 = 0.55.
+        # The raw weighted_sum (0.5*weight, weight=1.0 here) still lives in
+        # components["industry_contrib"].
         assert out["components"]["industry_contrib"] == pytest.approx(0.5)
-        assert out["score"] == pytest.approx(
-            _bound_industry_total(0.5) + 0.2 + 0.1 - 0.1 - 0.1 - 0.05
-        )
+        assert out["score"] == pytest.approx(0.5 + 0.2 + 0.1 - 0.1 - 0.1 - 0.05)
 
-    def test_multiplier_chain_applied(self) -> None:
+    def test_multiplier_chain_applied_to_raw_contrib_not_mean(self) -> None:
+        # R-2b: the multiplier chain (exposure×rev_share×prof_e×fin_s×val_s) now
+        # scales only the WEIGHT, not the value that enters ``score``. For a
+        # SINGLE industry var the coverage-weighted mean is the node score
+        # itself (the weight cancels: weighted_sum/weight_sum = score×w / w =
+        # score), so score = 1.0 regardless of the multipliers. The multipliers
+        # still surface in the RAW weighted_sum reported as
+        # components["industry_contrib"]: contrib = score×weight, and with
+        # confidence defaulting to 1.0 the weight == the product chain
+        # 0.5*0.5*2.0*1.5*1.0 = 0.75 → weighted_sum = 1.0*0.75 = 0.75.
         out = compute_company_score(
             industry_variables=[
                 self._industry_var(
@@ -250,12 +263,9 @@ class TestCompanyScore:
             valuation_pressure=0.0,
             priced_in_discount=0.0,
         )
-        # Raw product chain = 1.0 * 0.5 * 0.5 * 2.0 * 1.5 * 1.0 = 0.75
-        # (in components["industry_contrib"]). F7 bounds the value that
-        # enters ``score`` → tanh(0.75/K).
-        from mvp20.scoring import _bound_industry_total
         assert out["components"]["industry_contrib"] == pytest.approx(0.75)
-        assert out["score"] == pytest.approx(_bound_industry_total(0.75))
+        assert out["components"]["industry_contrib_bounded"] == pytest.approx(1.0)
+        assert out["score"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -892,16 +902,13 @@ def test_confidence_role_compresses_final_score_without_adding_signal() -> None:
 
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
-    from mvp20.scoring import _bound_industry_total
-
     assert result["company_score"]["components"]["industry_contrib"] == pytest.approx(1.0)
     assert result["role_components"]["confidence_multiplier"] == pytest.approx(0.5)
-    # F7: the fundamental (raw industry_contrib 1.0) is bounded via tanh
-    # before it drives base_score; the 0.5 confidence multiplier then halves
-    # it. Pre-F7 this asserted 1.0 * 0.5 = 0.5.
-    assert result["final_score"]["base_score"] == pytest.approx(
-        _bound_industry_total(1.0) * 0.5
-    )
+    # R-2b: the fundamental is the single-node coverage-weighted mean = the node
+    # score (1.0), already in [-1,1] (no tanh). The 0.5 confidence multiplier
+    # then halves base_score → 1.0 * 0.5 = 0.5. The intent stands: confidence
+    # COMPRESSES the score (scales it down) without adding any new signal.
+    assert result["final_score"]["base_score"] == pytest.approx(1.0 * 0.5)
 
 
 def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -> None:
@@ -981,19 +988,19 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
 
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
-    from mvp20.scoring import _bound_industry_total
-
     assert result["company_score"]["components"]["industry_contrib"] == pytest.approx(1.0)
     assert result["role_components"]["funding_score"] == pytest.approx(0.2)
     assert result["role_components"]["theme_multiplier"] == pytest.approx(1.5)
     assert result["role_components"]["risk_discount"] == pytest.approx(0.1)
-    # F7: fundamental (raw industry_contrib 1.0) is tanh-bounded, then the
-    # theme_multiplier (1.5) scales the fundamental block; funding_score (+0.2)
-    # and risk_discount (-0.1) net +0.1 on top. Pre-F7 this was
-    # 1.0*1.5 + 0.2 - 0.1 = 1.6; now bounded*1.5 + 0.1.
-    assert result["core_final_score"]["base_score"] == pytest.approx(
-        _bound_industry_total(1.0) * 1.5 + 0.1
-    )
+    # R-2b: fundamental is the single-node coverage-weighted mean = 1.0 (no
+    # tanh). The post-tanh ``fundamental *= multiplier_stack`` was REMOVED, so
+    # the theme_multiplier (1.5) no longer scales the fundamental block — it is
+    # still routed to role_components for downstream/timing channels. The
+    # additive funding_score (+0.2) and the risk_discount (-0.1) net +0.1 on top
+    # of the fundamental: base_score = 1.0 + 0.2 - 0.1 = 1.1. The semantic
+    # routing intent stands: additive→add, discount→subtract, multiplier→its
+    # own channel. Pre-R-2b this was tanh(1.0)*1.5 + 0.1.
+    assert result["core_final_score"]["base_score"] == pytest.approx(1.0 + 0.2 - 0.1)
     assert result["market_adapter"]["market_code"] == "US"
     assert result["final_score"]["base_score"] > result["core_final_score"]["base_score"]
 
@@ -1043,13 +1050,12 @@ def test_score_company_outputs_core_and_market_adjusted_scores() -> None:
 
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
-    from mvp20.scoring import _bound_industry_total
-
-    # F7: fundamental (raw industry_contrib 1.0) is tanh-bounded before the
-    # theme_multiplier (1.5) scales the fundamental block. Pre-F7: 1.0*1.5=1.5.
-    assert result["core_final_score"]["base_score"] == pytest.approx(
-        _bound_industry_total(1.0) * 1.5
-    )
+    # R-2b: fundamental is the single-node coverage-weighted mean = 1.0 (no
+    # tanh), and the ``fundamental *= multiplier_stack`` step was REMOVED, so
+    # the theme_multiplier (1.5) no longer scales the fundamental block. No
+    # additive/discount channels here ⇒ core base_score = 1.0. Pre-R-2b:
+    # tanh(1.0)*1.5.
+    assert result["core_final_score"]["base_score"] == pytest.approx(1.0)
     assert result["market_adapter"]["market_code"] == "CN_A"
     assert result["market_adjusted_final_score"] is result["final_score"]
     assert result["short_total"] == pytest.approx(result["final_score"]["short_total"])
@@ -1269,10 +1275,18 @@ class TestFundamentalCollapse:
 
         one = contrib_for(1)
         three = contrib_for(3)
-        # Single node: Σconf=0.9 ≤ 1 → damped mean = 0.72/1.0 = 0.72.
-        assert one == pytest.approx(0.72)
-        # Three identical nodes: Σ(0.8×0.9)=2.16, Σconf=2.7 → 2.16/2.7 = 0.8.
-        assert three == pytest.approx(0.8)
-        # Crucially NOT linear: 3 nodes is ~1.1×, not 3× (old summing = 2.16).
+        # Two stages now bound the contribution against node count:
+        #  (1) the dead-sink rescue collapses the synthetic nodes into ONE
+        #      "realtime_fundamental" var via a damped mean — 1 node →
+        #      0.72/max(1.0,0.9)=0.72; 3 nodes → 2.16/2.7=0.8.
+        #  (2) R-2b: ``industry_contrib`` is then the RAW weighted_sum of the
+        #      industry vars = collapsed_score × weight, weight = mean_conf (0.9)
+        #      since the synthetic var defaults the other multipliers to 1.0:
+        #        1 node → 0.72 * 0.9 = 0.648
+        #        3 nodes → 0.80 * 0.9 = 0.720
+        assert one == pytest.approx(0.648)
+        assert three == pytest.approx(0.72)
+        # Crucially NOT linear: 3 nodes is ~1.1×, not 3× (per-node summing
+        # would have been 3 * 0.648 ≈ 1.94).
         assert three < 3.0 * one
         assert three < 1.0

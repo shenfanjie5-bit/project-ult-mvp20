@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from mvp20.field_governance import SPEC_TOTAL_DP_IDS
 from mvp20.coverage import (
     _collect_sqlite_known_dps,
     combined_coverage_summary,
@@ -362,7 +363,9 @@ def test_backend_handler_includes_sqlite_layer(tmp_path: Path) -> None:
         spec_path=SPEC_PATH,
     )
     overall = report["overall"]
-    assert overall["spec_total"] == 250
+    # spec_total is derived from the real data_point_roles.yaml (spec_path), so
+    # it tracks SPEC_TOTAL_DP_IDS (256 after R-2a added the 6 L5.fina.* ratios).
+    assert overall["spec_total"] == SPEC_TOTAL_DP_IDS
     assert overall["n_sqlite_known"] > 0, (
         "expected at least some SQLite Known dp_ids for 000063.SZ; "
         f"got {overall['n_sqlite_known']}"

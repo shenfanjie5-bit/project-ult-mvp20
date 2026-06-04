@@ -387,7 +387,14 @@ def compute_company_score(
         }
     """
 
-    industry_total = 0.0
+    # R-2b: coverage-normalized weighted MEAN (was a plain Σ then tanh-bounded).
+    # The sum made ``fundamental`` a coverage proxy — |industry_total| correlated
+    # ~0.95 with the non-zero node count (more covered nodes → bigger sum → tanh
+    # saturated), so it measured "how much data" not "how good". A confidence-
+    # weighted MEAN is already in [-1, 1] (mean of [-1, 1] scores), so node count
+    # no longer inflates it and the F7 tanh / _INDUSTRY_TOTAL_SCALE bound is moot.
+    weighted_sum = 0.0   # Σ(score × weight)
+    weight_sum = 0.0     # Σ weight  (the mean denominator)
     contribs: list[dict[str, Any]] = []
     for v in industry_variables or []:
         score = _coerce_float(v.get("score"))
@@ -396,9 +403,12 @@ def compute_company_score(
         prof_e = _coerce_float(v.get("profit_elasticity"), 1.0)
         fin_s = _coerce_float(v.get("financial_sensitivity"), 1.0)
         val_s = _coerce_float(v.get("valuation_sensitivity"), 1.0)
+        conf = _coerce_float(v.get("confidence"), 1.0)
 
         contrib = score * exposure * rev_share * prof_e * fin_s * val_s
-        industry_total += contrib
+        weight = exposure * rev_share * prof_e * fin_s * val_s * conf
+        weighted_sum += score * weight
+        weight_sum += weight
 
         contribs.append({
             "name": v.get("name") or v.get("node_id") or "",
@@ -418,7 +428,9 @@ def compute_company_score(
     # (unbounded) Σ; ``industry_bounded`` is what actually enters ``total`` so
     # fundamental can't dominate / grow merely with node count. The raw sum is
     # still reported in components["industry_contrib"] for transparency.
-    industry_bounded = _bound_industry_total(industry_total)
+    # Raw weighted sum kept for transparency; the MEAN is what enters the score.
+    industry_total = weighted_sum
+    industry_bounded = weighted_sum / weight_sum if weight_sum > 1e-9 else 0.0
 
     total = industry_bounded + event + capital - risk - val_pressure - priced_in
 
@@ -1652,9 +1664,13 @@ def score_company(
     # channels and can't grow merely with industry-node count. The raw Σ is
     # still surfaced as components["industry_contrib"] for transparency.
     industry_contrib = company_score["components"]["industry_contrib_bounded"]
+    # R-2b: ``industry_contrib_bounded`` is now the coverage-normalized industry
+    # MEAN (no longer tanh(Σ)). The post-tanh ``*= multiplier_stack`` is removed:
+    # multiplying a SIGNED fundamental by a >=1 tailwind made 41% of names
+    # (negative fundamental) MORE negative (inflows worsening weak names) and
+    # pushed every stock past the F7 bound. Tailwind multipliers belong in a
+    # timing/sentiment channel, not multiplied onto company quality.
     fundamental = industry_contrib + company_event_score
-    if role_components:
-        fundamental *= role_components.get("multiplier_stack", 1.0)
     expectation_gap_score = _coerce_float(
         aggregated_nodes.get("expectation_gap_score"),
         role_components.get("expectation_gap", 0.0),

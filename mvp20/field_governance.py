@@ -16,7 +16,7 @@ import re
 import yaml
 
 
-SPEC_TOTAL_DP_IDS = 250
+SPEC_TOTAL_DP_IDS = 256  # R-2a: +6 L5.fina.* financial-quality ratios (was 250)
 
 FIELD_ROLES = {
     "identity",
@@ -334,7 +334,8 @@ class FieldGovernanceRegistry:
 
 
 def parse_spec_dp_ids(path: Path = DEFAULT_COVERAGE_AUDIT_PATH) -> set[str]:
-    """Parse Section 7 of the coverage audit and return the 250 spec dp_id set."""
+    """Parse Section 7 of the coverage audit and return the spec dp_id set
+    (256 rows after R-2a added the 6 L5.fina.* financial-quality ratios)."""
 
     text = path.read_text(encoding="utf-8")
     in_section = False

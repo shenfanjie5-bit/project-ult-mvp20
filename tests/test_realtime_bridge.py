@@ -950,6 +950,208 @@ def test_field_labor_cost_up_is_negative():
 
 
 # ---------------------------------------------------------------------------
+# R-2a: company financial-QUALITY ratios (L5.fina.*) → fundamental_score
+# (additive, signed). Each reads the snapshot ``value`` field; tanh re-center on
+# the A-share universe benchmark (R-2; R-3 upgrades to a细分赛道 cross-section).
+# Direction per field. (Benchmarks verified vs realtime_current, mode=ro.)
+# ---------------------------------------------------------------------------
+
+
+# 16. L5.fina.roe → fundamental_score (higher ROE = better → POSITIVE)
+
+
+def test_field_roe_higher_is_positive():
+    # tanh((v - 3.1)/2.0). 3.1 → neutral; above → positive, below → negative.
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 5.5648}, "fundamental_score"
+    ) == pytest.approx(math.tanh((5.5648 - 3.1) / 2.0))
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 5.5648}, "fundamental_score"
+    ) > 0
+    # Below the median ROE → negative.
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 0.9093}, "fundamental_score"
+    ) == pytest.approx(math.tanh((0.9093 - 3.1) / 2.0))
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 0.9093}, "fundamental_score"
+    ) < 0
+    # At the benchmark → exactly neutral.
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 3.1}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Stays inside [-1, 1] for an extreme ROE.
+    assert -1.0 <= _realtime_signal(
+        "L5.fina.roe", {"value": 100.0}, "fundamental_score"
+    ) <= 1.0
+    # Missing / None / non-numeric value → None.
+    assert _realtime_signal(
+        "L5.fina.roe", {"period": "2025Q1"}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": None}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": "n/a"}, "fundamental_score"
+    ) is None
+
+
+# 17. L5.fina.roa → fundamental_score (higher ROA = better → POSITIVE)
+
+
+def test_field_roa_higher_is_positive():
+    # tanh((v - 1.8)/1.2). 1.8 → neutral.
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": 2.2435}, "fundamental_score"
+    ) == pytest.approx(math.tanh((2.2435 - 1.8) / 1.2))
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": 2.2435}, "fundamental_score"
+    ) > 0
+    # Below median → negative.
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": 0.6702}, "fundamental_score"
+    ) < 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": 1.8}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.roa", {"period": "2025Q1"}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# 18. L5.fina.debt_ratio → fundamental_score (higher debt = worse → INVERSE)
+
+
+def test_field_debt_ratio_higher_is_negative():
+    # -tanh((v - 47.0)/20.0). High debt is BAD → negative; low debt → positive.
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 65.871}, "fundamental_score"
+    ) == pytest.approx(-math.tanh((65.871 - 47.0) / 20.0))
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 65.871}, "fundamental_score"
+    ) < 0  # high leverage drags fundamental down
+    # Low debt (below the benchmark) → positive.
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 7.43}, "fundamental_score"
+    ) == pytest.approx(-math.tanh((7.43 - 47.0) / 20.0))
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 7.43}, "fundamental_score"
+    ) > 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 47.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"period": "2025Q1"}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# 19. L5.fina.ocf_quality → fundamental_score (higher = better; winsorized tail)
+
+
+def test_field_ocf_quality_winsorized_and_positive():
+    # c = clip(v, -50, 150); tanh((c - 10.0)/30.0). 10.0 → neutral.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": 11.0826}, "fundamental_score"
+    ) == pytest.approx(math.tanh((11.0826 - 10.0) / 30.0))
+    # A negative OCF-quality (below the benchmark) → negative.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": -5.6552}, "fundamental_score"
+    ) == pytest.approx(math.tanh((-5.6552 - 10.0) / 30.0))
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": -5.6552}, "fundamental_score"
+    ) < 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": 10.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # WINSORIZE: an extreme tail (raw max ≈2863) is clipped to 150 BEFORE tanh,
+    # so it doesn't pin harder than a value of exactly 150 would.
+    extreme = _realtime_signal(
+        "L5.fina.ocf_quality", {"value": 2863.62}, "fundamental_score"
+    )
+    capped = _realtime_signal(
+        "L5.fina.ocf_quality", {"value": 150.0}, "fundamental_score"
+    )
+    assert extreme == pytest.approx(capped)
+    assert extreme == pytest.approx(math.tanh((150.0 - 10.0) / 30.0))
+    assert 0.0 < extreme < 1.0  # tanh-bounded, not a raw 2863
+    # The lower tail is winsorized at -50 too.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": -73.06}, "fundamental_score"
+    ) == pytest.approx(math.tanh((-50.0 - 10.0) / 30.0))
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# 20. L5.fina.net_profit_yoy → fundamental_score (growth → POSITIVE)
+
+
+def test_field_net_profit_yoy_growth_is_positive():
+    # tanh((v - 20.0)/50.0). 20.0 → neutral; strong growth → positive.
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": 70.0}, "fundamental_score"
+    ) == pytest.approx(math.tanh((70.0 - 20.0) / 50.0))
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": 70.0}, "fundamental_score"
+    ) > 0
+    # A profit collapse (yoy below the benchmark) → negative.
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": -46.5817}, "fundamental_score"
+    ) == pytest.approx(math.tanh((-46.5817 - 20.0) / 50.0))
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": -46.5817}, "fundamental_score"
+    ) < 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": 20.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Extreme growth stays bounded.
+    assert -1.0 <= _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": 1801.3}, "fundamental_score"
+    ) <= 1.0
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# 21. L5.fina.asset_turnover → fundamental_score (higher turnover = better)
+
+
+def test_field_asset_turnover_higher_is_positive():
+    # tanh((v - 0.13)/0.08). 0.13 → neutral.
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": 0.2152}, "fundamental_score"
+    ) == pytest.approx(math.tanh((0.2152 - 0.13) / 0.08))
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": 0.2152}, "fundamental_score"
+    ) > 0
+    # Below the benchmark → negative.
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": 0.0914}, "fundamental_score"
+    ) < 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": 0.13}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# ---------------------------------------------------------------------------
 # End-to-end: a high-quality fundamental snapshot (high margins, fast cash
 # cycle, falling labor cost) yields a POSITIVE fundamental contribution to the
 # company score; a low-quality one (thin margins, slow cycle, rising cost)
@@ -1100,12 +1302,14 @@ def test_fundamental_synthetic_node_now_increases_score():
     base = res["core_final_score"]["base_score"]
     contrib = res["company_score"]["components"]["industry_contrib"]
     # Was +0.000; now the full +0.9 reaches the score via industry_contrib.
-    # Single synthetic node: damped mean = Σ(0.9×1.0)/max(1.0, 1.0) = 0.9
-    # (Σconf=1.0 → floor=1.0 → unchanged from the raw signed score). The raw
-    # 0.9 is surfaced as industry_contrib; F7 then bounds the value that
-    # reaches base_score via tanh(0.9/K) (pre-F7 base asserted 0.9).
-    from mvp20.scoring import _bound_industry_total
-    assert base == pytest.approx(_bound_industry_total(0.9))
+    # The synthetic node collapses to one "realtime_fundamental" var (score 0.9,
+    # conf 1.0). The RAW weighted_sum surfaced as industry_contrib is 0.9 (the
+    # authored Unknown auth_seed has score 0.0 so it adds nothing to the sum).
+    # R-2b: base_score is the COVERAGE-WEIGHTED MEAN over the two fundamental
+    # vars [0.0 @ w=0.3 (auth_seed conf), 0.9 @ w=1.0]: 0.9 / (0.3+1.0) =
+    # 0.9/1.3 ≈ 0.6923 — already in [-1,1], no tanh. The auth_seed (a covered
+    # zero-score node) legitimately dilutes the mean. Pre-R-2b base = tanh(0.9).
+    assert base == pytest.approx(0.9 / 1.3)
     assert contrib == pytest.approx(0.9)
 
     # Synthetic dead-sink nodes are now collapsed into a SINGLE damped-mean
@@ -1137,10 +1341,11 @@ def test_optionality_synthetic_node_routes_through_industry():
     }
     agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
     res = score_company(overlay, aggregated_nodes=agg)
-    from mvp20.scoring import _bound_industry_total
+    # Raw weighted_sum 0.6 stays in industry_contrib (auth_seed score 0.0 adds
+    # nothing). R-2b: base_score is the coverage-weighted MEAN over the two
+    # fundamental vars [0.0 @ w=0.3, 0.6 @ w=1.0] = 0.6/1.3 ≈ 0.4615 (no tanh).
     assert res["company_score"]["components"]["industry_contrib"] == pytest.approx(0.6)
-    # F7: raw 0.6 stays in industry_contrib; base_score is the bounded value.
-    assert res["core_final_score"]["base_score"] == pytest.approx(_bound_industry_total(0.6))
+    assert res["core_final_score"]["base_score"] == pytest.approx(0.6 / 1.3)
 
 
 def test_valuation_synthetic_node_counts_once_no_double_count():

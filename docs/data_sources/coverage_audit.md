@@ -181,7 +181,7 @@
 | `L10.val.historical_quantile` | L10_validation | 估值历史分位 | Tushare, AKShare |
 | `L11.short.technical` | L11_stock_result | 技术面反应 | FMP, Tushare, AKShare, Futu |
 
-## 7. 完整覆盖矩阵（250 行）
+## 7. 完整覆盖矩阵（256 行）
 
 「✓ full / ○ partial / $ premium_locked / — none」
 
@@ -306,6 +306,12 @@
 | `L5.cf.fcf` | L5 | 自由现金流 | ✓ | ✓ | ✓ | ✓ | ○ | ✓✓ 多源覆盖 |
 | `L5.cf.capex` | L5 | Capex | ✓ | ✓ | ✓ | ✓ | ○ | ✓✓ 多源覆盖 |
 | `L5.cf.buyback_dividend` | L5 | 回购/分红 | ✓ | ✓ | ✓ | ✓ | ○ | ✓✓ 多源覆盖 |
+| `L5.fina.roe` | L5 | ROE(净资产收益率) | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.roa` | L5 | ROA(总资产收益率) | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.debt_ratio` | L5 | 资产负债率(反向) | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.ocf_quality` | L5 | 经营现金流质量 | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.net_profit_yoy` | L5 | 净利润同比增速 | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.asset_turnover` | L5 | 总资产周转率 | — | ○ | ○ | — | — | ○ realtime 派生 |
 | `L5.fcst.revenue_margin` | L5 | 收入/毛利率预期 | $ | ✓ | — | — | — | ✓ 单源覆盖 |
 | `L5.fcst.eps_cf` | L5 | EPS/现金流预期 | $ | ✓ | — | — | — | ✓ 单源覆盖 |
 | `L5.fcst.guidance_change` | L5 | 公司指引变化 | ○ | ✓ | ○ | — | — | ✓ 单源覆盖 |

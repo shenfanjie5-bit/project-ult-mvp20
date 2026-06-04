@@ -594,6 +594,28 @@ _INVENTORY_TURNOVER_DAYS_SCALE = 120.0  # ≈ IQR of inventory days
 # ±5% swing toward ±1, so no universe median/scale is needed for this field.
 _LABOR_COST_YOY_SCALE = 5.0   # % yoy per ~1 tanh unit
 
+# R-2a: company financial-QUALITY ratios (L5.fina.*) → fundamental_score. These
+# benchmarks are the A-share UNIVERSE cross-section (median/spread of the
+# realtime_current snapshot, mode=ro): ROE/ROA/debt/ocf/growth/turnover all
+# re-centered on "vs the broad market". R-3 upgrades these to a finer细分赛道
+# (peer-group) cross-section once an industry-relative percentile sink lands —
+# until then read them as universe-relative, NOT peer-relative. Each field is a
+# tanh(...) de-saturation so extreme tails don't pin every name at ±1.
+_ROE_BENCH = 3.1              # quarterly ROE %, universe median (≈3.11 observed)
+_ROE_SCALE = 2.0             # ROE % per ~1 tanh unit (higher ROE = better)
+_ROA_BENCH = 1.8             # quarterly ROA %, universe median (≈1.82 observed)
+_ROA_SCALE = 1.2             # ROA % per ~1 tanh unit (higher = better)
+_DEBT_RATIO_BENCH = 47.0     # debt/assets %, universe median (≈47.3 observed)
+_DEBT_RATIO_SCALE = 20.0     # debt % per ~1 tanh unit (higher debt = WORSE → inverse)
+_OCF_QUALITY_BENCH = 10.0    # OCF-quality, universe median (≈9.9 observed)
+_OCF_QUALITY_SCALE = 30.0    # OCF-quality per ~1 tanh unit (higher = better)
+_OCF_QUALITY_CLIP_LO = -50.0  # winsorize floor (raw min ≈ -73)
+_OCF_QUALITY_CLIP_HI = 150.0  # winsorize cap before tanh (raw max ≈ 2863 — extreme tail)
+_NET_PROFIT_YOY_BENCH = 20.0  # net-profit yoy %, universe median (≈20.4 observed)
+_NET_PROFIT_YOY_SCALE = 50.0  # yoy % per ~1 tanh unit (growth → positive)
+_ASSET_TURNOVER_BENCH = 0.13  # asset turnover, universe median (≈0.129 observed)
+_ASSET_TURNOVER_SCALE = 0.08  # turnover per ~1 tanh unit (higher = better)
+
 # Valuation-MULTIPLE → valuation_rerating re-center (F1 fix). ``L6.mult.ev_ebitda``
 # and ``L6.mult.forward_pe`` are DISTINCT expensive-vs-cheap multiples (NOT a
 # re-count of PE/PB — those drive valuation_rerating via the percentile sink, and
@@ -1014,6 +1036,63 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
         if yoy is None:
             return None
         return -_clip(math.tanh(yoy / _LABOR_COST_YOY_SCALE), -1.0, 1.0)
+
+    # --- R-2a: company financial-QUALITY ratios (L5.fina.*) → fundamental_score.
+    # Each reads the snapshot's ``value`` field; None / non-numeric → None (no
+    # node). Universe benchmark re-center (R-2; R-3 upgrades to a细分赛道
+    # cross-section), de-saturated with tanh so extreme tails don't pin at ±1. ---
+
+    if dp_id == "L5.fina.roe":
+        # fundamental_score. Quarterly ROE %. Higher = better → POSITIVE.
+        # tanh((v - 3.1)/2.0): 3.1 → 0.0 (median), 7.1 → ≈+0.96, -0.9 → ≈-0.96.
+        v = _num(value.get("value"))
+        if v is None:
+            return None
+        return _clip(math.tanh((v - _ROE_BENCH) / _ROE_SCALE), -1.0, 1.0)
+
+    if dp_id == "L5.fina.roa":
+        # fundamental_score. Quarterly ROA %. Higher = better → POSITIVE.
+        # tanh((v - 1.8)/1.2): 1.8 → 0.0, 4.2 → ≈+0.96, -0.6 → ≈-0.96.
+        v = _num(value.get("value"))
+        if v is None:
+            return None
+        return _clip(math.tanh((v - _ROA_BENCH) / _ROA_SCALE), -1.0, 1.0)
+
+    if dp_id == "L5.fina.debt_ratio":
+        # fundamental_score. Debt/assets %. Higher leverage = WORSE → INVERSE.
+        # -tanh((v - 47.0)/20.0): 47.0 → 0.0, 87.0 → ≈-0.96, 7.0 → ≈+0.96.
+        v = _num(value.get("value"))
+        if v is None:
+            return None
+        return -_clip(math.tanh((v - _DEBT_RATIO_BENCH) / _DEBT_RATIO_SCALE), -1.0, 1.0)
+
+    if dp_id == "L5.fina.ocf_quality":
+        # fundamental_score. Operating-cash-flow quality. Higher = better →
+        # POSITIVE. Winsorize the extreme upper tail (raw max ≈2863) into
+        # [-50, 150] FIRST, then tanh((c - 10.0)/30.0): 10.0 → 0.0, 70.0 →
+        # ≈+0.96, -50.0 → ≈-0.90 (clipped tail).
+        v = _num(value.get("value"))
+        if v is None:
+            return None
+        c = _clip(v, _OCF_QUALITY_CLIP_LO, _OCF_QUALITY_CLIP_HI)
+        return _clip(math.tanh((c - _OCF_QUALITY_BENCH) / _OCF_QUALITY_SCALE), -1.0, 1.0)
+
+    if dp_id == "L5.fina.net_profit_yoy":
+        # fundamental_score. Net-profit yoy % (growth). Higher = better →
+        # POSITIVE. tanh((v - 20.0)/50.0): 20.0 → 0.0, 120.0 → ≈+0.96, -80.0 →
+        # ≈-0.96.
+        v = _num(value.get("value"))
+        if v is None:
+            return None
+        return _clip(math.tanh((v - _NET_PROFIT_YOY_BENCH) / _NET_PROFIT_YOY_SCALE), -1.0, 1.0)
+
+    if dp_id == "L5.fina.asset_turnover":
+        # fundamental_score. Asset turnover. Higher = better → POSITIVE.
+        # tanh((v - 0.13)/0.08): 0.13 → 0.0, 0.29 → ≈+0.96, -0.03 → ≈-0.96.
+        v = _num(value.get("value"))
+        if v is None:
+            return None
+        return _clip(math.tanh((v - _ASSET_TURNOVER_BENCH) / _ASSET_TURNOVER_SCALE), -1.0, 1.0)
 
     # --- Discount targets (sign ignored downstream; return [0, 1] magnitude) ---
 
