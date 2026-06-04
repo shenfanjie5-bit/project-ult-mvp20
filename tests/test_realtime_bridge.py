@@ -61,6 +61,26 @@ def _registry(rules: dict[str, DataPointGovernance]) -> FieldGovernanceRegistry:
 # ---------------------------------------------------------------------------
 
 
+def test_active_inflow_funding_signed_by_main_net():
+    """Phase-2a wiring: L7.flow.active_inflow main_net (万元, signed) → funding_score.
+    Inflow positive, outflow negative, ~5亿 knee, missing → None."""
+    import math
+    s = _realtime_signal("L7.flow.active_inflow", {"main_net": 28121.0}, "funding_score")
+    assert s == pytest.approx(math.tanh(28121.0 / 50000.0))  # +inflow → positive
+    assert s > 0
+    out = _realtime_signal("L7.flow.active_inflow", {"main_net": -4958.0}, "funding_score")
+    assert out == pytest.approx(math.tanh(-4958.0 / 50000.0)) and out < 0  # outflow → negative
+    assert _realtime_signal("L7.flow.active_inflow", {"big_orders_net": 1.0}, "funding_score") is None  # no main_net
+
+
+def test_margin_short_not_wired_no_common_mode():
+    """Phase-2a: L7.trade.margin_short is deliberately NOT wired (turnover rate is
+    a common-mode positive; A-share 融券 noisy) → None, no funding injection."""
+    payload = {"margin_balance": 1e10, "short_balance": 2e7,
+               "margin_buy_today": 8e8, "short_sell_today": 7e4}
+    assert _realtime_signal("L7.trade.margin_short", payload, "funding_score") is None
+
+
 def test_signal_score_passthrough_clipped():
     assert _realtime_signal("x", {"score": 0.4}, "fundamental_score") == pytest.approx(0.4)
     assert _realtime_signal("x", {"score": -0.4}, "fundamental_score") == pytest.approx(-0.4)

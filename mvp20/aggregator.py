@@ -838,6 +838,14 @@ _EV_EBITDA_SCALE = 1.4
 _PS_REF = 4.0
 _PS_SCALE = 1.0
 
+# Funding-flow scale (Phase-2a wiring fix). ``L7.flow.active_inflow`` carries
+# ``main_net`` 主力净流入 in 万元 (signed: inflow + / outflow −); _ACTIVE_INFLOW_SCALE
+# (万元) sets the tanh knee at ~5亿 net flow (aligned with derive's 50000 "strong"
+# threshold). This is an ABSOLUTE knee, not cross-sectional — a peer-relative rank
+# (de-market-mean the day's broad flow) is the future refinement (fold into
+# peer_context like R-3).
+_ACTIVE_INFLOW_SCALE = 50000.0  # 万元 main_net tanh knee (≈5亿)
+
 # News-age "still being priced-in" discount (F1 fix). ``L6.priced.news_age``
 # targets priced_in_discount (a MAGNITUDE in [0, 1]; sign ignored downstream — the
 # discount roll-up only subtracts the magnitude). The producer already computes a
@@ -1023,6 +1031,28 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
         if net is None:
             return None
         return _clip(net, -1.0, 1.0)
+
+    if dp_id == "L7.flow.active_inflow":
+        # funding_score (capital_sentiment +). Phase-2a wiring fix: the tushare
+        # moneyflow payload carries ``main_net`` (主力净流入, 万元, SIGNED — inflow
+        # positive = bullish capital chase, outflow negative). Was 116/116 covered
+        # but unmapped (no rule) → silently dropped → funding_score dead. Surface
+        # it signed via tanh at the _ACTIVE_INFLOW_SCALE knee.
+        mn = _num(value.get("main_net"))
+        if mn is None:
+            return None
+        return _clip(math.tanh(mn / _ACTIVE_INFLOW_SCALE), -1.0, 1.0)
+
+    # NOTE on ``L7.trade.margin_short`` (funding_score): deliberately NOT wired.
+    # Its tushare margin_detail payload (margin_balance / short_balance /
+    # margin_buy_today / short_sell_today, snapshot only) yields no clean PER-STOCK
+    # DIRECTIONAL signal: 融资买入/余额 is a turnover rate that is positive for every
+    # stock (a common-mode + level — the same anti-pattern R-3a removed from
+    # priced_in), and A-share 融券 is tiny / borrow-constrained so the short/margin
+    # ratio is noisy. A clean signal needs a cross-sectional rank (fold into
+    # peer_context like R-3) or a 融资余额 trend (history, not in the snapshot).
+    # Left unmapped (→ None) rather than injecting a common-mode positive into
+    # funding_score. active_inflow above is the clean directional funding signal.
 
     if dp_id == "L9.company.earnings_guidance":
         # expectation_gap. change_pct_{min,max} are percentage points (预增 →
