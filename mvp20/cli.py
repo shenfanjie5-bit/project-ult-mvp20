@@ -815,18 +815,23 @@ def score_company_command(
     aggregated_nodes: dict[str, object] = {}
     coverage_report: dict[str, object] = {}
 
-    # R-3a cross-sectional de-common-mode: for A-shares, build peer context over
-    # the A-share overlay universe so priced_in run_up / crowdedness rank vs peers
-    # (not an absolute scale). HK/US → None → original absolute behaviour.
+    # R-3a/R-3b.2 cross-sectional scoring: for A-shares, prefer the precomputed
+    # peer-context artifact (fast); fall back to an on-demand build (~16s) when
+    # absent. HK/US → None → original absolute behaviour.
     peer_context = None
     try:
-        from mvp20.peer_context import market_of, peer_context_for_market
+        from mvp20.peer_context import (
+            default_artifact_path, load_peer_context, market_of,
+            peer_context_for_market,
+        )
         if market_of(ts_code) == "A":
-            codes = []
-            if stock_overlays_dir.exists():
-                for fp in stock_overlays_dir.glob("**/*.yaml"):
-                    codes.append(fp.stem)
-            peer_context = peer_context_for_market(db_path, codes, "A") or None
+            peer_context = load_peer_context(default_artifact_path(db_path, "A"))
+            if peer_context is None:
+                codes = [fp.stem for fp in stock_overlays_dir.glob("**/*.yaml")] \
+                    if stock_overlays_dir.exists() else []
+                peer_context = peer_context_for_market(
+                    db_path, codes, "A", overlays_dir=stock_overlays_dir
+                ) or None
     except Exception as exc:  # noqa: BLE001 — de-common-mode is best-effort
         click.echo(f"# peer_context unavailable ({exc}); scoring on absolute scale")
         peer_context = None
@@ -873,6 +878,44 @@ def score_company_command(
         f"(industry_contrib={result['company_score']['components']['industry_contrib']:.3f})"
     )
     click.echo(f"trading_meaning: {result['final_score']['trading_meaning']}")
+
+
+@main.command("build-peer-context")
+@click.option("--market", default="A", show_default=True, help="Market pool to build (A / HK / US).")
+@click.option(
+    "--stock-overlays-dir", type=click.Path(path_type=Path),
+    default=Path("config/stock_overlays"), show_default=True,
+)
+@click.option(
+    "--db", "db_path", type=click.Path(path_type=Path),
+    default=Path("runtime/hot.sqlite"), show_default=True,
+)
+@click.option(
+    "--out", "out_path", type=click.Path(path_type=Path), default=None,
+    help="Output JSON path. Defaults to <db dir>/peer_context_<market>.json.",
+)
+def build_peer_context_command(
+    market: str, stock_overlays_dir: Path, db_path: Path, out_path: Path | None,
+) -> None:
+    """R-3 — build + persist the cross-sectional peer-context artifact.
+
+    Scans the universe (every snapshot + overlay) to build the priced_in pools
+    (run_up / crowdedness) + valuation pools (PE/PS, hierarchical archetype →
+    industry → market) used by the cross-sectional scorer, and writes a small
+    JSON the server / score-company load in <10ms. Re-run after a derive refresh.
+    """
+    from mvp20.peer_context import build_and_save_peer_context
+
+    codes = [fp.stem for fp in stock_overlays_dir.glob("**/*.yaml")] \
+        if stock_overlays_dir.exists() else []
+    out = build_and_save_peer_context(
+        db_path, codes, market, out_path=out_path, overlays_dir=stock_overlays_dir,
+    )
+    import json
+    ctx = json.loads(Path(out).read_text(encoding="utf-8"))
+    pooled = len(ctx.get("_val_pe_pool_of", {}))
+    runup = len(ctx.get("L6.priced.run_up", []))
+    click.echo(f"wrote {out}  (market={market}, valuation-pooled={pooled}, run_up pop={runup})")
 
 
 def _mock_aggregator_payload(overlay: dict[str, object]) -> dict[str, object]:

@@ -183,7 +183,123 @@ def test_peer_context_for_market_filters_and_caches(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "read_hot_snapshot", lambda db, ts: snaps.get(ts, {}))
     db = tmp_path / "hot.sqlite"
     db.write_text("x")  # needs to exist for mtime
-    ctx = pc.peer_context_for_market(db, list(snaps.keys()), "A")
+    ctx = pc.peer_context_for_market(db, list(snaps.keys()), "A", overlays_dir=tmp_path)
     # only the two A-shares contribute (HK excluded by market scoping)
     assert ctx["L6.priced.run_up"] == [0.10, 0.30]
     assert ctx["L6.priced.crowdedness"] == [0.5, 0.9]
+
+
+# --------------------------------------------------------------------------- #
+# R-3b.2 — hierarchical valuation pools + cross-sectional valr
+# --------------------------------------------------------------------------- #
+from mvp20.aggregator import _valuation_pooled, _xs_valuation_signal  # noqa: E402
+from mvp20.peer_context import build_valuation_pools  # noqa: E402
+
+
+def _pe_snap(pe):
+    return {"L6.mult.pe": {"value": {"scalar": pe}}}
+
+
+def test_build_valuation_pools_hierarchical_resolution():
+    # arch BIG (5 ≥ n_min) → ARCH; arch SMALL (2 < n_min) but industry I1 (7) → IND;
+    # arch TINY (1) + industry I2 (1) → MARKET.
+    snaps = {f"A{i}.SZ": _pe_snap(pe) for i, pe in enumerate([10, 20, 30, 40, 50], 1)}
+    snaps.update({"B1.SZ": _pe_snap(15), "B2.SZ": _pe_snap(25), "C1.SZ": _pe_snap(100)})
+    arch = {**{f"A{i}.SZ": "BIG" for i in range(1, 6)},
+            "B1.SZ": "SMALL", "B2.SZ": "SMALL", "C1.SZ": "TINY"}
+    ind = {**{f"A{i}.SZ": "I1" for i in range(1, 6)},
+           "B1.SZ": "I1", "B2.SZ": "I1", "C1.SZ": "I2"}
+    pools = build_valuation_pools(snaps, arch, ind, n_min=3)
+    assert pools["_val_pe_pool_of"]["A1.SZ"] == "ARCH:BIG"
+    assert pools["_val_pe_pool"]["ARCH:BIG"] == [10, 20, 30, 40, 50]
+    assert pools["_val_pe_pool_of"]["B1.SZ"] == "IND:I1"      # arch too thin → industry
+    assert pools["_val_pe_pool"]["IND:I1"] == [10, 15, 20, 25, 30, 40, 50]
+    assert pools["_val_pe_pool_of"]["C1.SZ"] == "MARKET:A"     # both thin → market
+
+
+def _pooled_ctx():
+    # X cheap (PE 10) vs pool [10..50]; Y expensive (PE 50); Z only PS.
+    return {
+        "_val_pe_of": {"X.SZ": 10.0, "Y.SZ": 50.0},
+        "_val_pe_pool_of": {"X.SZ": "ARCH:K", "Y.SZ": "ARCH:K"},
+        "_val_pe_pool": {"ARCH:K": [10.0, 20.0, 30.0, 40.0, 50.0]},
+        "_val_ps_of": {"Z.SZ": 1.0},
+        "_val_ps_pool_of": {"Z.SZ": "ARCH:K"},
+        "_val_ps_pool": {"ARCH:K": [1.0, 3.0, 5.0, 7.0, 9.0]},
+    }
+
+
+def test_valuation_pooled_flag():
+    assert _valuation_pooled(_pooled_ctx()) is True
+    assert _valuation_pooled({"L6.priced.run_up": [1, 2]}) is False  # R-3a only
+    assert _valuation_pooled(None) is False
+
+
+def test_xs_valuation_signal_cheap_positive_expensive_negative():
+    ctx = _pooled_ctx()
+    assert _xs_valuation_signal("X.SZ", ctx) == pytest.approx(0.8)   # cheap → +
+    assert _xs_valuation_signal("Y.SZ", ctx) == pytest.approx(-0.8)  # expensive → -
+    assert _xs_valuation_signal("Z.SZ", ctx) == pytest.approx(0.8)   # PS fallback (PS 1 = cheap)
+    assert _xs_valuation_signal("UNKNOWN.SZ", ctx) is None
+
+
+def test_peer_compare_cross_sectional_when_pooled():
+    ctx = _pooled_ctx()
+    sig = _realtime_field_signal("L6.state.peer_compare", {"stock_pe": 10.0},
+                                 "valuation_rerating", "X.SZ", ctx)
+    assert sig == pytest.approx(0.8)  # cheap vs pool
+
+
+def test_peer_compare_none_without_pools_falls_through_to_legacy():
+    # No valuation pools → field rule returns None → generic path uses the legacy
+    # premium_vs_industry_pct (tanh/30, flipped). Back-compat.
+    field = _realtime_field_signal("L6.state.peer_compare",
+                                   {"premium_vs_industry_pct": 30.0}, "valuation_rerating")
+    assert field is None
+    legacy = _realtime_signal("L6.state.peer_compare",
+                              {"premium_vs_industry_pct": 30.0}, "valuation_rerating")
+    assert legacy == pytest.approx(-math.tanh(30.0 / 30.0))  # premium → expensive → negative
+
+
+@pytest.mark.parametrize("dp_id", [
+    "L6.state.historical_percentile", "L6.state.expansion_compression",
+    "L6.path.tag", "L6.mult.ps", "L6.mult.ev_ebitda", "L6.mult.forward_pe",
+])
+def test_contaminated_valr_signals_suppressed_when_pooled(dp_id):
+    ctx = _pooled_ctx()
+    # field rule returns None (suppressed) AND the fall-through guard stops it from
+    # re-acquiring its legacy signal via _realtime_signal.
+    assert _realtime_field_signal(dp_id, {"scalar": 50.0, "pe_percentile": 0.99,
+                                          "ratio_vs_250d": 1.5, "percentile": 0.9},
+                                  "valuation_rerating", "X.SZ", ctx) is None
+    assert _realtime_signal(dp_id, {"scalar": 50.0, "pe_percentile": 0.99,
+                                    "ratio_vs_250d": 1.5}, "valuation_rerating",
+                            "X.SZ", ctx) is None
+
+
+def test_suppressed_signals_unchanged_without_pools():
+    # Back-compat: without valuation pools, ps keeps its absolute log-ratio signal.
+    sig = _realtime_signal("L6.mult.ps", {"scalar": 100.0}, "valuation_rerating")
+    assert sig is not None and sig < 0.0  # high P/S → expensive → negative
+
+
+def test_peg_match_and_second_derivative_not_suppressed_when_pooled():
+    ctx = _pooled_ctx()
+    # peg_match carries an already-signed score → generic path #1 passes it through
+    # (NOT suppressed — growth-adjusted, orthogonal to level).
+    assert _realtime_signal("L6.state.peg_match", {"score": -0.7},
+                            "valuation_rerating", "X.SZ", ctx) == pytest.approx(-0.7)
+    # second_derivative (path) survives via the curated signed-pct field.
+    assert _realtime_signal("L6.path.second_derivative", {"second_derivative": 0.2},
+                            "valuation_rerating", "X.SZ", ctx) == pytest.approx(math.tanh(0.2))
+
+
+def test_save_load_peer_context_roundtrip(tmp_path):
+    from mvp20.peer_context import save_peer_context, load_peer_context
+    ctx = _pooled_ctx()
+    p = tmp_path / "pc.json"
+    save_peer_context(ctx, p)
+    loaded = load_peer_context(p)
+    assert loaded["_val_pe_of"]["X.SZ"] == 10.0
+    assert _xs_valuation_signal("Y.SZ", loaded) == pytest.approx(-0.8)
+    assert load_peer_context(tmp_path / "missing.json") is None

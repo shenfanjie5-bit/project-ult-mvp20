@@ -1067,18 +1067,17 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
     except Exception:  # noqa: BLE001
         realtime_data = {}
 
-    # R-3a cross-sectional de-common-mode: for A-shares, build (cached) peer
-    # context over the A-share universe so priced_in run_up / crowdedness are
-    # ranked vs peers instead of an absolute scale. HK/US (data artifacts) →
-    # None → original absolute behaviour. Best-effort: any failure leaves
-    # peer_context None (unchanged scoring).
+    # R-3a/R-3b.2 cross-sectional scoring: for A-shares, LOAD the precomputed
+    # peer-context artifact (priced_in pools + valuation pools). Building it scans
+    # the whole universe (~16s) so it is NOT built in the request path — it is
+    # generated offline by ``mvp20 build-peer-context`` (refresh after derive) and
+    # loaded here in <10ms. Absent artifact / HK / US → None → original absolute
+    # behaviour. Best-effort: any failure leaves peer_context None.
     peer_context = None
     try:
-        from mvp20.peer_context import market_of, peer_context_for_market
+        from mvp20.peer_context import default_artifact_path, load_peer_context, market_of
         if market_of(ts_code) == "A":
-            universe = yaml.safe_load(cfg.universe_path.read_text(encoding="utf-8")) or {}
-            codes = [c.get("ts_code") for c in (universe.get("constituents") or []) if c.get("ts_code")]
-            peer_context = peer_context_for_market(cfg.hot_db_path, codes, "A") or None
+            peer_context = load_peer_context(default_artifact_path(cfg.hot_db_path, "A"))
     except Exception:  # noqa: BLE001 — de-common-mode is best-effort
         peer_context = None
 

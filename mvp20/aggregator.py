@@ -632,6 +632,66 @@ def _xs_bad_tail(x: float | None, sorted_pop: Sequence[float] | None) -> float |
     return mag if mag > 0.0 else None
 
 
+# ---------------------------------------------------------------------------
+# R-3b.2 — cross-sectional valuation_rerating (peer_compare hierarchical pool)
+# ---------------------------------------------------------------------------
+# valuation_rerating (≈71% of base variance) was dominated by signals on an
+# OWN-HISTORY (time-series) or GLOBAL-ABSOLUTE scale, which penalize a leader at
+# its own 52-week high or any high-multiple sub-track regardless of peers — even
+# when the stock is CHEAP vs its true peers (002371 北方华创: peer_compare +0.256
+# "cheap vs SEMI peers" drowned by historical_percentile -0.913 + ps -0.767 +
+# expansion/path). R-3b.2 makes valr cross-sectional: rank the stock's PE
+# (primary) / PS (fallback) within its peer pool (hierarchical: F6 archetype if
+# ≥N members → industry → market, resolved at peer_context build time) and
+# emit -(pct-0.5)*2 (expensive vs pool = negative). The contaminated signals are
+# suppressed when a valuation pool is present. peer_compare is the anchor
+# (its payload already carried the industry-level cross-section; we generalize it
+# to the hierarchical pool). Without valuation pools every path is unchanged
+# (back-compat). Diagnosis + per-signal classification: see proposal §12.
+
+#: Own-history / global-absolute valuation signals superseded by the single
+#: cross-sectional signal when a valuation pool is available. peg_match
+#: (growth-adjusted GARP — orthogonal to level) and second_derivative (≈0 path)
+#: are intentionally NOT suppressed.
+_VALR_SUPPRESSED_WHEN_POOLED: frozenset[str] = frozenset({
+    "L6.state.historical_percentile",   # time-series: own 183d PE/PB percentile
+    "L6.state.expansion_compression",   # time-series: PE vs own 250d MA
+    "L6.path.tag",                      # time-series: derived from own pe_percentile
+    "L6.mult.ps",                       # absolute: vs global _PS_REF, not peers
+    "L6.mult.ev_ebitda",               # absolute: vs global _EV_EBITDA_REF
+    "L6.mult.forward_pe",              # absolute: vs global _FORWARD_PE_REF
+})
+
+
+def _valuation_pooled(peer_context: Mapping[str, Any] | None) -> bool:
+    """True iff ``peer_context`` carries R-3b.2 valuation pools (so the
+    cross-sectional valr path + contaminated-signal suppression are active)."""
+    return bool(peer_context and peer_context.get("_val_pe_pool_of"))
+
+
+def _xs_valuation_signal(ts_code: str | None, peer_context: Mapping[str, Any]) -> float | None:
+    """R-3b.2 cross-sectional valuation_rerating for ``ts_code``: rank its PE
+    (primary) / PS (fallback) within its hierarchical peer pool and return
+    ``-(pct-0.5)*2`` (expensive vs pool → negative re-rating). None when neither
+    metric has a pool entry for this stock (caller falls back to the legacy
+    industry-premium path)."""
+
+    if not ts_code:
+        return None
+    for of_key, pool_of_key, pool_key in (
+        ("_val_pe_of", "_val_pe_pool_of", "_val_pe_pool"),
+        ("_val_ps_of", "_val_ps_pool_of", "_val_ps_pool"),
+    ):
+        val = (peer_context.get(of_key) or {}).get(ts_code)
+        pkey = (peer_context.get(pool_of_key) or {}).get(ts_code)
+        pool = (peer_context.get(pool_key) or {}).get(pkey) if pkey else None
+        if val is not None and pool:
+            pct = _xs_percentile(val, pool)
+            if pct is not None:
+                return -_clip((pct - 0.5) * 2.0, -1.0, 1.0)
+    return None
+
+
 # Per-field ``change_direction`` vocabularies seen across sources. Tushare +
 # FMP both emit ``upgraded``/``downgraded``/``unchanged``/``new``; the spec
 # also lists up/raised/down/cut, so accept all of them.
@@ -934,6 +994,26 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
     Robust to missing/None keys: any required key absent → ``None`` (never
     raises). Direction handled downstream via the node's ``direction``.
     """
+
+    # R-3b.2: when a valuation pool is available, the own-history / global-
+    # absolute valuation signals are superseded by the single cross-sectional
+    # signal (emitted via the L6.state.peer_compare anchor below). Suppress them
+    # here; the caller's fall-through guard turns this None into "skip the node"
+    # (not "fall through to the legacy generic path"). See _VALR_SUPPRESSED_*.
+    if dp_id in _VALR_SUPPRESSED_WHEN_POOLED and _valuation_pooled(peer_context):
+        return None
+
+    if dp_id == "L6.state.peer_compare":
+        # valuation_rerating anchor. With a valuation pool, rank this stock's PE
+        # (primary) / PS (fallback) within its hierarchical peer pool
+        # (archetype≥N → industry → market). Returns the cross-sectional signal,
+        # or None → the generic path falls back to the legacy industry-premium
+        # (premium_vs_industry_pct) so back-compat / partial-data is preserved.
+        if _valuation_pooled(peer_context):
+            sig = _xs_valuation_signal(ts_code, peer_context)
+            if sig is not None:
+                return sig
+        return None
 
     # --- Additive targets (sign preserved + added to the final score) ---
 
@@ -1327,13 +1407,18 @@ def _realtime_signal(dp_id: str, value: Any, score_target: str | None, ts_code: 
         field_signal = _realtime_field_signal(dp_id, value, score_target, ts_code, peer_context)
         if field_signal is not None:
             return field_signal
-        # R-3a: when a cross-sectional reference governs this dp_id, the field
-        # rule is AUTHORITATIVE — a None means "no signal vs peers" (at/below the
-        # cross-sectional median → skip the node), NOT "fall through to the
-        # legacy absolute / generic-percentile path". Without this guard a
-        # below-median crowdedness would re-acquire its old abs'd percentile
-        # discount via path #2 and the de-common-mode would be undone.
-        if peer_context and dp_id in _PEER_CONTEXT_FIELDS and dp_id in peer_context:
+        # R-3a/R-3b.2: when a cross-sectional reference governs this dp_id, the
+        # field rule is AUTHORITATIVE — a None means "no signal vs peers" (skip
+        # the node), NOT "fall through to the legacy absolute / generic-percentile
+        # path". Without this guard (a) a below-median crowdedness re-acquires its
+        # abs'd percentile discount via path #2 and the de-common-mode is undone;
+        # (b) a suppressed valr signal (own-history / global-absolute) re-acquires
+        # its contaminated signal. peer_compare is intentionally NOT guarded — its
+        # None deliberately falls through to the legacy industry-premium path.
+        if peer_context and (
+            (dp_id in _PEER_CONTEXT_FIELDS and dp_id in peer_context)
+            or (dp_id in _VALR_SUPPRESSED_WHEN_POOLED and _valuation_pooled(peer_context))
+        ):
             return None
 
     # 5 (handled early for the non-dict case): bare numeric in [-1, 1].
