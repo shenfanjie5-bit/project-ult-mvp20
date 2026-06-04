@@ -474,6 +474,40 @@ _REALTIME_SIGNED_PCT_FIELDS: dict[str, tuple[float, bool]] = {
     "second_derivative": (1.0, False),
 }
 
+# L8 risk-alert cluster (R2 dead-sink fix). These dp_ids all target
+# ``risk_discount`` and carry a producer-fired ``alert_severity`` (WARN/ERROR)
+# plus a heterogeneous bad-direction numeric (ocf_to_ni<0, gap_pp>0, delta_pct,
+# interest_debt_to_ebitda, inventory_yoy_pct, main_net_5d, …). The generic
+# fallbacks read none of those keys, so every one returned None and contributed
+# ZERO risk_discount — a WARN/ERROR alert that the producer already classified
+# as a real risk silently fell out of the score. Confirmed against hot.sqlite
+# (mode=ro): each carries ``alert_severity`` in 100% of participating
+# (Known/Proxy, non-mock) rows; vocab is exactly {WARN, ERROR}.
+#
+# We drive the magnitude off ``alert_severity`` (uniform + always-present) rather
+# than per-dp_id numeric maps: the alert ITSELF encodes the bad direction (the
+# producer fired it), risk_discount takes ``abs()`` of the magnitude downstream
+# (only magnitude is numeric; the sign is for top-path ranking), and two of these
+# (crowdedness / liquidity_short) carry no single clean bad-direction scalar at
+# all — so a severity tier is the robust common primitive. WARN → 0.5, ERROR →
+# 1.0. Emitted NEGATIVE so the synthesized node's direction is "negative" (a
+# risk), consistent with how the other risk_discount fields read.
+_RISK_ALERT_DP_IDS: frozenset[str] = frozenset({
+    "L8.cap.crowdedness",
+    "L8.cap.liquidity_short",
+    "L8.cap.outflow_cut",
+    "L8.cap.short_increase",
+    "L8.fin.cash_ar",
+    "L8.fin.debt_pressure",
+    "L8.fin.eps_downward",
+    "L8.op.cost_overrun",
+    "L8.op.inventory_glut",
+})
+_RISK_ALERT_SEVERITY_MAGNITUDE: dict[str, float] = {
+    "WARN": 0.5,
+    "ERROR": 1.0,
+}
+
 
 def _num(value: Any) -> float | None:
     """Coerce ``value`` to ``float`` for the realtime field rules, rejecting
@@ -593,6 +627,24 @@ _FORWARD_PE_SCALE = 1.1
 _EV_EBITDA_REF = 13.0
 _EV_EBITDA_SCALE = 1.4
 
+# P/S multiple → valuation_rerating (R2 dead-sink fix). ``L6.mult.ps`` emits a
+# clean ``scalar`` (price/sales TTM) that NO _realtime_signal shape read, so it
+# was dropped → ZERO valuation evidence. Unlike PE/PB it has NO percentile sink
+# (``L6.state.historical_percentile`` carries only pe/pb), so — exactly like
+# ev_ebitda / forward_pe — we re-center it on its OWN bounded log-ratio map:
+# ``-tanh(ln(ps / REF) / SCALE)``. A LOG ratio (not linear) because P/S is
+# heavily right-skewed across the A-share universe. RICH P/S = expensive =
+# de-rating expectation → NEGATIVE; below the reference → mildly POSITIVE.
+# Confirmed against hot.sqlite (mode=ro): 231 participating rows, ALL strictly
+# positive (P/S is never negative — sales > 0), median ≈ 4.0, ~IQR [1.8, 8.4].
+#   REF=4.0 (universe-median P/S, the "neutral" multiple → signal 0),
+#   SCALE=1.0 → ps 4→0, 8→-0.60, 17→-0.83, 1.8→+0.62, 0.9→+0.83.
+# RECOMPUTE on a data refresh (same single-reference industry-mixing caveat as
+# the ev_ebitda / forward_pe block; a peer-relative percentile is the future
+# refinement once a P/S percentile sink exists).
+_PS_REF = 4.0
+_PS_SCALE = 1.0
+
 # News-age "still being priced-in" discount (F1 fix). ``L6.priced.news_age``
 # targets priced_in_discount (a MAGNITUDE in [0, 1]; sign ignored downstream — the
 # discount roll-up only subtracts the magnitude). The producer already computes a
@@ -659,7 +711,85 @@ def _freshness_weight(
     return 1.0 - (lag_trading_days - _RUN_UP_FRESH_TRADING_DAYS) / span
 
 
-def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: str | None) -> float | None:
+# ─── F6-tag: business-model archetype gross-margin re-center ──────────────────
+# The coarse theme tag (AI_COMPUTE, …) mixes 7%-margin EMS / 代工 with 80%-margin
+# software (see the _GROSS_MARGIN_MEDIAN comment above), so universe-centering
+# FLOORS structurally thin-margin names (浪潮 6.6% / 工业富联 7.4% → ~-0.64). We
+# re-center L5.is.gross_margin on the stock's BUSINESS-MODEL archetype median
+# instead. Assignments live in config/business_model_archetypes.yaml (per-stock,
+# classified by what the business DOES — never by margin number, to avoid
+# circularity). Medians below are frozen from the 2026-06-04 universe (n>=3
+# archetypes only — see the tightness gate in the dict below); recompute on a
+# material data refresh. Unclassified ts_codes, <3-member, and wide archetypes
+# fall back to the universe median; FINANCIAL_DIVIDEND skips gross-margin entirely
+# (GM is meaningless for banks/insurers — that group's GM range is 0.73).
+_ARCHETYPE_GM_MEDIAN: dict[str, float] = {
+    # Tightness-gated: only archetypes with n>=3 AND range<=0.30 AND no member
+    # >0.35 (the neg scale) below the median — so re-centering can NEVER floor a
+    # member the way a geography-mixed group would. Wide / mixed archetypes are
+    # intentionally ABSENT and fall back to the universe median (status quo, no
+    # regression): e.g. COMM_NETWORK_EQUIP bundles 中兴 28% with Cisco/Arista 64%
+    # (median 0.64 → 中兴 would floor at -1.0), and SEMICONDUCTOR_IC / SOFTWARE /
+    # COMMODITY / PHARMA carry real intra-model (US-vs-CN, cyclical) spread a single
+    # median can't represent. A future per-archetype SCALE could re-admit them.
+    "ASSEMBLER_EMS": 0.0997,
+    "BATTERY_CELL_ESS": 0.1355,
+    "BRANDED_CONSUMER_APPLIANCE": 0.2559,
+    "CXO_PHARMA_SERVICES": 0.325,
+    "HEAVY_MACHINERY_EQUIPMENT": 0.3007,
+    "MEDICAL_DEVICE_GENERIC": 0.6187,
+    "OPTICAL_MODULE": 0.4916,
+    "PCB_SUBSTRATE": 0.281,
+    "SEMI_EQUIP_MATERIAL": 0.4336,
+    "SEMI_PACKAGING_TEST": 0.1399,
+}
+_GM_SKIP_ARCHETYPES: frozenset[str] = frozenset({"FINANCIAL_DIVIDEND"})
+_ARCHETYPE_BY_TS_CACHE: dict[str, str] | None = None
+
+
+def _archetype_by_ts() -> dict[str, str]:
+    """``{ts_code: archetype}`` from config/business_model_archetypes.yaml (cached;
+    missing / unreadable file → empty map → everything falls back to the universe
+    median, i.e. F6-tag becomes a no-op rather than breaking scoring)."""
+    global _ARCHETYPE_BY_TS_CACHE
+    if _ARCHETYPE_BY_TS_CACHE is None:
+        import yaml
+        from pathlib import Path
+
+        out: dict[str, str] = {}
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "config"
+            / "business_model_archetypes.yaml"
+        )
+        if path.exists():
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001 — a bad config must never break scoring
+                data = {}
+            for ts, info in (data.get("assignments") or {}).items():
+                arch = info.get("archetype") if isinstance(info, Mapping) else info
+                if arch:
+                    out[str(ts)] = str(arch)
+        _ARCHETYPE_BY_TS_CACHE = out
+    return _ARCHETYPE_BY_TS_CACHE
+
+
+def _resolve_gross_margin_median(ts_code: str | None) -> float | None:
+    """Re-center median for L5.is.gross_margin. ``None`` → SKIP gross-margin
+    scoring (FINANCIAL_DIVIDEND). Else the stock's business-model archetype median
+    (n>=3) or the universe fallback for unclassified / small archetypes."""
+    if not ts_code:
+        return _GROSS_MARGIN_MEDIAN
+    archetype = _archetype_by_ts().get(ts_code)
+    if archetype in _GM_SKIP_ARCHETYPES:
+        return None
+    if archetype is not None and archetype in _ARCHETYPE_GM_MEDIAN:
+        return _ARCHETYPE_GM_MEDIAN[archetype]
+    return _GROSS_MARGIN_MEDIAN
+
+
+def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: str | None, ts_code: str | None = None) -> float | None:
     """Per-dp_id signed/magnitude rules for the 8 governance realtime fields
     that the generic fallbacks in ``_realtime_signal`` can't read.
 
@@ -781,6 +911,35 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
             -1.0, 1.0,
         )
 
+    if dp_id == "L6.mult.ps":
+        # valuation_rerating. ``scalar`` is price/sales (TTM). HIGH = expensive →
+        # NEGATIVE; below the reference → mildly POSITIVE. Distinct multiple (NO
+        # pe/pb percentile sink covers it). Log-ratio re-center (same rationale as
+        # ev_ebitda / forward_pe). P/S is bounded > 0 (sales > 0), so a
+        # non-positive / missing / non-numeric scalar → None (no fabricated
+        # signal). See the _PS_REF / _PS_SCALE constants block.
+        ps = _num(value.get("scalar"))
+        if ps is None or ps <= 0:
+            return None
+        return -_clip(
+            math.tanh(math.log(ps / _PS_REF) / _PS_SCALE),
+            -1.0, 1.0,
+        )
+
+    # NOTE on ``L6.mult.mcap_fcf`` (valuation_rerating): deliberately DATA-ONLY
+    # (no rule → falls through to None). Unlike P/S, mcap/FCF is NEGATIVE for ~30%
+    # of the universe (67/223 in hot.sqlite, mode=ro) because trailing FCF is
+    # negative — and a negative mcap/FCF is a FUNDAMENTALLY DIFFERENT state (cash
+    # burn), not a "cheap" multiple, so its magnitude (e.g. -223) is meaningless as
+    # cheap-vs-expensive. A log-ratio map can't take a negative argument, and
+    # scoring only the positive 70% would (a) discard the negative-FCF names and
+    # (b) create a perverse discontinuity (a +2894 multiple reads ≈ -1 "expensive"
+    # while a -118 burner would read positive/None). The positive side is also
+    # extreme-tailed (max ≈ 2894). Mapping this single-sided would MIS-RANK
+    # negative-FCF names, so mcap_fcf is left data-only; P/S already supplies clean
+    # new valuation evidence here. (Revisit if a sign-aware FCF-yield producer or a
+    # peer percentile sink lands.)
+
     if dp_id == "L5.bs.leverage":
         # fundamental_score. ``leverage_ratio`` is debt/assets (e.g. 0.66).
         # Higher leverage = weaker balance sheet = NEGATIVE. 0.5 is neutral:
@@ -809,7 +968,10 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
         gm = _num(value.get("scalar"))
         if gm is None:
             return None
-        delta = gm - _GROSS_MARGIN_MEDIAN
+        median = _resolve_gross_margin_median(ts_code)
+        if median is None:  # F6-tag: FINANCIAL_DIVIDEND — GM not a meaningful signal
+            return None
+        delta = gm - median
         scale = _GROSS_MARGIN_SCALE if delta >= 0 else _GROSS_MARGIN_SCALE_NEG
         return _clip(delta / scale, -1.0, 1.0)
 
@@ -873,6 +1035,22 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
             return None
         return _clip(pis, 0.0, 1.0)
 
+    if dp_id in _RISK_ALERT_DP_IDS:
+        # risk_discount. Producer-fired ``alert_severity`` (WARN/ERROR) drives the
+        # magnitude (WARN → 0.5, ERROR → 1.0); the alert itself encodes the bad
+        # direction so we emit NEGATIVE → the synthesized node reads as a "negative"
+        # (risk) contributor. risk_discount takes abs(magnitude) downstream, so only
+        # the magnitude is numeric. Missing / unknown severity → None (no node):
+        # without the producer's classification we don't fabricate a risk. See the
+        # _RISK_ALERT_DP_IDS constants block (payload shapes verified vs hot.sqlite).
+        sev = value.get("alert_severity")
+        if not isinstance(sev, str):
+            return None
+        magnitude = _RISK_ALERT_SEVERITY_MAGNITUDE.get(sev.strip().upper())
+        if magnitude is None:
+            return None
+        return -magnitude
+
     if dp_id == "L6.priced.run_up":
         # priced_in_discount. Only a run-UP counts; a decline → 0. d20_pct is a
         # DECIMAL ratio (0.0245 = +2.45%); 20% run-up saturates the magnitude.
@@ -898,7 +1076,7 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
     return None
 
 
-def _realtime_signal(dp_id: str, value: Any, score_target: str | None) -> float | None:
+def _realtime_signal(dp_id: str, value: Any, score_target: str | None, ts_code: str | None = None) -> float | None:
     """Reduce a realtime value payload to a *signed* signal in [-1, 1].
 
     Only shapes whose sign is unambiguous are mapped; everything else returns
@@ -925,7 +1103,7 @@ def _realtime_signal(dp_id: str, value: Any, score_target: str | None) -> float 
     # 0. Per-dp_id field rules take precedence — these payloads carry bespoke
     # keys (not score/percentile/yoy) so they'd otherwise fall through to None.
     if isinstance(value, dict):
-        field_signal = _realtime_field_signal(dp_id, value, score_target)
+        field_signal = _realtime_field_signal(dp_id, value, score_target, ts_code)
         if field_signal is not None:
             return field_signal
 
@@ -948,11 +1126,17 @@ def _realtime_signal(dp_id: str, value: Any, score_target: str | None) -> float 
                 return None
 
     # 2. Percentile shapes → signed, inverted for valuation/risk targets.
+    # Accept the bare ``percentile`` key in addition to the ``*_percentile``
+    # suffix: ``L6.priced.crowdedness`` (priced_in_discount, an INVERTED target)
+    # emits its crowding rank under a bare ``percentile`` key, so the suffix-only
+    # match dropped every high-crowding name (percentile ≈ 0.97 → ZERO discount).
+    # Scoped to the exact key ``"percentile"`` so we don't over-match unrelated
+    # numeric fields that merely contain the substring.
     pct_values = [
         value[k]
         for k in value
         if isinstance(k, str)
-        and k.endswith("_percentile")
+        and (k == "percentile" or k.endswith("_percentile"))
         and isinstance(value[k], (int, float))
         and not isinstance(value[k], bool)
     ]
@@ -1088,7 +1272,7 @@ def synthesize_realtime_nodes(
         if source.startswith("mock:"):
             continue
 
-        signal = _realtime_signal(dp_id, entry.get("value"), rule.score_target)
+        signal = _realtime_signal(dp_id, entry.get("value"), rule.score_target, ts_code=ts_code)
         if signal is None:
             continue
 

@@ -1880,3 +1880,332 @@ def test_e2e_news_age_fresh_lowers_score():
     )
     # Fresher (larger discount) → strictly lower than a near-decayed one.
     assert fresh < stale
+
+
+# ---------------------------------------------------------------------------
+# R2 dead-sink fixes: three more classes of "participating + Known + non-mock"
+# realtime fields that produced correct VALUES but contributed ZERO to the
+# score because no ``_realtime_signal`` shape read their payload key.
+# Real payload keys verified against runtime/hot.sqlite (mode=ro):
+#   (1) L6.priced.crowdedness → priced_in_discount: BARE ``percentile`` key
+#       (not ``*_percentile``) → the step-2 collector dropped it → 116
+#       high-crowding names (percentile ≈ 0.97) contributed ZERO discount.
+#   (2) L8 risk-alert cluster → risk_discount: ``alert_severity`` (WARN/ERROR)
+#       + bad-direction numeric, no score/percentile/yoy key → all dropped.
+#   (3) L6.mult.ps → valuation_rerating: clean ``scalar`` with no pe/pb
+#       percentile sink → dropped. (L6.mult.mcap_fcf stays DATA-ONLY: ~30% of
+#       the universe has NEGATIVE mcap/FCF, a different state from "expensive".)
+# ---------------------------------------------------------------------------
+
+
+# R2-1. L6.priced.crowdedness → priced_in_discount via the BARE ``percentile``
+#       key. priced_in_discount is an INVERTED target → high crowding = NEGATIVE
+#       (a drag), stored as a positive magnitude that the discount roll-up
+#       subtracts.
+
+
+def test_field_crowdedness_bare_percentile_inverts_for_priced_in():
+    # Real payload (000425.SZ): percentile ≈ 0.99, label "extreme". The bare
+    # ``percentile`` key now feeds the step-2 percentile path: signal =
+    # (pct - 0.5) * 2, inverted (priced_in_discount ∈ _REALTIME_INVERTED_TARGETS)
+    # → NEGATIVE. Was dropped (suffix-only match) → ZERO.
+    extreme = _realtime_signal(
+        "L6.priced.crowdedness",
+        {"percentile": 0.9897, "label": "extreme",
+         "current_turnover_rate": 3.0, "history_window_days": 97},
+        "priced_in_discount",
+    )
+    assert extreme == pytest.approx((0.9897 - 0.5) * 2.0 * -1.0)
+    assert extreme < 0  # extreme crowding is a priced-in drag
+    # A neutral crowding (≈ median) is ~0.
+    neutral = _realtime_signal(
+        "L6.priced.crowdedness", {"percentile": 0.4948}, "priced_in_discount"
+    )
+    assert neutral == pytest.approx((0.4948 - 0.5) * 2.0 * -1.0)
+    assert abs(neutral) < 0.05
+    # An UNcrowded name (low percentile) is mildly positive (not a drag).
+    quiet = _realtime_signal(
+        "L6.priced.crowdedness", {"percentile": 0.10}, "priced_in_discount"
+    )
+    assert quiet == pytest.approx((0.10 - 0.5) * 2.0 * -1.0)
+    assert quiet > 0
+
+
+def test_field_crowdedness_bare_percentile_only_matches_exact_key():
+    # Regression guard for the scoped fix: the bare-key match is EXACTLY
+    # ``"percentile"`` — a different field that merely contains the substring
+    # (e.g. ``industry_pct_rank`` / ``some_percentile_thing``) must NOT be read
+    # as a percentile, so a payload with no exact ``percentile``/``*_percentile``
+    # key falls through to None.
+    assert _realtime_signal(
+        "L6.priced.crowdedness",
+        {"industry_pct_rank": 0.95, "label": "crowded"},
+        "priced_in_discount",
+    ) is None
+
+
+def test_synthesize_emits_crowdedness_node_with_negative_direction():
+    # End of the bridge: a high-crowding crowdedness entry now EMITS a node
+    # (was dropped → no node at all). Direction negative; magnitude = abs(signal).
+    reg = _registry({
+        "L6.priced.crowdedness": _gov(
+            "L6.priced.crowdedness", target="priced_in_discount"
+        ),
+    })
+    snap = {
+        "L6.priced.crowdedness": {
+            "value": {"percentile": 0.9694, "label": "extreme",
+                      "current_turnover_rate": 6.04},
+            "data_status": "Known", "confidence": 0.6,
+            "source": "tushare:daily_basic.history", "updated_at": 1_700_000_000,
+        }
+    }
+    nodes = {
+        n["dp_id"]: n for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="000425.SZ"
+        )
+    }
+    assert "L6.priced.crowdedness" in nodes  # was absent (dead sink) before
+    crowd = nodes["L6.priced.crowdedness"]
+    assert crowd["direction"] == "negative"
+    assert crowd["value"]["score"] == pytest.approx(abs((0.9694 - 0.5) * 2.0 * -1.0))
+
+
+def test_e2e_crowdedness_extreme_lowers_score():
+    # priced_in_discount SUBTRACTS the magnitude → an extreme-crowding name has a
+    # strictly lower base_score than an uncrowded one.
+    extreme = _base_score_for(
+        "L6.priced.crowdedness", "priced_in_discount", {"percentile": 0.9694}
+    )
+    quiet = _base_score_for(
+        "L6.priced.crowdedness", "priced_in_discount", {"percentile": 0.10}
+    )
+    assert extreme < quiet
+
+
+# R2-2. L8 risk-alert cluster → risk_discount via ``alert_severity``. The 9
+#       dp_ids all carry WARN/ERROR; the alert encodes the bad direction, so the
+#       node is NEGATIVE and the magnitude (WARN 0.5 / ERROR 1.0) feeds the
+#       risk_discount roll-up (which takes abs()). Real payload keys per dp_id.
+
+
+_RISK_ALERT_REAL_PAYLOADS = {
+    "L8.fin.cash_ar": {
+        "ocf_to_ni": -1.501, "ar_yoy_pct": 0.2201,
+        "alert_severity": "ERROR", "latest_period": "20260331",
+    },
+    "L8.op.cost_overrun": {
+        "revenue_yoy": 45.69, "cost_yoy": 58.74, "gap_pp": 13.05,
+        "alert_severity": "ERROR", "period": "20260331",
+    },
+    "L8.fin.debt_pressure": {
+        "interest_debt_to_ebitda": 5.39, "debt_to_assets": 65.87,
+        "alert_severity": "ERROR", "latest_period": "20260331",
+    },
+    "L8.cap.outflow_cut": {
+        "signal": True, "main_net_5d": -2.28e9,
+        "alert_severity": "WARN", "as_of": "2026-05-30T08:09:28+02:00",
+    },
+    "L8.cap.crowdedness": {
+        "turnover_30d_avg": 10.09, "industry_pct_rank": 0.95,
+        "main_net_5d": -94123.11, "alert_severity": "WARN",
+    },
+    "L8.cap.liquidity_short": {
+        "amount_30d_avg": 7.21e6, "industry_pct_rank": 0.5,
+        "dive_day_count": 1, "alert_severity": "WARN",
+    },
+    "L8.cap.short_increase": {
+        "rqye_30d": 1.22e8, "rqye_90d": 7.89e7, "delta_pct": 55.03,
+        "alert_severity": "ERROR",
+    },
+    "L8.fin.eps_downward": {
+        "prev_eps_estimate": 535000.0, "current_eps_estimate": 162500.0,
+        "delta_pct": -69.63, "alert_severity": "ERROR",
+    },
+    "L8.op.inventory_glut": {
+        "inventory_yoy_pct": 25.34, "turnover_yoy_pct_change": -15.87,
+        "alert_severity": "ERROR",
+    },
+}
+
+
+def test_field_risk_alert_severity_magnitude_and_sign():
+    # Every dp_id in the cluster, with its REAL payload, now produces a negative
+    # signal whose magnitude is the severity tier (WARN 0.5 / ERROR 1.0). Was
+    # dropped (None) → ZERO risk_discount.
+    for dp_id, payload in _RISK_ALERT_REAL_PAYLOADS.items():
+        sig = _realtime_signal(dp_id, payload, "risk_discount")
+        expected = -1.0 if payload["alert_severity"] == "ERROR" else -0.5
+        assert sig == pytest.approx(expected), dp_id
+        assert sig < 0, dp_id  # a fired risk alert is a NEGATIVE contributor
+
+
+def test_field_risk_alert_warn_vs_error_and_missing():
+    # WARN → 0.5, ERROR → 1.0 (magnitude); ERROR is strictly the bigger hit.
+    warn = _realtime_signal(
+        "L8.fin.cash_ar", {"ocf_to_ni": -0.5, "alert_severity": "WARN"},
+        "risk_discount",
+    )
+    error = _realtime_signal(
+        "L8.fin.cash_ar", {"ocf_to_ni": -2.0, "alert_severity": "ERROR"},
+        "risk_discount",
+    )
+    assert warn == pytest.approx(-0.5)
+    assert error == pytest.approx(-1.0)
+    assert error < warn  # ERROR is a larger (more negative) magnitude
+    # Case / whitespace tolerant.
+    assert _realtime_signal(
+        "L8.op.cost_overrun", {"gap_pp": 5.0, "alert_severity": " error "},
+        "risk_discount",
+    ) == pytest.approx(-1.0)
+    # Missing severity → None (no node; we don't fabricate a risk).
+    assert _realtime_signal(
+        "L8.fin.cash_ar", {"ocf_to_ni": -1.0}, "risk_discount"
+    ) is None
+    # Unknown severity vocab → None.
+    assert _realtime_signal(
+        "L8.fin.cash_ar", {"ocf_to_ni": -1.0, "alert_severity": "INFO"},
+        "risk_discount",
+    ) is None
+    # Non-string severity → None.
+    assert _realtime_signal(
+        "L8.fin.cash_ar", {"alert_severity": 2}, "risk_discount"
+    ) is None
+
+
+def test_synthesize_emits_risk_alert_node_negative_direction():
+    # The bridge end-to-end: an ERROR cash_ar alert now emits a node (was a dead
+    # sink). Direction negative; magnitude 1.0 stored on the node.
+    reg = _registry({
+        "L8.fin.cash_ar": _gov("L8.fin.cash_ar", target="risk_discount"),
+    })
+    snap = {
+        "L8.fin.cash_ar": {
+            "value": _RISK_ALERT_REAL_PAYLOADS["L8.fin.cash_ar"],
+            "data_status": "Known", "confidence": 0.7,
+            "source": "tushare:fina_indicator", "updated_at": 1_700_000_000,
+        }
+    }
+    nodes = {
+        n["dp_id"]: n for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="000063.SZ"
+        )
+    }
+    assert "L8.fin.cash_ar" in nodes  # was absent before
+    n = nodes["L8.fin.cash_ar"]
+    assert n["direction"] == "negative"
+    assert n["value"]["score"] == pytest.approx(1.0)
+
+
+def test_e2e_risk_alert_error_lowers_score_more_than_warn():
+    # risk_discount SUBTRACTS the magnitude. An ERROR alert (magnitude 1.0) drives
+    # base_score strictly below a WARN (0.5), which is below no-alert (no node).
+    error = _base_score_for(
+        "L8.fin.debt_pressure", "risk_discount",
+        {"interest_debt_to_ebitda": 6.0, "alert_severity": "ERROR"},
+    )
+    warn = _base_score_for(
+        "L8.fin.debt_pressure", "risk_discount",
+        {"interest_debt_to_ebitda": 3.0, "alert_severity": "WARN"},
+    )
+    no_alert = _base_score_for(
+        "L8.fin.debt_pressure", "risk_discount",
+        {"interest_debt_to_ebitda": 1.0},  # no severity → no node
+    )
+    assert error < warn < no_alert
+    assert error < 0  # a fired ERROR risk alert drags the score negative
+    assert no_alert == pytest.approx(0.0)  # no severity → dead → unchanged base
+
+
+# R2-3. L6.mult.ps → valuation_rerating (log-ratio, like ev_ebitda/forward_pe).
+#       L6.mult.mcap_fcf stays DATA-ONLY (None) — negative for ~30% of the
+#       universe, so a single-sided log map would mis-rank cash-burning names.
+
+
+def test_field_ps_expensive_is_negative():
+    # -tanh(ln(ps/4.0)/1.0): RICH P/S → NEGATIVE, CHEAP → POSITIVE, at REF → 0.
+    rich = _realtime_signal(
+        "L6.mult.ps", {"scalar": 17.25, "unit": "ratio"}, "valuation_rerating"
+    )
+    mid = _realtime_signal(
+        "L6.mult.ps", {"scalar": 8.36}, "valuation_rerating"
+    )
+    assert rich == pytest.approx(-math.tanh(math.log(17.25 / 4.0) / 1.0))
+    assert rich < 0
+    assert rich < mid < 0  # richer P/S is strictly more negative
+    # A CHEAP P/S (below the reference) is mildly POSITIVE.
+    cheap = _realtime_signal(
+        "L6.mult.ps", {"scalar": 0.94}, "valuation_rerating"
+    )
+    assert cheap == pytest.approx(-math.tanh(math.log(0.94 / 4.0) / 1.0))
+    assert cheap > 0
+    # At the reference → neutral.
+    assert _realtime_signal(
+        "L6.mult.ps", {"scalar": 4.0}, "valuation_rerating"
+    ) == pytest.approx(0.0)
+    # Non-positive / missing / non-numeric → None (no fabricated signal).
+    assert _realtime_signal(
+        "L6.mult.ps", {"scalar": 0.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.ps", {"scalar": -1.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.ps", {"unit": "ratio"}, "valuation_rerating"
+    ) is None
+
+
+def test_field_mcap_fcf_is_data_only_none():
+    # DATA-ONLY: mcap/FCF is negative for ~30% of the universe (cash burn) — a
+    # different state from "expensive" — so it is deliberately NOT scored. Both a
+    # positive and a negative scalar fall through to None.
+    assert _realtime_signal(
+        "L6.mult.mcap_fcf",
+        {"scalar": 34.27, "unit": "ratio", "fcf_ttm_cny": 1.0e9},
+        "valuation_rerating",
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.mcap_fcf",
+        {"scalar": -223.11, "unit": "ratio", "fcf_ttm_cny": -7.8e8},
+        "valuation_rerating",
+    ) is None
+
+
+def test_synthesize_emits_ps_node_not_mcap_fcf():
+    # The bridge: P/S now emits a scoring node (was dropped); mcap_fcf stays
+    # absent (data-only).
+    reg = _registry({
+        "L6.mult.ps": _gov("L6.mult.ps", target="valuation_rerating"),
+        "L6.mult.mcap_fcf": _gov("L6.mult.mcap_fcf", target="valuation_rerating"),
+    })
+    snap = {
+        "L6.mult.ps": {
+            "value": {"scalar": 17.25, "unit": "ratio"},
+            "data_status": "Known", "confidence": 0.6,
+            "source": "tushare:daily_basic", "updated_at": 1_700_000_000,
+        },
+        "L6.mult.mcap_fcf": {
+            "value": {"scalar": 34.27, "unit": "ratio"},
+            "data_status": "Known", "confidence": 0.6,
+            "source": "tushare:daily_basic+cashflow", "updated_at": 1_700_000_000,
+        },
+    }
+    nodes = {
+        n["dp_id"]: n for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="000063.SZ"
+        )
+    }
+    assert "L6.mult.ps" in nodes  # was absent (dead sink) before
+    assert nodes["L6.mult.ps"]["direction"] == "negative"  # rich P/S = drag
+    assert "L6.mult.mcap_fcf" not in nodes  # data-only → no node
+
+
+def test_e2e_ps_expensive_lowers_score():
+    expensive = _base_score_for(
+        "L6.mult.ps", "valuation_rerating", {"scalar": 17.25}
+    )
+    cheap = _base_score_for(
+        "L6.mult.ps", "valuation_rerating", {"scalar": 0.94}
+    )
+    assert expensive < cheap
+    assert expensive < 0  # expensive P/S drags valuation_rerating negative
