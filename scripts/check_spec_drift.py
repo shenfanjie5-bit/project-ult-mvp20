@@ -186,7 +186,7 @@ def detect_drifts(
 
     # G. SQLite emit but dp_id not in spec 250 (legacy / self-namespace)
     legacy = sorted(sqlite_dps - spec_dps)
-    for dp in legacy[:30]:
+    for dp in legacy:
         drifts.append(
             {
                 "type": "legacy_naming",

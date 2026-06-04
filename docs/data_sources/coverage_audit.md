@@ -11,7 +11,7 @@
 - **104** 条至少 1 源 full（41%）
 - **218** 条至少 1 源 full 或 partial（87%）
 - **0** 条仅 FMP Premium 升级才能覆盖
-- **32** 条彻底缺失（12%）—— 需 LLM 衍生 / 第三方源 / 留空
+- **42** 条彻底缺失（17%）—— 需 LLM 衍生 / 第三方源 / 留空
 
 ## 2. 各数据源覆盖汇总
 
@@ -42,7 +42,7 @@
 | L8 风险抵消 | 32 | 9 | 6 | 17 | 0 | 0 | 全 partial（无 1 源直取） |
 | L9_catalyst | 20 | 8 | 5 | 7 | 0 | 0 | 全 partial（无 1 源直取） |
 
-## 4. 彻底缺失的 32 个数据点（5 源全 none，无 premium 解锁）
+## 4. 彻底缺失的 42 个数据点（5 源全 none，无 premium 解锁）
 
 这些数据点全部走 LLM 衍生路径——codex 处理细节、prompt 模板、schema slot 规则、行业级/公司级共享逻辑，见 [`llm_derived_nodes.md`](./llm_derived_nodes.md)。schema 里这些节点 **必须留好**（未填时 `data_status: Unknown` + `missing_policy: unknown_reduce_confidence`），不能因缺数据跳过。
 
@@ -80,6 +80,16 @@
 | `L4.eff.conversion_retention` | L4_operating | 转化率/留存/复购 | 公司画像 | quarterly |
 | `L4.share.customer_channel` | L4_operating | 客户/渠道/区域份额 | 公司画像 | quarterly |
 | `L5.surprise.buy_whisper` | L5_financials | 买方/whisper预期 | 分析师预期 | quarterly |
+| `L0.price.product_asp` | L0_industry_uplink | 行业产品均价 | 行业时序 | quarterly |
+| `L0.price.contract_spot` | L0_industry_uplink | 长协/现货价差 | 行业时序 | quarterly |
+| `L0.supply.inventory` | L0_industry_uplink | 行业库存水平 | 行业时序 | quarterly |
+| `L1.position.brand` | L1_company_position | 品牌力 | 公司画像 | quarterly |
+| `L3.product.portfolio` | L3_pccr | 产品组合结构 | 公司画像 | quarterly |
+| `L6.priced.realization_risk` | L6_valuation | 兑现风险折扣 | 衍生评分项 | derived |
+| `L7.reflex.tag` | L7_capital_sentiment | 反身性标签 | 衍生评分项 | derived |
+| `L8.val.slope_risk_off` | L8_risk_offset | risk-off 斜率折扣 | 衍生评分项 | derived |
+| `L10.industry.inventory_orders` | L10_validation | 行业库存/订单验证 | 衍生评分项 | derived |
+| `L10.industry.sales_price` | L10_validation | 行业销量/价格验证 | 衍生评分项 | derived |
 
 ## 5. FMP Premium ($29/mo) 升级 ROI
 
