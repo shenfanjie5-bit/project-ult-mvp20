@@ -74,9 +74,15 @@ market_rules:
       derivatives_shorting: [options_momentum_multiplier, gamma_multiplier]
       crossborder_fx: [funding_multiplier]
       market_regime: [market_regime_multiplier, rate_sensitivity_multiplier]
-    local_scores:
-      local_funding_score: [funding_score]
-      local_event_score: [event_impulse_score, expectation_gap]
+    # R1 double-count fix: ``compute_final_score`` base ALREADY includes
+    # funding_score (folded into the capital_sentiment bucket) and
+    # expectation_gap ONCE. Re-listing them here re-added them onto base_score
+    # (which IS a HORIZON_KEY), inflating the signal basis — verified to flip
+    # 17 stocks' trading_signal (e.g. 002460/600030 HOLD→BUY off a pure
+    # double-count). event_impulse_score has no producer (always 0). Symmetric
+    # to the discounts:{} fix below; empty until a genuinely market-LOCAL
+    # funding/event dp_id (absent from the company graph) is introduced.
+    local_scores: {}
     # FU-1 double-count fix: ``compute_final_score`` already subtracts the full
     # company risk component {risk_discount, uncertainty_discount, volatility_risk,
     # overheat_risk} ONCE (``base = ... - risk``). Re-listing those targets here
@@ -136,9 +142,15 @@ market_rules:
       derivatives_shorting: [options_momentum_multiplier, gamma_multiplier, volatility_risk]
       crossborder_fx: [market_regime_multiplier]
       market_regime: [market_regime_multiplier, rate_sensitivity_multiplier]
-    local_scores:
-      local_funding_score: [funding_score]
-      local_event_score: [event_impulse_score, expectation_gap]
+    # R1 double-count fix: ``compute_final_score`` base ALREADY includes
+    # funding_score (folded into the capital_sentiment bucket) and
+    # expectation_gap ONCE. Re-listing them here re-added them onto base_score
+    # (which IS a HORIZON_KEY), inflating the signal basis — verified to flip
+    # 17 stocks' trading_signal (e.g. 002460/600030 HOLD→BUY off a pure
+    # double-count). event_impulse_score has no producer (always 0). Symmetric
+    # to the discounts:{} fix below; empty until a genuinely market-LOCAL
+    # funding/event dp_id (absent from the company graph) is introduced.
+    local_scores: {}
 # FU-1 double-count fix: compute_final_score already subtracts the full company
     # risk component ONCE; re-listing those targets here double-subtracted them. No
     # market-LOCAL risk distinct from the company graph exists yet, so empty.
@@ -194,9 +206,15 @@ market_rules:
       derivatives_shorting: [options_momentum_multiplier, gamma_multiplier, volatility_risk]
       crossborder_fx: [funding_multiplier, market_regime_multiplier]
       market_regime: [market_regime_multiplier, rate_sensitivity_multiplier]
-    local_scores:
-      local_funding_score: [funding_score]
-      local_event_score: [event_impulse_score, expectation_gap]
+    # R1 double-count fix: ``compute_final_score`` base ALREADY includes
+    # funding_score (folded into the capital_sentiment bucket) and
+    # expectation_gap ONCE. Re-listing them here re-added them onto base_score
+    # (which IS a HORIZON_KEY), inflating the signal basis — verified to flip
+    # 17 stocks' trading_signal (e.g. 002460/600030 HOLD→BUY off a pure
+    # double-count). event_impulse_score has no producer (always 0). Symmetric
+    # to the discounts:{} fix below; empty until a genuinely market-LOCAL
+    # funding/event dp_id (absent from the company graph) is introduced.
+    local_scores: {}
 # FU-1 double-count fix: compute_final_score already subtracts the full company
     # risk component ONCE; re-listing those targets here double-subtracted them. No
     # market-LOCAL risk distinct from the company graph exists yet, so empty.
