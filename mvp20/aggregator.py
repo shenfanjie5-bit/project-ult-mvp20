@@ -51,10 +51,11 @@ Status / missing-state handling (spec §23)
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from mvp20.field_governance import (
     FieldGovernanceRegistry,
@@ -521,6 +522,116 @@ def _num(value: Any) -> float | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# R-3a — cross-sectional reference ("peer context") for de-common-mode
+# ---------------------------------------------------------------------------
+# Some priced_in signals (``L6.priced.run_up``, ``L6.priced.crowdedness``) are
+# computed on an ABSOLUTE / own-history scale: a broadly-up market dings every
+# stock with a run-up discount, and a generally-elevated-turnover market reads
+# every stock as "crowded". That common-mode level subtracts a near-constant
+# ~0.33 from EVERY A-share base_score (measured: priced_in mean -0.332 / 100%
+# of names) — it depresses the whole universe instead of discriminating. R-3a
+# re-centers these signals CROSS-SECTIONALLY: rank each stock's raw input within
+# the universe and penalize only the bad (high) tail, floored at 0, so the
+# median stock gets ZERO discount and only names genuinely more priced-in than
+# their peers are penalized. ``build_peer_context`` collects the universe
+# distributions; the normalizers in ``_realtime_field_signal`` consume them.
+# When peer_context is absent (None / dp_id missing) the normalizers fall back
+# to their original absolute behaviour (bit-for-bit back-compat).
+
+#: dp_id → the raw payload field whose universe distribution we rank against.
+_PEER_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
+    "L6.priced.run_up": ("d20_pct", "d5_pct"),       # 20d (fallback 5d) price move
+    "L6.priced.crowdedness": ("percentile",),          # own-history turnover percentile
+}
+
+
+def _peer_raw_value(dp_id: str, value: Mapping[str, Any]) -> float | None:
+    """Extract the single raw scalar that ``dp_id``'s cross-sectional rank is
+    computed over (see ``_PEER_CONTEXT_FIELDS``). ``crowdedness`` carries its
+    figure under a bare ``percentile`` key (or any ``*_percentile``); take the
+    max. Returns None when the payload doesn't carry the field."""
+
+    if not isinstance(value, Mapping):
+        return None
+    if dp_id == "L6.priced.crowdedness":
+        cands = [
+            _num(value[k])
+            for k in value
+            if isinstance(k, str)
+            and (k == "percentile" or k.endswith("_percentile"))
+            and _num(value[k]) is not None
+        ]
+        return max(cands) if cands else None
+    for field in _PEER_CONTEXT_FIELDS.get(dp_id, ()):  # ordered fallback
+        v = _num(value.get(field))
+        if v is not None:
+            return v
+    return None
+
+
+def build_peer_context(
+    snapshots: Mapping[str, Mapping[str, Any]],
+) -> dict[str, list[float]]:
+    """R-3a cross-sectional reference: given ``{ts_code: realtime_snapshot}`` for
+    a scoring universe (e.g. all A-shares), collect the sorted universe
+    distribution of each de-common-mode input. Returns
+    ``{dp_id: sorted([raw values])}`` — consumed as ``peer_context`` by
+    ``aggregate_company_graph`` / ``_realtime_field_signal``.
+
+    A snapshot's per-dp_id entry is the ``read_hot_snapshot`` shape
+    (``{dp_id: {value, ...}}``); we read ``entry["value"]`` (falling back to the
+    entry itself). dp_ids with no usable values are omitted, so the normalizer
+    falls back to absolute. This is shared infra: R-3b extends it to per-
+    sub-track pools.
+    """
+
+    pops: dict[str, list[float]] = {dp: [] for dp in _PEER_CONTEXT_FIELDS}
+    for snap in snapshots.values():
+        if not isinstance(snap, Mapping):
+            continue
+        for dp_id in _PEER_CONTEXT_FIELDS:
+            entry = snap.get(dp_id)
+            if not isinstance(entry, Mapping):
+                continue
+            payload = entry.get("value") if "value" in entry else entry
+            raw = _peer_raw_value(dp_id, payload)
+            if raw is not None:
+                pops[dp_id].append(raw)
+    return {dp: sorted(vals) for dp, vals in pops.items() if vals}
+
+
+def _xs_percentile(x: float, sorted_pop: Sequence[float]) -> float | None:
+    """Cross-sectional percentile (0..1) of ``x`` within ``sorted_pop`` (a
+    pre-sorted population). Midpoint rank (average of bisect_left/right) so ties
+    map to the centre of their run rather than the top — keeps a uniform input
+    centred at ~0.5. None when the population is empty."""
+
+    n = len(sorted_pop)
+    if n == 0:
+        return None
+    lo = bisect.bisect_left(sorted_pop, x)
+    hi = bisect.bisect_right(sorted_pop, x)
+    return ((lo + hi) / 2.0) / n
+
+
+def _xs_bad_tail(x: float | None, sorted_pop: Sequence[float] | None) -> float | None:
+    """De-common-mode magnitude in [0, 1]: rank ``x`` cross-sectionally and emit
+    only the bad (above-median) tail, ``max(0, (pct - 0.5) * 2)``. The median
+    stock → 0 (no common-mode); the universe-max → 1. Returns None when no rank
+    can be computed (empty/missing population, or ``x`` is None) OR when the
+    stock is at/below the cross-sectional median (not a signal vs peers — skip
+    the node rather than dilute the discount mean with a zero)."""
+
+    if x is None or not sorted_pop:
+        return None
+    pct = _xs_percentile(x, sorted_pop)
+    if pct is None:
+        return None
+    mag = max(0.0, (pct - 0.5) * 2.0)
+    return mag if mag > 0.0 else None
+
+
 # Per-field ``change_direction`` vocabularies seen across sources. Tushare +
 # FMP both emit ``upgraded``/``downgraded``/``unchanged``/``new``; the spec
 # also lists up/raised/down/cut, so accept all of them.
@@ -811,7 +922,7 @@ def _resolve_gross_margin_median(ts_code: str | None) -> float | None:
     return _GROSS_MARGIN_MEDIAN
 
 
-def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: str | None, ts_code: str | None = None) -> float | None:
+def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: str | None, ts_code: str | None = None, peer_context: Mapping[str, Sequence[float]] | None = None) -> float | None:
     """Per-dp_id signed/magnitude rules for the 8 governance realtime fields
     that the generic fallbacks in ``_realtime_signal`` can't read.
 
@@ -1131,14 +1242,45 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
         return -magnitude
 
     if dp_id == "L6.priced.run_up":
-        # priced_in_discount. Only a run-UP counts; a decline → 0. d20_pct is a
-        # DECIMAL ratio (0.0245 = +2.45%); 20% run-up saturates the magnitude.
+        # priced_in_discount. d20_pct is a DECIMAL ratio (0.0245 = +2.45%).
         d20 = _num(value.get("d20_pct"))
         if d20 is None:
             d20 = _num(value.get("d5_pct"))
         if d20 is None:
             return None
+        # R-3a de-common-mode: with a cross-sectional reference, penalize only a
+        # run-up ABOVE the universe median (de-beta the market's broad move) —
+        # bad-tail only, so the median stock gets ZERO discount instead of the
+        # ~0.44 absolute common-mode that depressed every name. Without a
+        # reference (peer_context absent / dp_id missing), fall back to the
+        # original absolute 20%-saturating magnitude (bit-for-bit back-compat).
+        pop = peer_context.get(dp_id) if peer_context else None
+        if pop:
+            return _xs_bad_tail(d20, pop)
+        # Only a run-UP counts; a decline → 0. 20% run-up saturates.
         return _clip(max(d20, 0.0) / 0.20, 0.0, 1.0)
+
+    if dp_id == "L6.priced.crowdedness":
+        # priced_in_discount. The producer fires an own-history turnover
+        # percentile (high = unusually heavily traded = crowded). Routed here it
+        # would otherwise flow through the generic percentile path → inverted →
+        # abs()'d downstream, which penalizes UNCROWDED (low-percentile) names
+        # just as hard (a sign bug specific to the abs on a signed percentile)
+        # AND adds a universe common-mode (most A-shares sit at elevated turnover
+        # vs their own norm). R-3a: with a cross-sectional reference, rank the
+        # crowding figure across the universe and penalize only the bad tail
+        # (more crowded than peers), floored at 0 — uncrowded names get no
+        # spurious discount and the median stock gets zero. Emit a NEGATIVE
+        # magnitude to preserve the existing "negative" direction label (the
+        # priced_in rollup abs()'s it regardless). Without a reference, return
+        # None so the original generic percentile path still handles it (back-
+        # compat).
+        pop = peer_context.get(dp_id) if peer_context else None
+        if not pop:
+            return None
+        raw = _peer_raw_value(dp_id, value)
+        mag = _xs_bad_tail(raw, pop)
+        return None if mag is None else -mag
 
     if dp_id == "L6.priced.news_age":
         # priced_in_discount (magnitude; sign ignored downstream). The producer
@@ -1155,7 +1297,7 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
     return None
 
 
-def _realtime_signal(dp_id: str, value: Any, score_target: str | None, ts_code: str | None = None) -> float | None:
+def _realtime_signal(dp_id: str, value: Any, score_target: str | None, ts_code: str | None = None, peer_context: Mapping[str, Sequence[float]] | None = None) -> float | None:
     """Reduce a realtime value payload to a *signed* signal in [-1, 1].
 
     Only shapes whose sign is unambiguous are mapped; everything else returns
@@ -1182,9 +1324,17 @@ def _realtime_signal(dp_id: str, value: Any, score_target: str | None, ts_code: 
     # 0. Per-dp_id field rules take precedence — these payloads carry bespoke
     # keys (not score/percentile/yoy) so they'd otherwise fall through to None.
     if isinstance(value, dict):
-        field_signal = _realtime_field_signal(dp_id, value, score_target, ts_code)
+        field_signal = _realtime_field_signal(dp_id, value, score_target, ts_code, peer_context)
         if field_signal is not None:
             return field_signal
+        # R-3a: when a cross-sectional reference governs this dp_id, the field
+        # rule is AUTHORITATIVE — a None means "no signal vs peers" (at/below the
+        # cross-sectional median → skip the node), NOT "fall through to the
+        # legacy absolute / generic-percentile path". Without this guard a
+        # below-median crowdedness would re-acquire its old abs'd percentile
+        # discount via path #2 and the de-common-mode would be undone.
+        if peer_context and dp_id in _PEER_CONTEXT_FIELDS and dp_id in peer_context:
+            return None
 
     # 5 (handled early for the non-dict case): bare numeric in [-1, 1].
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -1284,6 +1434,7 @@ def synthesize_realtime_nodes(
     *,
     existing_dp_ids: set[str] | frozenset[str],
     ts_code: str | None,
+    peer_context: Mapping[str, Sequence[float]] | None = None,
 ) -> list[dict]:
     """Turn participating realtime snapshot entries into overlay-leaf nodes.
 
@@ -1351,7 +1502,7 @@ def synthesize_realtime_nodes(
         if source.startswith("mock:"):
             continue
 
-        signal = _realtime_signal(dp_id, entry.get("value"), rule.score_target, ts_code=ts_code)
+        signal = _realtime_signal(dp_id, entry.get("value"), rule.score_target, ts_code=ts_code, peer_context=peer_context)
         if signal is None:
             continue
 
@@ -1655,6 +1806,7 @@ def aggregate_company_graph(
     role_registry: FieldGovernanceRegistry | None = None,
     *,
     realtime_snapshot: dict | None = None,
+    peer_context: Mapping[str, Sequence[float]] | None = None,
 ) -> dict[str, dict]:
     """Compute parent-node scores + three-horizon mix for every node in a
     stock overlay. Returns ``{node_id: {...}}``.
@@ -1706,6 +1858,7 @@ def aggregate_company_graph(
             role_registry,
             existing_dp_ids=existing_dp_ids,
             ts_code=stock_overlay.get("ts_code"),
+            peer_context=peer_context,
         )
         for node in synthetic:
             if role_registry is not None:
@@ -1908,9 +2061,12 @@ __all__ = [
     "aggregate_company_graph",
     "aggregate_from_paths",
     "synthesize_realtime_nodes",
+    "build_peer_context",
     # Exposed helpers for tests / downstream tooling:
     "_to_scalar",
     "_classify_horizon",
     "_recency",
     "_realtime_signal",
+    "_xs_percentile",
+    "_xs_bad_tail",
 ]

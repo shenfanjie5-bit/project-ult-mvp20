@@ -815,10 +815,27 @@ def score_company_command(
     aggregated_nodes: dict[str, object] = {}
     coverage_report: dict[str, object] = {}
 
+    # R-3a cross-sectional de-common-mode: for A-shares, build peer context over
+    # the A-share overlay universe so priced_in run_up / crowdedness rank vs peers
+    # (not an absolute scale). HK/US → None → original absolute behaviour.
+    peer_context = None
+    try:
+        from mvp20.peer_context import market_of, peer_context_for_market
+        if market_of(ts_code) == "A":
+            codes = []
+            if stock_overlays_dir.exists():
+                for fp in stock_overlays_dir.glob("**/*.yaml"):
+                    codes.append(fp.stem)
+            peer_context = peer_context_for_market(db_path, codes, "A") or None
+    except Exception as exc:  # noqa: BLE001 — de-common-mode is best-effort
+        click.echo(f"# peer_context unavailable ({exc}); scoring on absolute scale")
+        peer_context = None
+
     try:
         from mvp20.aggregator import aggregate_company_graph  # type: ignore
         aggregated_nodes = aggregate_company_graph(
-            overlay, industry_overlay, realtime_snapshot=realtime_data or None
+            overlay, industry_overlay, realtime_snapshot=realtime_data or None,
+            peer_context=peer_context,
         ) or {}
     except Exception as exc:  # noqa: BLE001 (lazy; A1 may not exist yet)
         click.echo(f"# aggregator unavailable ({exc}); using overlay-derived mock")

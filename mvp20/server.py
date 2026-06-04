@@ -1067,9 +1067,25 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
     except Exception:  # noqa: BLE001
         realtime_data = {}
 
+    # R-3a cross-sectional de-common-mode: for A-shares, build (cached) peer
+    # context over the A-share universe so priced_in run_up / crowdedness are
+    # ranked vs peers instead of an absolute scale. HK/US (data artifacts) →
+    # None → original absolute behaviour. Best-effort: any failure leaves
+    # peer_context None (unchanged scoring).
+    peer_context = None
+    try:
+        from mvp20.peer_context import market_of, peer_context_for_market
+        if market_of(ts_code) == "A":
+            universe = yaml.safe_load(cfg.universe_path.read_text(encoding="utf-8")) or {}
+            codes = [c.get("ts_code") for c in (universe.get("constituents") or []) if c.get("ts_code")]
+            peer_context = peer_context_for_market(cfg.hot_db_path, codes, "A") or None
+    except Exception:  # noqa: BLE001 — de-common-mode is best-effort
+        peer_context = None
+
     try:
         aggregated = aggregate_company_graph(
-            overlay, industry_overlay, realtime_snapshot=realtime_data or None
+            overlay, industry_overlay, realtime_snapshot=realtime_data or None,
+            peer_context=peer_context,
         ) or {}
     except Exception as exc:  # noqa: BLE001
         return 500, _error_envelope(
