@@ -398,6 +398,14 @@ def compute_company_score(
     contribs: list[dict[str, Any]] = []
     for v in industry_variables or []:
         score = _coerce_float(v.get("score"))
+        # R-2b follow-up: skip zero-score nodes (the neutral_value default for
+        # unfilled L0/L1 fields = "no signal / abstain"). Averaging them in pulled
+        # the real financial signal toward 0 — empirically 60+ zeros took 74-96%
+        # of the mean denominator, compressing merit ~22× (fund sd 0.018). Letting
+        # only the OPINIONATED signals (financials + non-neutral L0) set the mean
+        # restores merit's magnitude without re-introducing the node-count proxy.
+        if abs(score) < 1e-9:
+            continue
         exposure = _coerce_float(v.get("exposure"), 1.0)
         rev_share = _coerce_float(v.get("revenue_share"), 1.0)
         prof_e = _coerce_float(v.get("profit_elasticity"), 1.0)

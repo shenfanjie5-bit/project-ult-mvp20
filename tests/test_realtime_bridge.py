@@ -1301,15 +1301,13 @@ def test_fundamental_synthetic_node_now_increases_score():
     res = score_company(overlay, aggregated_nodes=agg)
     base = res["core_final_score"]["base_score"]
     contrib = res["company_score"]["components"]["industry_contrib"]
-    # Was +0.000; now the full +0.9 reaches the score via industry_contrib.
-    # The synthetic node collapses to one "realtime_fundamental" var (score 0.9,
-    # conf 1.0). The RAW weighted_sum surfaced as industry_contrib is 0.9 (the
-    # authored Unknown auth_seed has score 0.0 so it adds nothing to the sum).
-    # R-2b: base_score is the COVERAGE-WEIGHTED MEAN over the two fundamental
-    # vars [0.0 @ w=0.3 (auth_seed conf), 0.9 @ w=1.0]: 0.9 / (0.3+1.0) =
-    # 0.9/1.3 ≈ 0.6923 — already in [-1,1], no tanh. The auth_seed (a covered
-    # zero-score node) legitimately dilutes the mean. Pre-R-2b base = tanh(0.9).
-    assert base == pytest.approx(0.9 / 1.3)
+    # Was +0.000; now the full +0.9 reaches the score via the merit MEAN.
+    # industry_contrib (raw weighted_sum) is 0.9 (auth_seed score 0.0 adds nothing).
+    # R-2b follow-up: zero-score nodes (the auth_seed, score 0.0 = "no signal /
+    # abstain") are EXCLUDED from the coverage-weighted mean, so they no longer
+    # dilute it. The mean is over the one opinionated var [0.9 @ w=1.0] = 0.9
+    # (no tanh). Pre-R-2b base = tanh(0.9); R-2b first-cut (with dilution) = 0.9/1.3.
+    assert base == pytest.approx(0.9)
     assert contrib == pytest.approx(0.9)
 
     # Synthetic dead-sink nodes are now collapsed into a SINGLE damped-mean
@@ -1342,10 +1340,11 @@ def test_optionality_synthetic_node_routes_through_industry():
     agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
     res = score_company(overlay, aggregated_nodes=agg)
     # Raw weighted_sum 0.6 stays in industry_contrib (auth_seed score 0.0 adds
-    # nothing). R-2b: base_score is the coverage-weighted MEAN over the two
-    # fundamental vars [0.0 @ w=0.3, 0.6 @ w=1.0] = 0.6/1.3 ≈ 0.4615 (no tanh).
+    # nothing). R-2b follow-up: the zero-score auth_seed is EXCLUDED from the
+    # coverage-weighted mean (no-signal nodes don't dilute), so base_score is the
+    # mean over the one opinionated var [0.6 @ w=1.0] = 0.6 (no tanh).
     assert res["company_score"]["components"]["industry_contrib"] == pytest.approx(0.6)
-    assert res["core_final_score"]["base_score"] == pytest.approx(0.6 / 1.3)
+    assert res["core_final_score"]["base_score"] == pytest.approx(0.6)
 
 
 def test_valuation_synthetic_node_counts_once_no_double_count():
