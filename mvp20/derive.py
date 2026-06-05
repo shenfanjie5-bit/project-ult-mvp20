@@ -1679,11 +1679,21 @@ def derive_l11_trade_signal(
     long_score: Mapping[str, Any] | None,
     mode: Mapping[str, Any] | None,
 ) -> dict | None:
-    """L11.trade.signal — BUY/HOLD/WATCH/AVOID label.
+    """L11.trade.signal — BUY/HOLD/WATCH/AVOID label (derive-layer diagnostic).
 
-    Spec §27.4: derived from L11.short/mid/long.score + L11.mode.
-    Thresholds mirror ``scoring._trading_signal_from_mix``.
+    Spec §27.4: a label over L11.short/mid/long.score (a derive-Tier-1
+    aggregation) under the §27.4 horizon weights, with L11.mode overrides. It
+    SHARES score_company's absolute BUY/HOLD/WATCH cut points (imported below so
+    they can't silently drift apart again — the previous hard-coded
+    0.45/0.10/-0.20 had diverged from scoring's), but it is computed on a
+    DIFFERENT input than ``score_company.base_score`` and carries mode overrides,
+    so it can legitimately disagree with the user-facing ``trading_signal``. This
+    node is ``participates_in_score=false`` (audit_only): it does NOT feed the
+    score and is not surfaced in the score / server response.
     """
+    from mvp20.scoring import (
+        SIGNAL_BUY_THRESHOLD, SIGNAL_HOLD_THRESHOLD, SIGNAL_WATCH_THRESHOLD,
+    )
 
     if not any(x for x in (short_score, mid_score, long_score)):
         return None
@@ -1700,11 +1710,11 @@ def derive_l11_trade_signal(
         signal = "AVOID"
     elif mode_label == "wait_for_confirmation":
         signal = "WATCH"
-    elif mix >= 0.45:
+    elif mix >= SIGNAL_BUY_THRESHOLD:
         signal = "BUY"
-    elif mix >= 0.10:
+    elif mix >= SIGNAL_HOLD_THRESHOLD:
         signal = "HOLD"
-    elif mix >= -0.20:
+    elif mix >= SIGNAL_WATCH_THRESHOLD:
         signal = "WATCH"
     else:
         signal = "AVOID"
