@@ -857,7 +857,7 @@ def test_scoring_keeps_legacy_layer_inference_when_roles_are_absent() -> None:
     assert result["role_components"] == {}
 
 
-def test_confidence_role_compresses_final_score_without_adding_signal() -> None:
+def test_confidence_role_recorded_as_band_without_compressing_base() -> None:
     stock_overlay = {
         "ts_code": "CONF.TEST",
         "industry_id": "TEST",
@@ -903,12 +903,13 @@ def test_confidence_role_compresses_final_score_without_adding_signal() -> None:
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
     assert result["company_score"]["components"]["industry_contrib"] == pytest.approx(1.0)
+    # R-2c: confidence is a SEPARATE conviction band, recorded but NOT multiplied
+    # into the point estimate. Multiplying it (the old 0.5× here) conflated "how
+    # sure" with "how strong" and crushed low-coverage names. So base stays at the
+    # signal's own magnitude (1.0) while the 0.5 confidence is surfaced alongside.
     assert result["role_components"]["confidence_multiplier"] == pytest.approx(0.5)
-    # R-2b: the fundamental is the single-node coverage-weighted mean = the node
-    # score (1.0), already in [-1,1] (no tanh). The 0.5 confidence multiplier
-    # then halves base_score → 1.0 * 0.5 = 0.5. The intent stands: confidence
-    # COMPRESSES the score (scales it down) without adding any new signal.
-    assert result["final_score"]["base_score"] == pytest.approx(1.0 * 0.5)
+    assert result["final_score"]["components"]["confidence_multiplier"] == pytest.approx(0.5)
+    assert result["final_score"]["base_score"] == pytest.approx(1.0)
 
 
 def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -> None:

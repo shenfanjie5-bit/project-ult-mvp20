@@ -171,9 +171,24 @@ def _bound_industry_total(industry_total: float) -> float:
 #: Resulting mix: BUY 31% / HOLD 36% / WATCH 20% / AVOID 13%. These remain
 #: calibration constants to revisit if the field set / data distribution
 #: changes.
-SIGNAL_BUY_THRESHOLD = 0.30
-SIGNAL_HOLD_THRESHOLD = -0.10
-SIGNAL_WATCH_THRESHOLD = -0.45
+#: R-5 (2026-06-05) SUPERSEDES the T2/T3 calibration above. R-2c removed the
+#: confidence_multiplier from base (a ~0.65x haircut → field decompressed ~1.54x)
+#: and the market adapter is empirically ≈ identity for A-shares (multiplier
+#: median 1.007), so base ≈ direct (merit + valuation + flow − risk − priced_in)
+#: and base = 0 is a clean ABSOLUTE neutral. Per user policy these thresholds
+#: carry ABSOLUTE meaning and are NOT pegged to a target BUY% (a weak tape may
+#: legitimately have no BUYs). Post-R-2c 116-stock base p10/p25/median/p75/p90 =
+#: −0.88/−0.58/−0.24/+0.07/+0.33. Anchored absolutely: BUY ≥ +0.20 (positives
+#: clearly beat risk — conviction, not merely base>0) / HOLD ≥ −0.15 (roughly
+#: balanced middle) / WATCH ≥ −0.50 (net-negative, monitor) / AVOID < −0.50
+#: (clearly net-negative). Current weak-tape mix: BUY 18 (16%) / HOLD 33 /
+#: WATCH 29 / AVOID 36 (31%). Dynamic macro-regime amplification (lifting the
+#: whole field in a bull regime via the currently-dormant market_regime
+#: multiplier, median 1.007) is deferred to R-7 — to be validated by the
+#: point-in-time backtest rather than hand-tuned.
+SIGNAL_BUY_THRESHOLD = 0.20
+SIGNAL_HOLD_THRESHOLD = -0.15
+SIGNAL_WATCH_THRESHOLD = -0.50
 # anything strictly below WATCH threshold => AVOID
 
 
@@ -1716,15 +1731,17 @@ def score_company(
         primary_positive_path=top["positive"],
         primary_negative_path=top["negative"],
     )
+    # R-2c: confidence is a CONVICTION band, not a magnitude. Record it alongside
+    # the score but do NOT multiply it into base/totals. Multiplying conflated
+    # "how sure are we" (coverage / evidence quality) with "how strong is the
+    # signal", and crushed genuinely high-merit but low-coverage names — a
+    # ~0.65× haircut compressed base ~1.54× for every low-confidence stock,
+    # which is why BUY% collapsed. The band is surfaced for display / mode; the
+    # point estimate stays on the signal's own scale. BUY/HOLD/WATCH thresholds
+    # were re-anchored to this (un-compressed) scale in R-5.
     confidence_multiplier = role_components.get("confidence_multiplier", 1.0)
-    if role_components and confidence_multiplier < 1.0:
-        for key in ("short_total", "medium_total", "long_total", "base_score"):
-            final[key] *= confidence_multiplier
+    if role_components:
         final["components"]["confidence_multiplier"] = confidence_multiplier
-        final["trading_meaning"] = _describe_trading_meaning(
-            final["short_total"], final["medium_total"], final["long_total"],
-            base_score=final.get("base_score"),
-        )
     core_final = dict(final)
     market_adapter = apply_market_adapter(
         final_score=core_final,
