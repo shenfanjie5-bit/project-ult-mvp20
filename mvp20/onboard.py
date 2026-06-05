@@ -248,11 +248,11 @@ def recognize(market: str, code: str) -> dict:
 # onboard job: state table + pipeline
 # ---------------------------------------------------------------------------
 
-# Step list (also the progress bar the frontend renders). The first 7 produce
+# Step list (also the progress bar the frontend renders). The first 8 produce
 # the *preliminary* result; the last 3 are the async codex *full* completion.
 ONBOARD_STEPS = [
     "universe", "generate_overlays", "collect", "annual_report",
-    "derive", "compile", "score_preliminary",          # → ready_preliminary
+    "derive", "compile", "build_peer_context", "score_preliminary",  # → ready_preliminary
     "codex_fill", "recompile", "rescore",              # → ready_full
 ]
 
@@ -496,8 +496,30 @@ def run_onboard(
         rc, out = _run_cli(["compile-overlays", "--db", str(db_path)])
     compile_ok = _verify_compiled_snapshot(db_path, ts_code)
 
-    # 7. preliminary score
+    # 7. build cross-sectional peer-context so THIS newly-added stock enters the
+    #    valuation pools BEFORE it is scored. Without it, score-company loads a
+    #    stale artifact lacking the new stock → _xs_valuation_signal returns None
+    #    → its valuation_rerating / priced_in fall back to the pre-R-3 absolute
+    #    path (the "leader punished by valuation" regression quantified in the
+    #    R-6 audit: valr drift up to ~0.19). A-share pool only (HK/US peer_context
+    #    is an un-scored data artifact). Pipeline-locked; best-effort — a failed
+    #    rebuild leaves the prior artifact (score still works, valuation slightly
+    #    stale) rather than failing the whole onboarding.
     step(6)
+    if is_a:
+        try:
+            from mvp20.peer_context import build_and_save_peer_context
+            _codes = [fp.stem for fp in (ROOT / "config" / "stock_overlays").glob("**/*.yaml")]
+            with _ONBOARD_PIPELINE_LOCK:
+                build_and_save_peer_context(
+                    db_path, _codes, "A",
+                    overlays_dir=ROOT / "config" / "stock_overlays",
+                )
+        except Exception:  # noqa: BLE001 — best-effort; valuation slightly stale on failure
+            pass
+
+    # 8. preliminary score
+    step(7)
     preliminary = _score(ts_code, db_path)
     if isinstance(preliminary, dict) and not compile_ok:
         preliminary.setdefault(
@@ -514,9 +536,9 @@ def run_onboard(
     if not do_codex:
         return result
 
-    # 8. codex hardened-low fill (reuses the Phase-C1 machinery: the schema-
+    # 9. codex hardened-low fill (reuses the Phase-C1 machinery: the schema-
     #    hardened prompt-gen + low-effort runner). codex edits the overlay.
-    step(7)
+    step(8)
     prompt_path = Path("/tmp") / f"codex_onboard_{ts_code.replace('.', '_')}.md"
     subprocess.run(
         [sys.executable, "scripts/codex_prompt_gen.py",
@@ -530,15 +552,15 @@ def run_onboard(
             cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=1800,
         )
 
-    # 9. recompile (materialize the codex fill into the compiled snapshot that
+    # 10. recompile (materialize the codex fill into the compiled snapshot that
     #    the /stock-overlay API serves). Serialized with other onboard jobs'
     #    compiled-DB writes via the pipeline lock.
-    step(8)
+    step(9)
     with _ONBOARD_PIPELINE_LOCK:
         _run_cli(["compile-overlays", "--db", str(db_path)])
 
-    # 10. rescore (full)
-    step(9)
+    # 11. rescore (full)
+    step(10)
     result["full"] = _score(ts_code, db_path)
     return result
 

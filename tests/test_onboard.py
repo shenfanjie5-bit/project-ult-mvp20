@@ -87,6 +87,17 @@ def test_handle_industries_returns_active() -> None:
     assert st == 200 and len(body["data"]["industries"]) == 12
 
 
+def test_onboard_rebuilds_peer_context_before_scoring() -> None:
+    """R-6: a newly-added stock must rebuild the cross-sectional peer-context
+    AFTER its data is collected/derived but BEFORE it is scored. Otherwise
+    score-company loads a stale artifact that lacks the new stock →
+    _xs_valuation_signal returns None → valuation_rerating / priced_in fall back
+    to the pre-R-3 absolute path (quantified regression: valr drift up to ~0.19)."""
+    steps = onboard.ONBOARD_STEPS
+    assert "build_peer_context" in steps
+    assert steps.index("derive") < steps.index("build_peer_context") < steps.index("score_preliminary")
+
+
 def test_onboard_job_surfaces_preliminary_then_full(tmp_path: Path, monkeypatch) -> None:
     """The job must expose the preliminary score *while still running* (so the
     frontend can show it during the minutes-long codex fill), then the full
@@ -100,7 +111,7 @@ def test_onboard_job_surfaces_preliminary_then_full(tmp_path: Path, monkeypatch)
                          do_codex=True, year=2025, progress=None,
                          on_preliminary=None):
         if progress:
-            progress(6, "score_preliminary")
+            progress(7, "score_preliminary")
         prelim = {"ts_code": ts_code, "mode": "neutral", "signal": "WATCH",
                   "short": -0.18, "medium": -0.18, "long": -0.14, "top_path": None}
         if on_preliminary:
