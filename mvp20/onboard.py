@@ -18,6 +18,7 @@ can import ``recognize`` cheaply; tushare is only touched inside the call.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -506,6 +507,7 @@ def run_onboard(
     #    rebuild leaves the prior artifact (score still works, valuation slightly
     #    stale) rather than failing the whole onboarding.
     step(6)
+    peer_context_warning: str | None = None
     if is_a:
         try:
             from mvp20.peer_context import build_and_save_peer_context
@@ -515,18 +517,32 @@ def run_onboard(
                     db_path, _codes, "A",
                     overlays_dir=ROOT / "config" / "stock_overlays",
                 )
-        except Exception:  # noqa: BLE001 — best-effort; valuation slightly stale on failure
-            pass
+        except Exception as exc:  # noqa: BLE001 — best-effort, but NOT silent
+            # save_peer_context writes atomically, so a failure leaves the PRIOR
+            # artifact intact and existing stocks are unaffected; only THIS new
+            # stock is absent from the pool → its valuation_rerating / priced_in
+            # fall back to the pre-R-3 absolute path. Surface it rather than hand
+            # back a silently-degraded score.
+            logging.getLogger(__name__).warning(
+                "onboard build_peer_context failed for %s: %s", ts_code, exc
+            )
+            peer_context_warning = (
+                "peer-context rebuild failed; this stock's cross-sectional "
+                "valuation fell back to the absolute path until the next build"
+            )
 
     # 8. preliminary score
     step(7)
     preliminary = _score(ts_code, db_path)
-    if isinstance(preliminary, dict) and not compile_ok:
-        preliminary.setdefault(
-            "compile_warning",
-            "stock-overlay compiled snapshot not refreshed (score is unaffected; "
-            "/stock-overlay may be stale for this stock)",
-        )
+    if isinstance(preliminary, dict):
+        if not compile_ok:
+            preliminary.setdefault(
+                "compile_warning",
+                "stock-overlay compiled snapshot not refreshed (score is unaffected; "
+                "/stock-overlay may be stale for this stock)",
+            )
+        if peer_context_warning:
+            preliminary.setdefault("valuation_warning", peer_context_warning)
     result: dict = {"ts_code": ts_code, "preliminary": preliminary}
     # Surface the preliminary score the moment it's ready so the frontend can
     # show it while the (minutes-long) codex fill continues running.

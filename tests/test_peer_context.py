@@ -303,3 +303,26 @@ def test_save_load_peer_context_roundtrip(tmp_path):
     assert loaded["_val_pe_of"]["X.SZ"] == 10.0
     assert _xs_valuation_signal("Y.SZ", loaded) == pytest.approx(-0.8)
     assert load_peer_context(tmp_path / "missing.json") is None
+
+
+def test_save_peer_context_atomic_failure_keeps_prior(tmp_path, monkeypatch):
+    """A crash mid-write must leave the PRIOR artifact intact (not a half-written
+    file) and clean up the temp — otherwise load_peer_context returns None and the
+    WHOLE A-share pool silently falls back to degraded absolute valuation."""
+    from mvp20.peer_context import save_peer_context, load_peer_context
+    import json as _json
+
+    p = tmp_path / "peer_context_A.json"
+    save_peer_context({"_val_pe_of": {"A.SZ": 1.0}}, p)
+    assert load_peer_context(p)["_val_pe_of"]["A.SZ"] == 1.0
+
+    def _boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(_json, "dump", _boom)
+    with pytest.raises(OSError):
+        save_peer_context({"_val_pe_of": {"A.SZ": 999.0}}, p)
+
+    # prior artifact intact (json.load is not patched), no temp leftover
+    assert load_peer_context(p)["_val_pe_of"]["A.SZ"] == 1.0
+    assert list(p.parent.glob(".peer_context.*")) == []

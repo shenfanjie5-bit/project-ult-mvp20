@@ -257,6 +257,18 @@ class FieldGovernanceRegistry:
         for key, value in rule.as_overlay_fields().items():
             if overwrite or key not in out or out.get(key) is None:
                 out[key] = value
+        # ``participates_in_score`` is a GOVERNANCE decision owned by
+        # data_point_roles.yaml, not codex-authored DATA — so the spec is
+        # authoritative even under overwrite=False (which only protects codex
+        # DATA fields like value/strength/data_status, none of which this method
+        # writes). Without this, a stale overlay copy of participates_in_score
+        # baked in at generation time shadows a LATER spec change: e.g. R-6
+        # marked 55 dead qualitative dp_ids non-scoring in the spec, but the
+        # overlays still carried participates_in_score: true, so the change never
+        # reached _role_participates → those dead (score-0) nodes kept inflating
+        # the damped denominators (risk/expectation_gap/…), diluting the real
+        # signal (~40% of the damp mass) and silently inflating every base_score.
+        out["participates_in_score"] = rule.participates_in_score
         if overwrite or not out.get("calculation_type"):
             out["calculation_type"] = rule.calculation_type
         if overwrite or not out.get("aggregation_policy"):

@@ -177,12 +177,17 @@ def _bound_industry_total(industry_total: float) -> float:
 #: median 1.007), so base ≈ direct (merit + valuation + flow − risk − priced_in)
 #: and base = 0 is a clean ABSOLUTE neutral. Per user policy these thresholds
 #: carry ABSOLUTE meaning and are NOT pegged to a target BUY% (a weak tape may
-#: legitimately have no BUYs). Post-R-2c 116-stock base p10/p25/median/p75/p90 =
-#: −0.88/−0.58/−0.24/+0.07/+0.33. Anchored absolutely: BUY ≥ +0.20 (positives
+#: legitimately have no BUYs). The participates_in_score governance fix (R-6
+#: follow-up: data_point_roles.yaml is authoritative at runtime, so the 55 dead
+#: qualitative dp_ids finally EXIT the damped denominators instead of inflating
+#: them ~40% with unreadable fake-zeros) un-diluted risk/expectation_gap and
+#: dropped base ~0.16 to its honest scale: 116-stock base p10/p25/median/p75/p90
+#: = −1.07/−0.73/−0.41/−0.08/+0.13. Anchored absolutely: BUY ≥ +0.20 (positives
 #: clearly beat risk — conviction, not merely base>0) / HOLD ≥ −0.15 (roughly
 #: balanced middle) / WATCH ≥ −0.50 (net-negative, monitor) / AVOID < −0.50
-#: (clearly net-negative). Current weak-tape mix: BUY 18 (16%) / HOLD 33 /
-#: WATCH 29 / AVOID 36 (31%). Dynamic macro-regime amplification (lifting the
+#: (clearly net-negative). Honest weak-tape mix: BUY 10 (9%) / HOLD 30 / WATCH
+#: 28 / AVOID 48 (41%) — few BUYs / many AVOIDs is the TRUTH once risk is counted
+#: without dead-node dilution, not a threshold artifact. Dynamic macro-regime amplification (lifting the
 #: whole field in a bull regime via the currently-dormant market_regime
 #: multiplier, median 1.007) is deferred to R-7 — to be validated by the
 #: point-in-time backtest rather than hand-tuned.

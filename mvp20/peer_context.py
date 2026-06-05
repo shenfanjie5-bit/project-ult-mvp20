@@ -230,10 +230,24 @@ def default_artifact_path(db_path, market: str = "A") -> Path:
 
 
 def save_peer_context(ctx: Mapping[str, Any], path) -> None:
-    import json
+    import json, os, tempfile
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(ctx), encoding="utf-8")
+    # Atomic write: a crash / disk-full mid-write must leave the PRIOR artifact
+    # intact. A half-written JSON would make load_peer_context return None →
+    # silent fallback to degraded absolute valuation for the WHOLE A-share pool
+    # (and torn reads for a concurrent /score). Write a sibling temp then rename.
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".peer_context.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(ctx, f)
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def load_peer_context(path) -> dict[str, Any] | None:
