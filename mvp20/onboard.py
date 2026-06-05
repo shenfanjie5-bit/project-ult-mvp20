@@ -38,6 +38,10 @@ HOT_DB_PATH = ROOT / "runtime" / "hot.sqlite"
 UNIVERSE_PATH = ROOT / "config" / "mvp20.universe.yaml"
 INDUSTRIES_PATH = ROOT / "config" / "mvp20.industries.yaml"
 INDUSTRY_MAP_PATH = ROOT / "config" / "tushare_industry_map.yaml"
+# 同花顺 (THS) L2-industry classification path — the PREFERRED A-share route,
+# consulted by recognize() before the legacy tushare map (see _ths_theme_for).
+THS_MAP_PATH = ROOT / "config" / "ths_industry_map.yaml"            # ths_industry → theme
+THS_MEMBERS_PATH = ROOT / "config" / "ths_industry_members.json"   # ts_code → {ths_industry, theme}
 
 # market → ts_code suffix(es) to probe. A-share spans 3 exchanges; we resolve
 # the exact one from stock_basic rather than guessing.
@@ -112,6 +116,93 @@ def _suggest_industries(tushare_industry: str | None) -> list[str]:
     return list(_industry_map().get(tushare_industry, []))
 
 
+# ---------------------------------------------------------------------------
+# 同花顺 (THS) L2-industry → theme resolution (preferred A-share path).
+#
+# The THS L2 taxonomy partitions every A-share into exactly one industry, so the
+# reverse-membership index (ts_code → {ths_industry, theme}) gives a single,
+# unambiguous theme. recognize() consults this BEFORE the legacy tushare
+# stock_basic.industry map. On a cache miss we attempt one throttled on-demand
+# refresh (re-pull ths_member, re-cache) and retry; still-absent → tushare
+# fallback; neither → needs_manual (we never guess an industry).
+# ---------------------------------------------------------------------------
+
+# mtime-keyed caches so an on-demand refresh (which rewrites the JSON/YAML) is
+# picked up on the next lookup without a process restart.
+_THS_MAP_CACHE: dict[str, Any] = {"mtime": None, "data": None}
+_THS_MEMBERS_CACHE: dict[str, Any] = {"mtime": None, "data": None}
+_THS_LOCK = threading.Lock()
+# Throttle on-demand refreshes so a burst of unknown codes can't hammer tushare.
+_THS_REFRESH_MIN_INTERVAL_S = 300.0
+_THS_LAST_REFRESH = {"ts": 0.0}
+
+
+def _ths_map() -> dict[str, str]:
+    """{ths_industry_name: theme} from ths_industry_map.yaml ({} if absent)."""
+    try:
+        mtime = THS_MAP_PATH.stat().st_mtime
+    except OSError:
+        return {}
+    with _THS_LOCK:
+        if _THS_MAP_CACHE["mtime"] == mtime and _THS_MAP_CACHE["data"] is not None:
+            return _THS_MAP_CACHE["data"]
+    data = _load_yaml(THS_MAP_PATH).get("mappings") or {}
+    with _THS_LOCK:
+        _THS_MAP_CACHE.update(mtime=mtime, data=data)
+    return data
+
+
+def _ths_members_index() -> dict[str, dict]:
+    """{ts_code(UPPER): {ths_industry, theme}} from members JSON ({} if absent)."""
+    try:
+        mtime = THS_MEMBERS_PATH.stat().st_mtime
+    except OSError:
+        return {}
+    with _THS_LOCK:
+        if _THS_MEMBERS_CACHE["mtime"] == mtime and _THS_MEMBERS_CACHE["data"] is not None:
+            return _THS_MEMBERS_CACHE["data"]
+    try:
+        raw = json.loads(THS_MEMBERS_PATH.read_text(encoding="utf-8"))
+        members = {str(k).upper(): v for k, v in (raw.get("members") or {}).items()}
+    except (ValueError, OSError):
+        members = {}
+    with _THS_LOCK:
+        _THS_MEMBERS_CACHE.update(mtime=mtime, data=members)
+    return members
+
+
+def _ths_refresh_members_index() -> bool:
+    """On-demand: re-pull ths_member for the mapped industries + re-cache the
+    JSON. Throttled to one run per _THS_REFRESH_MIN_INTERVAL_S. Best-effort:
+    any tushare/token/network failure is swallowed (caller falls back). Returns
+    True only if a refresh actually ran to completion."""
+    now = time.time()
+    with _THS_LOCK:
+        if now - _THS_LAST_REFRESH["ts"] < _THS_REFRESH_MIN_INTERVAL_S:
+            return False
+        _THS_LAST_REFRESH["ts"] = now
+    try:
+        from scripts.build_ths_classification import refresh_members_index
+        refresh_members_index()
+        return True
+    except Exception:  # noqa: BLE001 — network/token/parse; caller falls back
+        return False
+
+
+def _ths_theme_for(ts_code: str, *, allow_refresh: bool = True) -> tuple[str | None, str | None]:
+    """A-share ts_code → (theme, ths_industry) via the THS path; (None, None)
+    if absent from the (optionally refreshed) index or unmapped."""
+    key = (ts_code or "").upper()
+    rec = _ths_members_index().get(key)
+    if rec is None and allow_refresh and _ths_refresh_members_index():
+        rec = _ths_members_index().get(key)
+    if not rec:
+        return None, None
+    ind = rec.get("ths_industry")
+    theme = rec.get("theme") or _ths_map().get(ind)
+    return (theme or None), ind
+
+
 def already_in_pool(ts_code: str) -> bool:
     uni = _load_yaml(UNIVERSE_PATH)
     for c in uni.get("constituents", []):
@@ -163,15 +254,50 @@ def _recognize_a(code: str) -> dict:
         # key was always True → a no-op; sort SH/SZ ahead of .BJ instead).
         matches.sort(key=lambda r: 0 if str(r.get("ts_code", "")).endswith((".SH", ".SZ")) else 1)
     r = matches[0]
+    ts_code = r.get("ts_code")
     tind = r.get("industry")
+    name = r.get("name")
+
+    # Preferred path: 同花顺二级行业 → theme (the permanent classification route).
+    ths_theme, ths_industry = _ths_theme_for(ts_code)
+    if ths_theme:
+        return {
+            "ok": True,
+            "ts_code": ts_code,
+            "name": name,
+            "tushare_industry": tind,
+            "ths_industry": ths_industry,
+            "classification_source": "ths",
+            "suggested_industry_id": ths_theme,
+            "candidate_industry_ids": [ths_theme],
+        }
+
+    # Fallback: legacy tushare stock_basic.industry → theme map.
     cands = _suggest_industries(tind)
+    if cands:
+        return {
+            "ok": True,
+            "ts_code": ts_code,
+            "name": name,
+            "tushare_industry": tind,
+            "ths_industry": ths_industry,  # may be None
+            "classification_source": "tushare_fallback",
+            "suggested_industry_id": cands[0],
+            "candidate_industry_ids": cands,
+        }
+
+    # Neither path resolved a theme — flag for manual classification; never guess.
     return {
         "ok": True,
-        "ts_code": r.get("ts_code"),
-        "name": r.get("name"),
+        "ts_code": ts_code,
+        "name": name,
         "tushare_industry": tind,
-        "suggested_industry_id": cands[0] if cands else None,
-        "candidate_industry_ids": cands,
+        "ths_industry": ths_industry,
+        "classification_source": "none",
+        "needs_manual_classification": True,
+        "suggested_industry_id": None,
+        "candidate_industry_ids": [],
+        "note": "no THS or tushare industry mapping; pick an industry_id manually.",
     }
 
 

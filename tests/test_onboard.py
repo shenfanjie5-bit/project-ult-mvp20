@@ -263,6 +263,90 @@ def test_handle_onboard_rejects_long_name(tmp_path: Path) -> None:
     assert st == 400
 
 
+# ---------------------------------------------------------------------------
+# 同花顺 (THS) L2-industry classification path (recognize preferred route).
+# Hermetic: stock_basic + the THS index are monkeypatched; no network.
+# ---------------------------------------------------------------------------
+
+def _fake_basic(symbol: str, ts_code: str, name: str, industry: str):
+    return [{"symbol": symbol, "ts_code": ts_code, "name": name,
+             "industry": industry, "market": "主板"}]
+
+
+def test_ths_map_loads_real_config() -> None:
+    """The committed ths_industry_map.yaml resolves a known L2 industry → theme."""
+    m = onboard._ths_map()
+    assert m.get("半导体") == "SEMI_EQUIPMENT"
+    assert m.get("银行") == "FINANCIAL_HIGH_DIVIDEND"
+    assert len(m) == 62  # the frozen 62-industry partition
+
+
+def test_recognize_a_prefers_ths(monkeypatch) -> None:
+    """THS hit: industry comes from the THS index, NOT the tushare map — even
+    when the tushare industry would have mapped elsewhere."""
+    monkeypatch.setattr(onboard, "_stock_basic_a",
+                        lambda *a, **k: _fake_basic("688981", "688981.SH", "中芯国际", "半导体"))
+    monkeypatch.setattr(onboard, "_ths_members_index",
+                        lambda: {"688981.SH": {"ths_industry": "半导体", "theme": "SEMI_EQUIPMENT"}})
+    # tushare map would also say SEMI_EQUIPMENT; force it to something else so we
+    # can prove the THS branch (source=ths) actually won.
+    monkeypatch.setattr(onboard, "_suggest_industries", lambda tind: ["WRONG_FALLBACK"])
+    res = onboard.recognize("A", "688981")
+    assert res["ok"] is True
+    assert res["classification_source"] == "ths"
+    assert res["suggested_industry_id"] == "SEMI_EQUIPMENT"
+    assert res["candidate_industry_ids"] == ["SEMI_EQUIPMENT"]
+    assert res["ths_industry"] == "半导体"
+
+
+def test_recognize_a_falls_back_to_tushare(monkeypatch) -> None:
+    """THS miss (and no refresh) → legacy tushare stock_basic.industry map."""
+    monkeypatch.setattr(onboard, "_stock_basic_a",
+                        lambda *a, **k: _fake_basic("000001", "000001.SZ", "测试", "IT设备"))
+    monkeypatch.setattr(onboard, "_ths_members_index", lambda: {})
+    monkeypatch.setattr(onboard, "_ths_refresh_members_index", lambda: False)
+    res = onboard.recognize("A", "000001")
+    assert res["ok"] is True
+    assert res["classification_source"] == "tushare_fallback"
+    assert res["suggested_industry_id"] == "AI_COMPUTE"  # IT设备 → AI_COMPUTE
+    assert res["ths_industry"] is None
+
+
+def test_recognize_a_unknown_needs_manual(monkeypatch) -> None:
+    """Neither THS nor tushare resolves → needs_manual, no guessed industry."""
+    monkeypatch.setattr(onboard, "_stock_basic_a",
+                        lambda *a, **k: _fake_basic("000002", "000002.SZ", "测试", "白酒"))
+    monkeypatch.setattr(onboard, "_ths_members_index", lambda: {})
+    monkeypatch.setattr(onboard, "_ths_refresh_members_index", lambda: False)
+    res = onboard.recognize("A", "000002")
+    assert res["ok"] is True
+    assert res["classification_source"] == "none"
+    assert res["needs_manual_classification"] is True
+    assert res["suggested_industry_id"] is None
+    assert res["candidate_industry_ids"] == []
+
+
+def test_ths_theme_for_on_demand_refresh_retry(monkeypatch) -> None:
+    """On a cache miss the resolver triggers one refresh, then re-reads the index
+    and resolves the now-present code."""
+    state = {"refreshed": False}
+
+    def fake_index():
+        return {"301308.SZ": {"ths_industry": "消费电子", "theme": "CONSUMER_ELECTRONICS"}} \
+            if state["refreshed"] else {}
+
+    def fake_refresh():
+        state["refreshed"] = True
+        return True
+
+    monkeypatch.setattr(onboard, "_ths_members_index", fake_index)
+    monkeypatch.setattr(onboard, "_ths_refresh_members_index", fake_refresh)
+    theme, ind = onboard._ths_theme_for("301308.SZ")
+    assert theme == "CONSUMER_ELECTRONICS"
+    assert ind == "消费电子"
+    assert state["refreshed"] is True
+
+
 def test_handle_onboard_guard_duplicate_and_capacity(tmp_path: Path, monkeypatch) -> None:
     """H2 at the HTTP layer: a reserved (in-flight) ts_code → 409, and an
     over-capacity request → 429. Pre-reserve via the public helper so no real
