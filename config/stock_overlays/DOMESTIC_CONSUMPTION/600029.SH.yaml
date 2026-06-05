@@ -961,7 +961,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -977,18 +977,22 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.75
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    strength: 弱
+    components: []
+    peers_comparison: {}
+    evidence_summary: 上游 L3.channel.mix 本地缺失，无法闭环判断渠道/供应链相对优势。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1005,6 +1009,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: null
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L1.position.stickiness
   dp_id: L1.position.stickiness
   node_name: 客户粘性与绑定深度
@@ -1016,7 +1023,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -1032,18 +1039,22 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.8
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    retention_rate: null
+    switching_cost: null
+    churn_signals: []
+    evidence_summary: 客户结构和转化留存上游均缺失。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1062,6 +1073,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: null
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L2.newbiz.tam
   dp_id: L2.newbiz.tam
   node_name: 新业务潜在空间
@@ -1073,7 +1087,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.42
   time_horizon:
   - short
   - medium
@@ -1087,9 +1101,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: optional
   data_status: Optionality
   missing_policy: optionality_track
@@ -1098,12 +1112,33 @@ nodes:
   alert_policy: no_alert
   missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
+  data_coverage: 0.42
+  evidence_quality: low
   value:
-    current_contribution: null
-    future_option_value: null
-  evidence_sources: []
+    current_contribution:
+      level: low
+      factors:
+      - 本地主营显示航空运输、维修、配餐、旅游代理等延伸业务，没有单独披露新业务收入。
+    future_option_value:
+      level: medium
+      factors:
+      - 数字化转型、互联网数据服务、物联网技术服务等经营范围可形成效率改善期权，但空间未量化。
+      catalyst_required:
+      - 年度报告披露信息化投入与增量收入
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 航空地面延伸业务;民用航空器机型培训(限分支机构凭许可证经营);资产租赁;工程管理与技术咨询;航材销售;旅游代理服务;商品零售批发.
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 南航始终以“数字技术与生产经营深度融合”为主线，围绕核心业务、产业板块推进数字化转型
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -1121,6 +1156,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: b28b426f6d8abdaf
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L2.newbiz.uncertainty
   dp_id: L2.newbiz.uncertainty
   node_name: 新业务不确定性
@@ -1132,12 +1170,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
   - long
-  status: Optionality
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1148,20 +1186,20 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: optional
-  data_status: Optionality
+  data_status: Unknown
   missing_policy: optionality_track
   calculation_type: scenario_weighted
   aggregation_policy: scenario_probability_weighted
   alert_policy: no_alert
-  missing_reason: null
+  missing_reason: no_local_evidence
   materiality: 0.55
   data_coverage: null
-  evidence_quality: null
+  evidence_quality: low
   value:
-    current_contribution: null
-    future_option_value: null
+    current_contribution: {}
+    future_option_value: {}
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1179,6 +1217,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: null
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L3.product.lifecycle
   dp_id: L3.product.lifecycle
   node_name: 产品生命周期阶段
@@ -1190,12 +1231,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.55
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1204,21 +1245,38 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: saturation
   aggregation_policy: saturation_curve
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.55
+  evidence_quality: medium
+  value:
+    phase: 成熟
+    competitive_score: 3.0
+    notes: 航空客货运为成熟服务产品；数字化改善属于效率升级。
+    evidence_summary: 主营为定期/不定期航空客货邮运输，未见新产品放量证据。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 南航始终以“数字技术与生产经营深度融合”为主线，围绕核心业务、产业板块推进数字化转型
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -1236,6 +1294,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: b28b426f6d8abdaf
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.customer.segment_mix
   dp_id: L3.customer.segment_mix
   node_name: 客户结构与集中度
@@ -1247,12 +1308,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.58
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1261,21 +1322,39 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: add_uncertainty_penalty
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.85
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.58
+  evidence_quality: medium
+  value:
+    segments:
+    - name: 客运旅客
+      revenue_pct: 85.9714
+    - name: 货运及邮运客户
+      revenue_pct: 10.7925
+    - name: 其他航空延伸服务客户
+      revenue_pct: 3.2358
+    concentration_top5_pct: null
+    notes: 按2025分部收入映射客户类型；未披露前五大客户集中度。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L2.segment.revenue_share
+    source: tushare:fina_mainbz
+    excerpt: '{"segments": [{"item": "客运及客运相关服务", "revenue_pct": 85.9714, "period":
+      "20251231"}, {"item": "货运及邮运", "revenue_pct": 10.7925, "period": "20251231"}'
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -1291,6 +1370,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 6b672a1d57a07f5e
+  last_filled_period: '2025'
+  last_event_id: null
 - node_id: 600029.SH:L3.channel.mix
   dp_id: L3.channel.mix
   node_name: 渠道结构
@@ -1302,12 +1384,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.45
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1316,21 +1398,39 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.45
+  evidence_quality: low
+  value:
+    direct_pct: null
+    distributor_pct: null
+    ecommerce_pct: null
+    others_pct: null
+    notes: 主营与经营范围显示自营航空服务、代理业务和互联网销售均存在，但未披露渠道占比。
+    trend: digital_up
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 航空地面延伸业务;民用航空器机型培训(限分支机构凭许可证经营);资产租赁;工程管理与技术咨询;航材销售;旅游代理服务;商品零售批发.
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 南航始终以“数字技术与生产经营深度融合”为主线，围绕核心业务、产业板块推进数字化转型
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -1346,6 +1446,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 6b672a1d57a07f5e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.region.tier_mix
   dp_id: L3.region.tier_mix
   node_name: 区域/市场层级结构
@@ -1357,7 +1460,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -1373,18 +1476,23 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.6
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    tier1_pct: null
+    tier2_pct: null
+    tier3_pct: null
+    overseas_pct: null
+    notes: 本地仅披露国内、地区、国际航空服务范围，未披露城市层级或海外占比。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1401,6 +1509,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 6b672a1d57a07f5e
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L3.delivery.lead_time
   dp_id: L3.delivery.lead_time
   node_name: 交付周期
@@ -1412,12 +1523,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: N/A
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1426,21 +1537,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
-  missing_policy: unknown_reduce_confidence
+  data_status: N/A
+  missing_policy: not_applicable_remove
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: not_applicable_air_transport_service
   materiality: 0.55
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.0
+  evidence_quality: low
+  value:
+    lead_time_days: null
+    on_time_rate: null
+    trend: null
+    notes: 航空客运不适用制造/电商式交付周期；准点率本地未披露。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -1456,6 +1575,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 79bca1f9132bcf81
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.delivery.csat
   dp_id: L3.delivery.csat
   node_name: 交付质量/满意度
@@ -1467,7 +1589,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -1483,18 +1605,22 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.45
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    nps_or_csat: null
+    complaint_rate: null
+    trend: null
+    notes: 航空服务满意度/投诉率理论适用，但本地源无NPS、CSAT或投诉率。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1511,6 +1637,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: b28b426f6d8abdaf
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.volume.foot_traffic
   dp_id: L4.volume.foot_traffic
   node_name: 客流/订单流
@@ -1522,7 +1651,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -1538,18 +1667,21 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: minute
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.65
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    yoy_pct: null
+    monthly_trend: []
+    notes: 航空旅客/客流理论适用，但本地只披露收入，未披露旅客量或客流同比。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1566,6 +1698,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 8fe5efb2de5cdcd9
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.volume.frequency
   dp_id: L4.volume.frequency
   node_name: 复购/使用频次
@@ -1577,7 +1712,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -1593,18 +1728,21 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: daily
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.55
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    frequency_per_user: null
+    yoy_delta_pct: null
+    notes: 未披露单客出行频次或复购频次。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1621,6 +1759,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 8fe5efb2de5cdcd9
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.price.subscription
   dp_id: L4.price.subscription
   node_name: 订阅/价格模式
@@ -1632,12 +1773,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: N/A
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1646,21 +1787,28 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
-  missing_policy: unknown_reduce_confidence
+  data_status: N/A
+  missing_policy: not_applicable_remove
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: not_applicable_no_subscription_model
   materiality: 0.5
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.0
+  evidence_quality: low
+  value:
+    tiers: []
+    trend: null
+    notes: 航空客货运以票价/运价为主，不是订阅定价模式。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -1676,6 +1824,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 8141f69b03714ae8
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.price.discount
   dp_id: L4.price.discount
   node_name: 公司折扣率
@@ -1687,12 +1838,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.38
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1701,21 +1852,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.38
+  evidence_quality: low
+  value:
+    avg_discount_pct: null
+    trend: unknown
+    season_high: null
+    notes: 无平均折扣率披露；毛利率10.82%只能说明价格/成本压力。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -1731,6 +1890,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: fcfb9bf5fe68b17e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.eff.capacity_utilization
   dp_id: L4.eff.capacity_utilization
   node_name: 产能利用率/资源利用率
@@ -1742,7 +1904,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -1758,18 +1920,22 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: daily
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.75
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    utilization_pct: null
+    trend: null
+    bottleneck: 机队/PPE重资产与航油成本约束
+    notes: 资本开支和PPE可见，但无客座率/载运率/利用率本地披露。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1786,6 +1952,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 118a773879f18d27
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.eff.conversion_retention
   dp_id: L4.eff.conversion_retention
   node_name: 转化率/留存率
@@ -1797,7 +1966,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -1813,18 +1982,23 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: daily
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.7
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    conversion_pct: null
+    retention_30d: null
+    repurchase_rate: null
+    trend: null
+    notes: 未披露转化率、30日留存或复购率。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1841,6 +2015,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 8fe5efb2de5cdcd9
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.share.customer_channel
   dp_id: L4.share.customer_channel
   node_name: 客户/渠道份额
@@ -1852,7 +2029,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -1868,18 +2045,23 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.7
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    customer_share_top5: null
+    channel_share: null
+    region_share: null
+    trend: null
+    notes: 未披露客户、渠道或区域份额。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1896,6 +2078,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 8fe5efb2de5cdcd9
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L5.surprise.buy_whisper
   dp_id: L5.surprise.buy_whisper
   node_name: 买方预期差/业绩 whisper
@@ -1907,12 +2092,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.44
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1921,21 +2106,37 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.85
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.44
+  evidence_quality: medium
+  value:
+    whisper_eps: null
+    whisper_revenue: null
+    vs_consensus_pct: null
+    source_count: 0
+    notes: 无买方whisper本地证据；卖方EPS 30日下修且7日评级动作为空。
+    evidence_summary: 不能构造whisper数值。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.fcst.revisions
+    source: tushare:report_rc.derived
+    excerpt: '{"consensus_eps_revision_30d_pct": -163.51851851851853, "direction":
+      "down", "recent_eps_avg": -0.049, "older_eps_avg": 0.07714285714285715'
+  - kind: local_dp_id
+    dp_id: L9.media.analyst_action
+    source: tushare:report_rc
+    excerpt: '{"recent_changes": [], "count_7d": 0, "action_type": "none", "lookback_days":
+      7}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -1953,6 +2154,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
+  source_fingerprint_at_fill: 2df48ee8a474abfe
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.position.market_share
   dp_id: L1.position.market_share
   node_name: 市场份额与排名
@@ -1964,12 +2168,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.42
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1978,21 +2182,37 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.8
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.42
+  evidence_quality: low
+  value:
+    rank: null
+    share_pct: null
+    peers:
+    - 国内大型航空公司
+    trend: stable
+    source_year: 2026Q1
+    market_size_unit: 收入/旅客运输市场
+    evidence_summary: 本地仅披露公司收入，不披露航空市场份额或排名。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: tushare:income
+    excerpt: '{"scalar": 47782000000.0, "unit": "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -2008,6 +2228,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 1b0a39e614e861f2
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.position.brand
   dp_id: L1.position.brand
   node_name: 品牌力与认知度
@@ -2019,12 +2242,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.48
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2033,21 +2256,35 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.48
+  evidence_quality: low
+  value:
+    tier: 领导
+    category: 大型全服务航空公司
+    qualitative_signals:
+    - 主营为国内、地区和国际航空客货邮运输
+    - 2026Q1收入规模477.82亿元
+    evidence_summary: 以公司主营范围和收入规模作为品牌层级弱证据。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: tushare:income
+    excerpt: '{"scalar": 47782000000.0, "unit": "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2063,6 +2300,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: missing
+  source_fingerprint_at_fill: 1b0a39e614e861f2
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.position.tech_barrier
   dp_id: L1.position.tech_barrier
   node_name: 技术壁垒/专利
@@ -2074,12 +2314,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2088,21 +2328,43 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.8
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: low
+  value:
+    moat_score: 2.0
+    patent_count_known: null
+    key_tech:
+    - 航空器维修
+    - 民用航空器机型培训
+    - 数字化经营与管理
+    rd_intensity_pct: 0.3286
+    evidence_summary: 航空运营资质、维修培训能力和数字化投入构成运营型壁垒，非专利型技术壁垒。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 航空地面延伸业务;民用航空器机型培训(限分支机构凭许可证经营);资产租赁;工程管理与技术咨询;航材销售;旅游代理服务;商品零售批发.
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 南航始终以“数字技术与生产经营深度融合”为主线，围绕核心业务、产业板块推进数字化转型
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: tushare:income
+    excerpt: '{"sga_total": 3159000000.0, "sell_exp": 2078000000.0, "admin_exp": 1081000000.0,
+      "rd_exp": 157000000.0, "sga_rd_ratio_revenue": 0.06939851827047842, "unit":
+      "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2118,6 +2380,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 8cdf9db5a41e130a
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.position.cost_edge
   dp_id: L1.position.cost_edge
   node_name: 成本优势
@@ -2129,12 +2394,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.52
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2143,21 +2408,37 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.75
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.52
+  evidence_quality: medium
+  value:
+    duration: 短期
+    vs_peers_gp_pct: null
+    drivers:
+    - 航线优化
+    - 精细化运力投放
+    - 高效运营
+    - 毛利率10.82%显示成本压力仍高
+    evidence_summary: 公司披露应对航油波动靠运力和票价策略，但毛利率低，成本优势不强。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2173,6 +2454,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: fcfb9bf5fe68b17e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.position.pricing_power
   dp_id: L1.position.pricing_power
   node_name: 公司定价权
@@ -2184,12 +2468,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2198,21 +2482,36 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.75
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    strength: 中
+    asp_yoy_pct: null
+    switching_cost: 低
+    evidence:
+    - 灵活的票价策略
+    - 毛利率10.82%
+    evidence_summary: 票价可灵活调整但航空客运价格弹性高、成本穿透有限。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2228,6 +2527,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: fcfb9bf5fe68b17e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L2.segment.cash_contrib
   dp_id: L2.segment.cash_contrib
   node_name: 主营现金贡献结构
@@ -2239,12 +2541,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.6
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2253,21 +2555,52 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.6
+  evidence_quality: medium
+  value:
+    segments:
+    - name: 客运及客运相关服务
+      revenue_pct: 85.9714
+      gross_margin_pct: null
+      cash_contrib_pct: null
+    - name: 货运及邮运
+      revenue_pct: 10.7925
+      gross_margin_pct: null
+      cash_contrib_pct: null
+    - name: 其他主营业务
+      revenue_pct: 2.4756
+      gross_margin_pct: null
+      cash_contrib_pct: null
+    - name: 酒店及旅游业务
+      revenue_pct: 0.4269
+      gross_margin_pct: null
+      cash_contrib_pct: null
+    - name: 航空配餐业务
+      revenue_pct: 0.3336
+      gross_margin_pct: null
+      cash_contrib_pct: null
+    evidence_summary: 客运收入占比最高，OCF为48.52亿元但未披露分部现金贡献。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L2.segment.revenue_share
+    source: tushare:fina_mainbz
+    excerpt: '{"segments": [{"item": "客运及客运相关服务", "revenue_pct": 85.9714, "period":
+      "20251231"}, {"item": "货运及邮运", "revenue_pct": 10.7925, "period": "20251231"}'
+  - kind: local_dp_id
+    dp_id: L5.cf.ocf
+    source: tushare:cashflow
+    excerpt: '{"scalar": 4852000000.0, "unit": "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2283,6 +2616,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 1ba904012a661174
+  last_filled_period: '2025'
+  last_event_id: null
 - node_id: 600029.SH:L2.segment.industry_exposure
   dp_id: L2.segment.industry_exposure
   node_name: 细分行业敞口
@@ -2294,12 +2630,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.63
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2308,21 +2644,35 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.63
+  evidence_quality: medium
+  value:
+    exposures:
+    - industry_id: 航空客运
+      weight_pct: 85.9714
+    - industry_id: 航空货运邮运
+      weight_pct: 10.7925
+    - industry_id: 航空延伸及其他服务
+      weight_pct: 3.2358
+    cyclical_sensitivity: 高
+    evidence_summary: 收入结构高度暴露于航空客运。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L2.segment.revenue_share
+    source: tushare:fina_mainbz
+    excerpt: '{"segments": [{"item": "客运及客运相关服务", "revenue_pct": 85.9714, "period":
+      "20251231"}, {"item": "货运及邮运", "revenue_pct": 10.7925, "period": "20251231"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2338,6 +2688,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: a2d0e557d53c8c34
+  last_filled_period: '2025'
+  last_event_id: null
 - node_id: 600029.SH:L2.segment.compete_landscape
   dp_id: L2.segment.compete_landscape
   node_name: 细分竞争格局
@@ -2349,12 +2702,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.4
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2363,21 +2716,34 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.4
+  evidence_quality: low
+  value:
+    competitive_intensity: 高
+    top_peers:
+    - 国内大型航空公司
+    top3_share_pct: null
+    evidence_summary: 本地竞争新闻为空；航空运输行业通常价格与航线竞争强，按低置信行业框架。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.industry.compete_risk
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: industry_inference
+    framework: 航空客运同质化程度较高，票价、航线网络和服务能力共同驱动竞争；未使用外部公司份额。
+    confidence: 0.4
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -2393,6 +2759,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 3ee0c05d4b30bb39
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L2.segment.business_risk
   dp_id: L2.segment.business_risk
   node_name: 业务结构性风险
@@ -2404,12 +2773,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.57
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2418,21 +2787,47 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.57
+  evidence_quality: medium
+  value:
+    risk_factors:
+    - type: 客运集中
+      severity: 高
+      rationale: 客运及客运相关服务收入占比85.9714%
+    - type: 油价成本
+      severity: 中
+      rationale: 问答明确投资者关注航油波动，公司以航线优化和票价策略应对
+    - type: 竞争风险
+      severity: 中
+      rationale: 本地竞争新闻为空但航空票价竞争天然存在
+    net_risk: 中高
+    evidence_summary: 收入集中在客运，成本和票价弹性是主要结构风险。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L2.segment.revenue_share
+    source: tushare:fina_mainbz
+    excerpt: '{"segments": [{"item": "客运及客运相关服务", "revenue_pct": 85.9714, "period":
+      "20251231"}, {"item": "货运及邮运", "revenue_pct": 10.7925, "period": "20251231"}'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
+  - kind: local_dp_id
+    dp_id: L9.industry.compete_risk
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -2448,6 +2843,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: f9c0429d3bc7602b
+  last_filled_period: '2025'
+  last_event_id: null
 - node_id: 600029.SH:L2.newbiz.commercialization
   dp_id: L2.newbiz.commercialization
   node_name: 新业务商业化进度
@@ -2459,7 +2857,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.38
   time_horizon:
   - short
   - medium
@@ -2473,9 +2871,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: optional
   data_status: Optionality
   missing_policy: optionality_track
@@ -2484,12 +2882,30 @@ nodes:
   alert_policy: no_alert
   missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
+  data_coverage: 0.38
+  evidence_quality: low
   value:
-    current_contribution: null
-    future_option_value: null
-  evidence_sources: []
+    current_contribution:
+      level: low
+      stage: 未单列
+      factors:
+      - 产品/订单本地源缺失；收入增长派生口径为负。
+    future_option_value:
+      level: medium
+      factors:
+      - 数字化转型成效稳步显现，但预算和商业化收入待年报披露。
+      catalyst_required:
+      - 单列数字化或延伸服务收入
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: tushare:income.derived
+    excerpt: '{"yoy_pct": -0.6529110521919151, "qoq_pct": -0.7378303046264595, "current_period":
+      "20260331", "yoy_compare_period": "20250930"}'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 南航始终以“数字技术与生产经营深度融合”为主线，围绕核心业务、产业板块推进数字化转型
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2505,6 +2921,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: d26feded7f1e0d19
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L2.newbiz.revenue_contrib
   dp_id: L2.newbiz.revenue_contrib
   node_name: 新业务当前营收占比
@@ -2516,7 +2935,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.43
   time_horizon:
   - short
   - medium
@@ -2530,9 +2949,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: optional
   data_status: Optionality
   missing_policy: optionality_track
@@ -2541,12 +2960,28 @@ nodes:
   alert_policy: no_alert
   missing_reason: null
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
+  data_coverage: 0.43
+  evidence_quality: low
   value:
-    current_contribution: null
-    future_option_value: null
-  evidence_sources: []
+    current_contribution:
+      revenue_pct: null
+      level: unknown
+      factors:
+      - 分部收入仅披露客运、货运、其他、酒店旅游、配餐；未定义新业务口径。
+    future_option_value:
+      level: medium
+      factors:
+      - 其他主营业务收入占比2.4756，可作为延伸业务观察池但不能等同新业务。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: tushare:income
+    excerpt: '{"scalar": 47782000000.0, "unit": "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L2.segment.revenue_share
+    source: tushare:fina_mainbz
+    excerpt: '{"segments": [{"item": "客运及客运相关服务", "revenue_pct": 85.9714, "period":
+      "20251231"}, {"item": "货运及邮运", "revenue_pct": 10.7925, "period": "20251231"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2562,6 +2997,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 1762e42911af5341
+  last_filled_period: '2025'
+  last_event_id: null
 - node_id: 600029.SH:L2.newbiz.valuation_contrib
   dp_id: L2.newbiz.valuation_contrib
   node_name: 新业务估值贡献
@@ -2573,7 +3011,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.32
   time_horizon:
   - short
   - medium
@@ -2587,9 +3025,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: optional
   data_status: Optionality
   missing_policy: optionality_track
@@ -2598,12 +3036,21 @@ nodes:
   alert_policy: no_alert
   missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
+  data_coverage: 0.32
+  evidence_quality: low
   value:
-    current_contribution: null
-    future_option_value: null
-  evidence_sources: []
+    current_contribution:
+      est_valuation_contribution_pct: null
+      method: 不可估
+      notes: L2.newbiz.revenue_contrib 和 L2.newbiz.tam 在本地均无可量化新业务估值。
+    future_option_value:
+      level: medium
+      method: 期权
+      notes: 数字化与延伸业务只作为低置信期权，不量化估值贡献。
+  evidence_sources:
+  - kind: industry_inference
+    framework: 未披露新业务收入和TAM时，只能保留期权框架，不估算估值占比。
+    confidence: 0.32
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2619,6 +3066,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: null
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L3.customer.solvency
   dp_id: L3.customer.solvency
   node_name: 大客户偿付能力
@@ -2630,12 +3080,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.45
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2644,21 +3094,36 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: add_uncertainty_penalty
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.45
+  evidence_quality: low
+  value:
+    top_customers_solvency:
+    - name_proxy: 分散旅客客户
+      credit_signal: 好
+    - name_proxy: 货运及邮运客户
+      credit_signal: 中
+    ar_concentration_risk: 中
+    evidence_summary: 应收54.8亿元、应付265.81亿元；未披露大客户名单，航空客运天然较分散。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.bs.ar_ap
+    source: tushare:balancesheet
+    excerpt: '{"accounts_receivable": 5480000000.0, "accounts_payable": 26581000000.0,
+      "net_working_capital_change_proxy": -21101000000.0, "unit": "元", "period": "20260331"}'
+  - kind: industry_inference
+    framework: 航空客运面向大量个人/企业旅客，客户集中度通常低；货运客户信用风险较客运更集中。
+    confidence: 0.4
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2674,6 +3139,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 26ae433aa6076c5f
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.channel.overseas
   dp_id: L3.channel.overseas
   node_name: 海外渠道铺货与本土化
@@ -2685,7 +3153,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -2701,18 +3169,23 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.6
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    overseas_revenue_pct: null
+    key_markets:
+    - 国际航线
+    localization_stage: null
+    evidence_summary: 主营披露国际运输服务，但未披露海外收入占比。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -2729,6 +3202,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: null
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L3.region.key_risk
   dp_id: L3.region.key_risk
   node_name: 重点区域风险
@@ -2740,12 +3216,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.42
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2754,21 +3230,35 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.42
+  evidence_quality: low
+  value:
+    key_region: 国际航线
+    risk_type: 汇率
+    severity: 低
+    exposure_pct: null
+    evidence_summary: USDCNH 20日变化低于阈值且方向中性；国际业务占比未披露。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.macro.fx
+    source: tushare:macro_fx
+    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct":
+      -0.4145, "rmb_appreciation_pct": 0.4145'
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -2784,6 +3274,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.delivery.capacity_supply
   dp_id: L3.delivery.capacity_supply
   node_name: 交付产能/供应链稳定
@@ -2795,12 +3288,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -2809,21 +3302,38 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    supplier_concentration: 中
+    capacity_utilization_pct: null
+    bottleneck: 机队/PPE重资产与航油成本约束
+    evidence_summary: 资本开支50.65亿元、固定资产1158.61亿元，未披露利用率。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.cf.capex
+    source: tushare:cashflow
+    excerpt: '{"scalar": 5065000000.0, "unit": "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L5.bs.goodwill_ppe
+    source: tushare:balancesheet
+    excerpt: '{"goodwill": null, "fix_assets_ppe": 115861000000.0, "goodwill_to_assets":
+      null, "unit": "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2839,6 +3349,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 8cdf9db5a41e130a
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L0.price.contract_spot
   dp_id: L0.price.contract_spot
   node_name: 长协 vs 现货价差
@@ -3070,7 +3583,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -3086,18 +3599,24 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.7
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    metric_kind: ASP
+    value: null
+    currency: CNY
+    yoy_pct: null
+    trend: null
+    notes: 无客公里收益、客单价、票价ASP或ARPU本地披露。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -3114,6 +3633,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 1b0a39e614e861f2
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.price.pricing_power
   dp_id: L4.price.pricing_power
   node_name: 公司定价权 (运营)
@@ -3125,12 +3647,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -3139,21 +3661,34 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    strength: 中
+    recent_price_adjustment: null
+    customer_pushback: 弱
+    evidence_summary: 公司提到灵活票价策略，但没有具体提价/折扣数据。
+    notes: 航空定价权受需求、航油和竞争约束。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3169,6 +3704,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: fcfb9bf5fe68b17e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.price.elasticity
   dp_id: L4.price.elasticity
   node_name: 价格弹性
@@ -3180,12 +3718,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.4
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -3194,21 +3732,28 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.55
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.4
+  evidence_quality: low
+  value:
+    elasticity: null
+    estimation_method: industry_inference
+    notes: 航空客运价格弹性通常较高；本地无票价和客流联动数据。
+    evidence_summary: 只能做行业框架推断。
+  evidence_sources:
+  - kind: industry_inference
+    framework: 航空客运需求对票价、淡旺季和航线竞争敏感；未量化弹性。
+    confidence: 0.4
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3224,6 +3769,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.cost.cac_production
   dp_id: L4.cost.cac_production
   node_name: 获客/单位生产成本
@@ -3235,12 +3783,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.55
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -3249,21 +3797,38 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.55
+  evidence_quality: medium
+  value:
+    cac_or_unit_cost: null
+    trend: stable
+    drivers:
+    - 销售费用率约4.35%
+    - SGA/RD合计费用率6.94%
+    - 毛利率10.82%
+    evidence_summary: 无法计算单客获客成本或单位运输成本，只能披露费用率。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: tushare:income
+    excerpt: '{"sga_total": 3159000000.0, "sell_exp": 2078000000.0, "admin_exp": 1081000000.0,
+      "rd_exp": 157000000.0, "sga_rd_ratio_revenue": 0.06939851827047842, "unit":
+      "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3279,6 +3844,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 85485a6910d1958c
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.cost.rent_energy_logistics
   dp_id: L4.cost.rent_energy_logistics
   node_name: 租金/能源/物流成本
@@ -3290,12 +3858,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -3304,21 +3872,35 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.55
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    rent_yoy_pct: null
+    energy_yoy_pct: null
+    logistics_yoy_pct: null
+    trend: up
+    notes: 问答聚焦航油波动，毛利率低；无租金/能源/物流同比拆分。
+    evidence_summary: 航油成本为航空公司核心成本压力。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3334,6 +3916,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: fcfb9bf5fe68b17e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.eff.store_labor
   dp_id: L4.eff.store_labor
   node_name: 门店/人效
@@ -3345,12 +3930,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: N/A
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -3359,21 +3944,32 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: daily
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
-  missing_policy: unknown_reduce_confidence
+  data_status: N/A
+  missing_policy: not_applicable_remove
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: not_applicable_no_store_model
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.0
+  evidence_quality: low
+  value:
+    revenue_per_employee: null
+    revenue_per_store: null
+    yoy_pct: null
+    trend: null
+    notes: 航空公司无门店/单店人效口径；本地无员工数。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: tushare:income
+    excerpt: '{"sga_total": 3159000000.0, "sell_exp": 2078000000.0, "admin_exp": 1081000000.0,
+      "rd_exp": 157000000.0, "sga_rd_ratio_revenue": 0.06939851827047842, "unit":
+      "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3389,6 +3985,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: f1fc92eae5eaadc9
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L0.policy.access_license
   dp_id: L0.policy.access_license
   node_name: 准入与牌照
@@ -4005,7 +4604,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
@@ -4019,9 +4618,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -4030,10 +4629,23 @@ nodes:
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.5
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地媒体源无24h标题；宏观CPI/PPI仅作背景。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: local_dp_id
+    dp_id: L9.macro.cpi_employment
+    source: local:macro
+    excerpt: '{"cpi_yoy_pct": 1.2, "cpi_mom_pct": 0.3, "ppi_yoy_pct": 2.8, "latest_month":
+      "202604", "employment_unemployment_pct": null}'
   derived_slot: true
   inherit_from_industry: true
   field_role: score_component
@@ -4049,6 +4661,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: a58e1073473a041e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L9.macro.geo
   dp_id: L9.macro.geo
   node_name: 地缘事件
@@ -4060,7 +4675,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
@@ -4074,9 +4689,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -4085,10 +4700,23 @@ nodes:
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地媒体源无地缘事件；USDCNH波动低于阈值且方向neutral。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: local_dp_id
+    dp_id: L9.macro.fx
+    source: tushare:macro_fx
+    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct":
+      -0.4145, "rmb_appreciation_pct": 0.4145'
   derived_slot: true
   inherit_from_industry: true
   field_role: score_component
@@ -4104,6 +4732,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: e7f0c86397dc5821
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.role.tag
   dp_id: L1.role.tag
   node_name: 行业角色标签
@@ -4115,12 +4746,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.65
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4129,21 +4760,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.55
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.65
+  evidence_quality: medium
+  value:
+    tags:
+    - 航空运输运营商
+    - 国内消费出行龙头
+    - 客货邮综合承运人
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4159,6 +4798,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: e8b62aaec1506845
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.model.tag
   dp_id: L1.model.tag
   node_name: 商业模式标签
@@ -4170,12 +4812,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.62
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4184,21 +4826,35 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.55
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.62
+  evidence_quality: medium
+  value:
+    tags:
+    - 重资产服务
+    - 航线网络运营
+    - 票价收益管理
+    - 客货运多业务
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
+  - kind: local_dp_id
+    dp_id: L5.bs.goodwill_ppe
+    source: tushare:balancesheet
+    excerpt: '{"goodwill": null, "fix_assets_ppe": 115861000000.0, "goodwill_to_assets":
+      null, "unit": "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4214,6 +4870,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: e8b62aaec1506845
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.moat.tags
   dp_id: L1.moat.tags
   node_name: 护城河标签
@@ -4225,12 +4884,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.56
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4239,21 +4898,39 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.56
+  evidence_quality: medium
+  value:
+    tags:
+    - 航线网络
+    - 运营资质
+    - 机队与维修能力
+    - 品牌规模
+    evidence_summary: 主营覆盖国内/国际客货邮运输、维修和培训，但毛利率较低。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 航空地面延伸业务;民用航空器机型培训(限分支机构凭许可证经营);资产租赁;工程管理与技术咨询;航材销售;旅游代理服务;商品零售批发.
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4269,6 +4946,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: d49f89500475359e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.stock_attr.tags
   dp_id: L1.stock_attr.tags
   node_name: 股价属性标签
@@ -4280,12 +4960,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.55
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4294,21 +4974,36 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.5
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.55
+  evidence_quality: medium
+  value:
+    tags:
+    - 顺周期出行
+    - 油价敏感
+    - 估值修复
+    - 高杠杆重资产
+    evidence_summary: 航空运输主业叠加估值修复标签。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
+  - kind: local_dp_id
+    dp_id: L6.path.tag
+    source: derive:l6_path_tag
+    excerpt: '{"tag": "估值修复", "label": "repair", "pe_percentile": 0.225, "confidence":
+      0.54}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4324,6 +5019,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 61bff22ee49f99a4
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L1.position.growth_rank
   dp_id: L1.position.growth_rank
   node_name: 增速排名
@@ -4335,12 +5033,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.45
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4349,21 +5047,34 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.45
+  evidence_quality: low
+  value:
+    rank: null
+    growth_pct: 10.079
+    trend: mixed
+    evidence_summary: 财务指标口径显示2026Q1营收同比10.079%，收入派生口径为负，排名无本地证据。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: tushare:income.derived
+    excerpt: '{"yoy_pct": -0.6529110521919151, "qoq_pct": -0.7378303046264595, "current_period":
+      "20260331", "yoy_compare_period": "20250930"}'
+  - kind: local_dp_id
+    dp_id: L5.fina.revenue_yoy
+    source: tushare:fina_indicator
+    excerpt: '{"value": 10.079, "period": "20260331", "currency": "CNY", "unit": "ratio_pct"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -4379,6 +5090,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 5c792e35c24fcd56
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L2.segment.opex_ratio
   dp_id: L2.segment.opex_ratio
   node_name: 业务线费用率
@@ -4390,12 +5104,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.68
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4404,21 +5118,38 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.68
+  evidence_quality: high
+  value:
+    opex_ratio_pct: 6.9399
+    components:
+      sga_total: 3159000000.0
+      sell_exp: 2078000000.0
+      admin_exp: 1081000000.0
+      rd_exp: 157000000.0
+    evidence_summary: 销售、管理、研发合计占收入6.9399%。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: tushare:income
+    excerpt: '{"sga_total": 3159000000.0, "sell_exp": 2078000000.0, "admin_exp": 1081000000.0,
+      "rd_exp": 157000000.0, "sga_rd_ratio_revenue": 0.06939851827047842, "unit":
+      "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: tushare:income
+    excerpt: '{"scalar": 47782000000.0, "unit": "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -4434,6 +5165,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 94b59e308ae276a9
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L2.segment.profit_share
   dp_id: L2.segment.profit_share
   node_name: 业务线利润占比
@@ -4445,12 +5179,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.68
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4459,21 +5193,33 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.68
+  evidence_quality: high
+  value:
+    operating_profit: 2510000000.0
+    net_profit: 2151000000.0
+    net_to_operating_profit_pct: 85.6972
+    evidence_summary: 2026Q1营业利润25.10亿元，净利润21.51亿元。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.operating_profit
+    source: tushare:income
+    excerpt: '{"scalar": 2510000000.0, "unit": "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L5.is.net_profit
+    source: tushare:income
+    excerpt: '{"scalar": 2151000000.0, "unit": "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -4489,6 +5235,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 4906fa32475e2e3f
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.product.portfolio
   dp_id: L3.product.portfolio
   node_name: 产品组合结构
@@ -4500,12 +5249,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.65
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4514,21 +5263,42 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.65
+  evidence_quality: medium
+  value:
+    products:
+    - name: 客运及客运相关服务
+      revenue_pct: 85.9714
+    - name: 货运及邮运
+      revenue_pct: 10.7925
+    - name: 其他主营业务
+      revenue_pct: 2.4756
+    - name: 酒店及旅游业务
+      revenue_pct: 0.4269
+    - name: 航空配餐业务
+      revenue_pct: 0.3336
+    evidence_summary: 产品组合以客运为绝对主导。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L2.segment.revenue_share
+    source: tushare:fina_mainbz
+    excerpt: '{"segments": [{"item": "客运及客运相关服务", "revenue_pct": 85.9714, "period":
+      "20251231"}, {"item": "货运及邮运", "revenue_pct": 10.7925, "period": "20251231"}'
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4544,6 +5314,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: missing
+  source_fingerprint_at_fill: 6b672a1d57a07f5e
+  last_filled_period: '2025'
+  last_event_id: null
 - node_id: 600029.SH:L3.product.margin_mix
   dp_id: L3.product.margin_mix
   node_name: 产品毛利/价格结构
@@ -4555,12 +5328,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.55
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4569,21 +5342,34 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.55
+  evidence_quality: medium
+  value:
+    gross_margin_pct: 10.82
+    margin_tier: 低
+    product_margin_split: []
+    notes: 本地有整体毛利率，无分产品毛利拆分。
+    evidence_summary: 2026Q1整体毛利率10.82%。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -4599,6 +5385,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: d49f89500475359e
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.customer.concentration
   dp_id: L3.customer.concentration
   node_name: 客户集中度/流失风险
@@ -4610,12 +5399,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.36
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4624,21 +5413,35 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.75
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.36
+  evidence_quality: low
+  value:
+    top5_revenue_pct: null
+    top10_revenue_pct: null
+    concentration_trend: unknown
+    notes: 未披露前五/前十大客户；应收账款54.8亿元提供信用暴露背景。
+    evidence_summary: 客户集中度无本地披露。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.bs.ar_ap
+    source: tushare:balancesheet
+    excerpt: '{"accounts_receivable": 5480000000.0, "accounts_payable": 26581000000.0,
+      "net_working_capital_change_proxy": -21101000000.0, "unit": "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -4654,6 +5457,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: b622bd530cef2367
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.channel.cost
   dp_id: L3.channel.cost
   node_name: 渠道费用
@@ -4665,12 +5471,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.58
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4679,21 +5485,31 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.55
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.58
+  evidence_quality: medium
+  value:
+    channel_cost_pct: 4.3485
+    sales_expense: 2078000000.0
+    trend: unknown
+    evidence_summary: 销售费用20.78亿元，占收入约4.35%；渠道结构占比未披露。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: tushare:income
+    excerpt: '{"sga_total": 3159000000.0, "sell_exp": 2078000000.0, "admin_exp": 1081000000.0,
+      "rd_exp": 157000000.0, "sga_rd_ratio_revenue": 0.06939851827047842, "unit":
+      "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4709,6 +5525,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: f1fc92eae5eaadc9
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.channel.efficiency
   dp_id: L3.channel.efficiency
   node_name: 渠道效率
@@ -4720,12 +5539,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.38
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4734,21 +5553,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.38
+  evidence_quality: low
+  value:
+    revenue: 47782000000.0
+    channel_mix_known: false
+    trend: unknown
+    evidence_summary: 收入477.82亿元，但渠道占比缺失，无法计算渠道效率。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: tushare:income
+    excerpt: '{"scalar": 47782000000.0, "unit": "元", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4764,6 +5591,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 1b0a39e614e861f2
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.region.domestic_overseas
   dp_id: L3.region.domestic_overseas
   node_name: 国内/海外收入结构
@@ -4775,12 +5605,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.42
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4789,21 +5619,33 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.42
+  evidence_quality: low
+  value:
+    domestic_pct: null
+    overseas_pct: null
+    notes: 主营覆盖国内、地区和国际运输，但无收入区域拆分。
+    evidence_summary: 本地只支持存在国内/国际业务，不能量化占比。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: tushare:income
+    excerpt: '{"scalar": 47782000000.0, "unit": "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4819,6 +5661,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: e74515a3346193b9
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.region.fx_geo
   dp_id: L3.region.fx_geo
   node_name: 汇率/地缘影响
@@ -4830,12 +5675,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.47
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4844,21 +5689,34 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.47
+  evidence_quality: medium
+  value:
+    fx_sensitivity: 中
+    geo_risk: 低
+    key_currency: USDCNH
+    evidence_summary: 人民币20日升值0.4145%，未达到1%阈值；国际航线暴露存在但占比未知。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.macro.fx
+    source: tushare:macro_fx
+    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct":
+      -0.4145, "rmb_appreciation_pct": 0.4145'
+  - kind: local_dp_id
+    dp_id: L1.company.main_business
+    source: tushare:stock_company
+    excerpt: 提供国内,地区和国际定期及不定期航空客,货,邮,行李运输服务
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -4874,6 +5732,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: 44a5d75292f34422
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L3.delivery.fulfillment_cost
   dp_id: L3.delivery.fulfillment_cost
   node_name: 履约/售后成本
@@ -4885,12 +5746,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.52
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -4899,21 +5760,36 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.5
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.52
+  evidence_quality: medium
+  value:
+    fulfillment_cost_pct: null
+    sga_rd_ratio_revenue: 6.9399
+    gross_margin_pct: 10.82
+    trend: cost_pressure
+    evidence_summary: 销售管理研发费用率6.94%，毛利率10.82%，航空履约成本压力较高但未单列。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: tushare:income
+    excerpt: '{"sga_total": 3159000000.0, "sell_exp": 2078000000.0, "admin_exp": 1081000000.0,
+      "rd_exp": 157000000.0, "sga_rd_ratio_revenue": 0.06939851827047842, "unit":
+      "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: tushare:income.derived
+    excerpt: '{"scalar": 0.1081997404880499, "unit": "ratio", "period": "20260331"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -4929,6 +5805,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 85485a6910d1958c
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.share.market
   dp_id: L4.share.market
   node_name: 公司市占率
@@ -4940,7 +5819,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -4956,18 +5835,22 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.75
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    share_pct: null
+    rank: null
+    trend: null
+    notes: 本地无市场份额或排名披露。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -4984,6 +5867,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 8141f69b03714ae8
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.share.substitution
   dp_id: L4.share.substitution
   node_name: 竞品替代
@@ -4995,12 +5881,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.4
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5009,21 +5895,38 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.4
+  evidence_quality: low
+  value:
+    substitution_risk: 中
+    trend: stable
+    notes: 本地竞争风险新闻为空；替代来自高铁/其他交通方式属行业框架推断。
+    evidence_summary: 收入增长派生口径为负但无法归因替代。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.industry.compete_risk
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: tushare:income.derived
+    excerpt: '{"yoy_pct": -0.6529110521919151, "qoq_pct": -0.7378303046264595, "current_period":
+      "20260331", "yoy_compare_period": "20250930"}'
+  - kind: industry_inference
+    framework: 国内中短途航空与高铁存在替代关系；无公司级量化证据。
+    confidence: 0.4
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -5039,6 +5942,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: c4690c0ef618f46a
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.volume.sales
   dp_id: L4.volume.sales
   node_name: 销量
@@ -5050,12 +5956,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.62
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5064,21 +5970,34 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.62
+  evidence_quality: medium
+  value:
+    metric: 销售额
+    value: 47782000000.0
+    unit: 元
+    yoy_pct: null
+    notes: 本地有收入但无订单/旅客/运输量明细。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: tushare:income
+    excerpt: '{"scalar": 47782000000.0, "unit": "元", "period": "20260331"}'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -5094,6 +6013,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 8141f69b03714ae8
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L4.volume.orders
   dp_id: L4.volume.orders
   node_name: 订单量
@@ -5105,7 +6027,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -5121,18 +6043,23 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.7
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    metric: 订单量
+    value: null
+    unit: null
+    yoy_pct: null
+    notes: 本地有收入但无订单/旅客/运输量明细。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -5149,6 +6076,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 8141f69b03714ae8
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.volume.shipments
   dp_id: L4.volume.shipments
   node_name: 出货量/交付量
@@ -5160,7 +6090,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -5176,18 +6106,23 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.65
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    metric: 运输/交付量
+    value: null
+    unit: null
+    yoy_pct: null
+    notes: 本地有收入但无订单/旅客/运输量明细。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -5204,6 +6139,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 8141f69b03714ae8
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L4.volume.users
   dp_id: L4.volume.users
   node_name: 客户/用户数
@@ -5215,7 +6153,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.0
   time_horizon:
   - short
   - medium
@@ -5231,18 +6169,23 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: no_local_evidence
   materiality: 0.65
   data_coverage: null
-  evidence_quality: null
-  value: null
+  evidence_quality: low
+  value:
+    metric: 旅客/用户数
+    value: null
+    unit: null
+    yoy_pct: null
+    notes: 本地有收入但无订单/旅客/运输量明细。
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -5259,6 +6202,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 8141f69b03714ae8
+  last_filled_period: null
+  last_event_id: null
 - node_id: 600029.SH:L5.fcst.beat_probability
   dp_id: L5.fcst.beat_probability
   node_name: 业绩兑现概率
@@ -5270,12 +6216,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.52
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5284,21 +6230,42 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.52
+  evidence_quality: medium
+  value:
+    probability_pct: 35.0
+    drivers:
+    - 2026E EPS 30日下修-163.52%
+    - 9份卖方报告覆盖
+    - EPS区间-0.13至0.23元
+    evidence_summary: 一致预期下修明显，兑现概率偏低。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.fcst.revisions
+    source: tushare:report_rc.derived
+    excerpt: '{"consensus_eps_revision_30d_pct": -163.51851851851853, "direction":
+      "down", "recent_eps_avg": -0.049, "older_eps_avg": 0.07714285714285715'
+  - kind: local_dp_id
+    dp_id: L5.fcst.eps_cf
+    source: tushare:report_rc
+    excerpt: '{"eps_avg": 0.04911111111111111, "eps_low": -0.13, "eps_high": 0.23,
+      "cashflow_estimate": null, "cashflow_available": false, "num_analysts": 9'
+  - kind: local_dp_id
+    dp_id: L5.surprise.sell_side
+    source: tushare:report_rc
+    excerpt: '{"n_reports_90d": 9, "rating_distribution": {"买入": 4, "增持": 3, "推荐":
+      2}, "latest_report_date": "20260430"'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -5314,6 +6281,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 7dc339216678d4d6
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.gov.fraud_control
   dp_id: L8.gov.fraud_control
   node_name: 财务造假/内控
@@ -5325,12 +6295,12 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.48
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5339,21 +6309,34 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Known
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.85
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.48
+  evidence_quality: medium
+  value:
+    risk_level: medium
+    active: true
+    rationale: 180天内监事相关离职4项，但本地无近期公告/媒体内控造假证据。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L8.gov.management_change
+    source: tushare:stk_managers
+    excerpt: '{"events": [{"type": "高管离职", "person": "魏振兴", "title": "监事", "ann_date":
+      "20251213"'
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5369,6 +6352,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: c7e280bbe94a4fb6
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.gov.litigation
   dp_id: L8.gov.litigation
   node_name: 法律诉讼
@@ -5380,12 +6366,12 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.46
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5394,21 +6380,34 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Known
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.46
+  evidence_quality: medium
+  value:
+    risk_level: low
+    active: false
+    rationale: 本地管理层/诉讼源仅显示高管离职事件，媒体源无诉讼标题。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L8.gov.management_change
+    source: tushare:stk_managers
+    excerpt: '{"events": [{"type": "高管离职", "person": "魏振兴", "title": "监事", "ann_date":
+      "20251213"'
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5424,6 +6423,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: b936f9c7d1d94c1c
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.industry.demand_supply
   dp_id: L8.industry.demand_supply
   node_name: 行业需求/供给恶化
@@ -5435,12 +6437,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.48
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5449,21 +6451,32 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.48
+  evidence_quality: low
+  value:
+    risk_level: medium
+    active: true
+    rationale: 行业overlay终端需求down；本地行业竞争新闻为空。
+  evidence_sources:
+  - kind: local_overlay
+    path: config/industry_overlays/DOMESTIC_CONSUMPTION.yaml
+    dp_id: L0.demand.terminal
+  - kind: local_dp_id
+    dp_id: L9.industry.compete_risk
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5479,6 +6492,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: missing
+  source_fingerprint_at_fill: 5e24600eb14c8150
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.industry.price_war
   dp_id: L8.industry.price_war
   node_name: 行业价格战
@@ -5490,12 +6506,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.42
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5504,21 +6520,32 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.42
+  evidence_quality: low
+  value:
+    risk_level: medium
+    active: false
+    rationale: 本地竞争风险新闻为空；航空票价竞争按行业框架存在但无事件触发。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.industry.compete_risk
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: industry_inference
+    framework: 航空同质化客运服务存在票价竞争，但无本地价格战事件。
+    confidence: 0.4
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5534,6 +6561,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: missing
+  source_fingerprint_at_fill: 3ee0c05d4b30bb39
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.industry.substitute
   dp_id: L8.industry.substitute
   node_name: 替代品出现
@@ -5545,12 +6575,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.4
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5559,21 +6589,32 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.4
+  evidence_quality: low
+  value:
+    risk_level: medium
+    active: true
+    rationale: 无竞争新闻，但航空中短途存在高铁/替代交通框架风险。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.industry.compete_risk
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: industry_inference
+    framework: 中短途航空出行可被高铁等交通方式替代；本地无量化份额。
+    confidence: 0.4
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5589,6 +6630,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: 3ee0c05d4b30bb39
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.op.customer_channel
   dp_id: L8.op.customer_channel
   node_name: 客户流失/渠道失效
@@ -5600,12 +6644,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.48
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5614,21 +6658,33 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.48
+  evidence_quality: medium
+  value:
+    risk_level: low
+    active: false
+    rationale: 问答显示公司通过优化航线、票价和运营改善体验；媒体源无客户/渠道流失标题。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5644,6 +6700,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: eafb78446efc11a4
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.op.order_miss
   dp_id: L8.op.order_miss
   node_name: 订单不兑现
@@ -5655,12 +6714,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5669,21 +6728,33 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    risk_level: low
+    active: false
+    rationale: 业绩预告为扭亏，问答未披露订单不兑现。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.company.earnings_guidance
+    source: tushare:forecast
+    excerpt: '{"type": "扭亏", "change_pct_min": 147.1698, "change_pct_max": 158.9623,
+      "net_profit_min": 80000.0, "net_profit_max": 100000.0'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: tushare:irm_qa_sh
+    excerpt: 为应对航油波动，南航将积极做好航班航线优化，通过精细化的运力投放，灵活的票价策略和高效运营
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5699,6 +6770,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: 7e1623aede3b1973
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.op.product_fail
   dp_id: L8.op.product_fail
   node_name: 产品失败
@@ -5710,12 +6784,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.45
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Inactive
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5724,21 +6798,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
-  missing_policy: unknown_reduce_confidence
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.45
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: L9.company.product_order 上游缺失，媒体源无产品失败标题。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5754,6 +6836,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: 6feabb6f14496ca0
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.reg.license_risk
   dp_id: L8.reg.license_risk
   node_name: 牌照/准入风险
@@ -5765,12 +6850,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Inactive
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5779,21 +6864,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
-  missing_policy: unknown_reduce_confidence
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地政策变化媒体源无24h标题；无牌照准入事件证据。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.industry.policy_change
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5809,6 +6902,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: bf4d5d1445aaf904
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.reg.subsidy_off
   dp_id: L8.reg.subsidy_off
   node_name: 补贴退坡
@@ -5820,12 +6916,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Inactive
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5834,21 +6930,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
-  missing_policy: unknown_reduce_confidence
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.55
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地政策变化媒体源无24h标题；航空公司补贴退坡无本地证据。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.industry.policy_change
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5864,6 +6968,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: bf4d5d1445aaf904
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.reg.tax_trade
   dp_id: L8.reg.tax_trade
   node_name: 税收/出口限制 (个股)
@@ -5875,12 +6982,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.48
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5889,21 +6996,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.48
+  evidence_quality: medium
+  value:
+    risk_level: low
+    active: false
+    rationale: USDCNH方向neutral且波动低于阈值；无税收/贸易限制本地事件。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.macro.fx
+    source: tushare:macro_fx
+    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct":
+      -0.4145, "rmb_appreciation_pct": 0.4145'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5919,6 +7034,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: 44a5d75292f34422
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.reg.tighten
   dp_id: L8.reg.tighten
   node_name: 监管收紧/反垄断 (个股)
@@ -5930,12 +7048,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Inactive
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -5944,21 +7062,29 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
-  missing_policy: unknown_reduce_confidence
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: pending LLM/company-specific research
+  missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地政策变化媒体源无24h标题；无监管收紧事件证据。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.industry.policy_change
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -5974,6 +7100,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: bf4d5d1445aaf904
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.shock.black_swan
   dp_id: L8.shock.black_swan
   node_name: 黑天鹅事件
@@ -5985,7 +7114,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
@@ -5999,9 +7128,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -6010,10 +7139,18 @@ nodes:
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.85
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地媒体源无24h标题，地缘事件上游缺失。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6029,6 +7166,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: 6feabb6f14496ca0
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.shock.crisis
   dp_id: L8.shock.crisis
   node_name: 安全/舆情危机
@@ -6040,7 +7180,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
@@ -6054,9 +7194,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -6065,10 +7205,22 @@ nodes:
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地媒体源无24h标题，社交热榜false。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: local_dp_id
+    dp_id: L9.media.social_buzz
+    source: tushare:ths_hot.热股
+    excerpt: '{"in_xq_top_buzz": false, "as_of": "2026-05-30T08:09:28+02:00"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6084,6 +7236,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: 1695ebaad7d0df81
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L8.shock.supply_break
   dp_id: L8.shock.supply_break
   node_name: 供应中断/客户违约/自然灾害
@@ -6095,7 +7250,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
@@ -6109,9 +7264,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -6120,10 +7275,23 @@ nodes:
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.75
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地媒体源和竞争风险源均无24h标题。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: local_dp_id
+    dp_id: L9.industry.compete_risk
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6139,6 +7307,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
+  source_fingerprint_at_fill: 5e24600eb14c8150
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L9.company.ma
   dp_id: L9.company.ma
   node_name: 并购
@@ -6150,7 +7321,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.45
   time_horizon:
   - short
   - medium
@@ -6164,9 +7335,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -6175,10 +7346,18 @@ nodes:
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.6
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.45
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 近期公告上游缺失，媒体源无24h标题。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -6194,6 +7373,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 6feabb6f14496ca0
+  last_filled_period: 2026Q1
+  last_event_id: null
 - node_id: 600029.SH:L9.company.product_order
   dp_id: L9.company.product_order
   node_name: 新产品发布/大订单
@@ -6205,12 +7387,12 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.58
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Known
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6219,21 +7401,35 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Known
   missing_policy: inactive_zero_weight
   calculation_type: or_gate
   aggregation_policy: or_max_trigger
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.65
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.58
+  evidence_quality: medium
+  value:
+    active: true
+    event_count: 29
+    event_type: capital_injection_or_corporate_announcement
+    notes: 近期公告29条，置为事件活跃；公告标题为对子公司增资等，不是新产品/大订单。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.event.intraday_announcement
+    source: tushare:anns_d
+    excerpt: '{"count_recent": 29, "top_announcements": [{"title": "南方航空关于向控股子公司增资的公告",
+      "type": null, "ann_date": "20260530"'
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -6249,6 +7445,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 75754dbc8a7a5282
+  last_filled_period: 2026Q1
+  last_event_id: '1225340526'
 - node_id: 600029.SH:L9.media.short_report
   dp_id: L9.media.short_report
   node_name: 做空报告
@@ -6260,7 +7459,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: null
+  confidence: 0.5
   time_horizon:
   - short
   - medium
@@ -6274,9 +7473,9 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: null
+  data_source: llm_derived
   update_frequency: quarterly
-  last_updated: null
+  last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -6285,10 +7484,22 @@ nodes:
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.7
-  data_coverage: null
-  evidence_quality: null
-  value: null
-  evidence_sources: []
+  data_coverage: 0.5
+  evidence_quality: medium
+  value:
+    active: false
+    event_count: 0
+    notes: 本地媒体源无24h标题，社交热榜false，无做空报告事件。
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.report
+    source: tushare:news_derived
+    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00",
+      "reason": "upstream_error: stock_info_global_cls"}'
+  - kind: local_dp_id
+    dp_id: L9.media.social_buzz
+    source: tushare:ths_hot.热股
+    excerpt: '{"in_xq_top_buzz": false, "as_of": "2026-05-30T08:09:28+02:00"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -6304,6 +7515,9 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
+  source_fingerprint_at_fill: 1695ebaad7d0df81
+  last_filled_period: 2026Q1
+  last_event_id: null
 llm_derived_slots:
 - dp_id: L0.demand.terminal
   node_name: 终端需求强度
@@ -7440,8 +8654,9 @@ scores:
     positive_paths: []
     negative_paths: []
     net_path_score: null
-    formula: Direction × Event Strength × Transmission Strength × Company Exposure × Business Share × Profit Sensitivity ×
-      Confidence × Time Factor × Surprise × Funding Amplifier - Priced-in Discount - Risk Discount
+    formula: Direction × Event Strength × Transmission Strength × Company Exposure
+      × Business Share × Profit Sensitivity × Confidence × Time Factor × Surprise
+      × Funding Amplifier - Priced-in Discount - Risk Discount
   company_score:
     fundamental_score: null
     funding_score: null
@@ -7567,7 +8782,7 @@ views:
     - 600029.SH:L9.company.ma
     - 600029.SH:L9.company.product_order
     - 600029.SH:L9.media.short_report
-    edge_ids: &id001
+    edge_ids:
     - CAUSAL.600029.SH.demand_to_position
     - CAUSAL.600029.SH.pricing_power_to_surprise
     - CAUSAL.600029.SH.capacity_to_utilization
@@ -7638,7 +8853,13 @@ views:
     - 600029.SH:L4.cost.cac_production
     - 600029.SH:L4.cost.rent_energy_logistics
     - 600029.SH:L4.eff.store_labor
-    edge_ids: *id001
+    edge_ids:
+    - CAUSAL.600029.SH.demand_to_position
+    - CAUSAL.600029.SH.pricing_power_to_surprise
+    - CAUSAL.600029.SH.capacity_to_utilization
+    - CAUSAL.600029.SH.price_war_to_discount
+    - CAUSAL.600029.SH.discount_to_whisper
+    - CAUSAL.600029.SH.new_entrant_to_stickiness
     default_depth: 3
     top_n: 5
   valuation_expectation:
@@ -7656,7 +8877,13 @@ views:
     - 600029.SH:L2.newbiz.valuation_contrib
     - 600029.SH:L2.segment.opex_ratio
     - 600029.SH:L2.segment.profit_share
-    edge_ids: *id001
+    edge_ids:
+    - CAUSAL.600029.SH.demand_to_position
+    - CAUSAL.600029.SH.pricing_power_to_surprise
+    - CAUSAL.600029.SH.capacity_to_utilization
+    - CAUSAL.600029.SH.price_war_to_discount
+    - CAUSAL.600029.SH.discount_to_whisper
+    - CAUSAL.600029.SH.new_entrant_to_stickiness
     default_depth: 3
     top_n: 5
   risk_offset:
