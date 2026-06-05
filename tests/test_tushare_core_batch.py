@@ -257,3 +257,24 @@ def test_fetch_market_env_batch_isolates_sentinel_fetchers(monkeypatch):
         "L7.env.style",
         "L7.flow.passive_northbound",
     }
+
+
+def test_visibility_date_prefers_f_ann_date():
+    assert tushare_source._visibility_date(
+        {"f_ann_date": "20260430", "ann_date": "20260101"}) == "20260430"
+    assert tushare_source._visibility_date({"ann_date": "2026-01-05"}) == "20260105"
+    assert tushare_source._visibility_date({"end_date": "20260331"}) is None
+    assert tushare_source._visibility_date({"f_ann_date": None, "ann_date": ""}) is None
+
+
+def test_drop_future_filings_lookahead_guard():
+    """Lookahead L1/L2: drop filings announced AFTER asof; keep past + no-date."""
+    recs = [
+        {"end_date": "20260331", "f_ann_date": "20260430"},   # future filing
+        {"end_date": "20251231", "f_ann_date": "20260115"},   # already public
+        {"end_date": "20250930", "ann_date": None},           # no date → kept
+    ]
+    kept = tushare_source._drop_future_filings(recs, "20260116")
+    assert [r["end_date"] for r in kept] == ["20251231", "20250930"]
+    # asof defaults to today → all of these (well past) survive
+    assert len(tushare_source._drop_future_filings(recs)) == 3

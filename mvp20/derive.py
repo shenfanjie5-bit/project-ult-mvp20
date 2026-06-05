@@ -1828,6 +1828,27 @@ def _fetch_a_share_history(
             fields="ts_code,trade_date,open,high,low,close,vol",
         )
         if df_p is not None and len(df_p) > 0:
+            # L3 correctness fix: ``pro.daily`` is UNADJUSTED, so run_up /
+            # technicals / MAs spike falsely across ex-div / split dates (high-
+            # dividend names worst). Apply ``adj_factor`` → hfq (back-adjusted)
+            # so multi-day price math is consistent through corporate actions.
+            # hfq vs qfq is irrelevant for a return ratio as long as it is used
+            # consistently. PE/PB/turnover (daily_basic, below) are already
+            # adjustment-independent, so only OHLC is scaled. vol is left raw.
+            try:
+                df_a = pro.adj_factor(ts_code=ts_code, start_date=start, end_date=end)
+                fac = {
+                    str(r.get("trade_date")): float(r.get("adj_factor"))
+                    for _, r in df_a.iterrows()
+                    if r.get("trade_date") and r.get("adj_factor") is not None
+                } if df_a is not None else {}
+            except Exception:  # noqa: BLE001 — degrade to raw if adj_factor missing
+                fac = {}
+            if fac:
+                df_p = df_p.copy()
+                f = df_p["trade_date"].astype(str).map(fac).fillna(1.0)
+                for _col in ("open", "high", "low", "close"):
+                    df_p[_col] = df_p[_col] * f
             df_desc = df_p.sort_values("trade_date", ascending=False)
             out["close"] = [float(x) for x in df_desc["close"].dropna().tolist()]
             # technicals.compute_all expects ascending bars (oldest → latest).

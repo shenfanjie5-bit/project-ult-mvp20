@@ -418,6 +418,37 @@ def _previous_n_days(n: int) -> str:
     return (datetime.now(tz=timezone.utc) - timedelta(days=n)).strftime("%Y%m%d")
 
 
+def _visibility_date(rec) -> str | None:
+    """When a tushare filing became PUBLIC: ``f_ann_date`` (actual announcement)
+    preferred, else ``ann_date``. Returns ``YYYYMMDD`` or None."""
+    get = rec.get if hasattr(rec, "get") else (lambda _k: None)
+    for k in ("f_ann_date", "ann_date"):
+        v = get(k)
+        if v:
+            s = str(v).replace("-", "").strip()
+            if len(s) == 8 and s.isdigit():
+                return s
+    return None
+
+
+def _drop_future_filings(records, asof: str | None = None) -> list:
+    """Look-ahead guard (lookahead-findings L1/L2): drop records whose KNOWN
+    announcement date (``f_ann_date``/``ann_date``) is AFTER ``asof`` — a filing
+    not yet public. Records with no visibility date are KEPT (many tushare rows
+    omit it; dropping would lose live data). ``asof`` defaults to today, so in
+    live this is a no-op for normal data and only removes erroneously
+    future-dated rows; it also makes these fetchers recompute-safe when an
+    earlier ``asof`` is supplied."""
+    asof = asof or _today_yyyymmdd()
+    out = []
+    for r in records:
+        vis = _visibility_date(r)
+        if vis is not None and vis > asof:
+            continue
+        out.append(r)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # dp_id alias dual-emit helper (X1 spec-alignment)
 # ---------------------------------------------------------------------------
@@ -2268,12 +2299,13 @@ def _fetch_a_share_financials(
         try:
             df = pro.income(
                 ts_code=ts_code, limit=12,
-                fields=("ts_code,end_date,update_flag,total_revenue,operate_profit,"
+                fields=("ts_code,end_date,f_ann_date,ann_date,update_flag,total_revenue,operate_profit,"
                         "n_income,basic_eps,oper_cost,sell_exp,admin_exp,rd_exp"),
             )
             if df is not None and len(df) > 0:
                 by_period: dict[str, dict] = {}
-                for _r in df.to_dict(orient="records"):
+                # L1: drop filings not yet announced as of today before YoY/QoQ.
+                for _r in _drop_future_filings(df.to_dict(orient="records")):
                     ed = _r.get("end_date")
                     if not ed:
                         continue
@@ -2438,7 +2470,7 @@ def _fetch_a_share_financials(
         try:
             df = pro.cashflow(
                 ts_code=ts_code, limit=8,
-                fields=("ts_code,end_date,update_flag,n_cashflow_act,"
+                fields=("ts_code,end_date,f_ann_date,ann_date,update_flag,n_cashflow_act,"
                         "n_cashflow_inv_act,n_cash_flows_fnc_act,free_cashflow,"
                         "c_pay_acq_const_fiolta,c_pay_dist_dpcp_int_exp,"
                         "c_pay_acq_treasury_stock"),
@@ -2448,7 +2480,8 @@ def _fetch_a_share_financials(
                 # free_cashflow, falling back to update_flag='1' when both
                 # rows are NaN; final fallback is the first occurrence.
                 by_period: dict[str, dict] = {}
-                for rec in df.to_dict(orient="records"):
+                # L1: drop filings not yet announced as of today.
+                for rec in _drop_future_filings(df.to_dict(orient="records")):
                     ed = rec.get("end_date")
                     if not ed:
                         continue
@@ -2554,13 +2587,17 @@ def _fetch_a_share_financials(
         # ── pro.balancesheet (资产负债表) — cash + debt + inventory + AR/AP + goodwill ──
         try:
             df = pro.balancesheet(
-                ts_code=ts_code, limit=1,
-                fields=("ts_code,end_date,money_cap,total_liab,total_assets,"
+                ts_code=ts_code, limit=5,
+                fields=("ts_code,end_date,f_ann_date,ann_date,money_cap,total_liab,total_assets,"
                         "lt_borr,st_borr,inventories,accounts_receiv,accounts_pay,"
                         "goodwill,fix_assets"),
             )
             if df is not None and len(df) > 0:
-                rec = df.to_dict(orient="records")[0]
+                # L1: limit=5 + drop not-yet-announced filings, then latest visible
+                # period (rec={} → _safe returns None → balance dp_ids skip cleanly).
+                _bs_recs = _drop_future_filings(df.to_dict(orient="records"))
+                _bs_recs.sort(key=lambda r: r.get("end_date") or "", reverse=True)
+                rec = _bs_recs[0] if _bs_recs else {}
                 period = rec.get("end_date")
                 cash = _safe(rec, "money_cap")
                 lt_borr = _safe(rec, "lt_borr") or 0
@@ -2771,6 +2808,11 @@ def _fetch_a_share_fina_indicator(
         # Sort latest-first by end_date (Tushare returns latest first, but
         # defensively re-sort because a re-statement can flip ordering).
         records = df.to_dict(orient="records")
+        records = _drop_future_filings(records)  # L1: skip not-yet-announced filings
+        if not records:
+            skipped += 1
+            time.sleep(sleep_s)
+            continue
         records.sort(key=lambda r: r.get("end_date") or "", reverse=True)
         latest = records[0]
         end_date = latest.get("end_date")
@@ -3109,6 +3151,17 @@ def _fetch_a_share_forecast(
             continue
 
         records = df.to_dict(orient="records")
+        records = _drop_future_filings(records)  # L2: skip not-yet-public forecasts
+        if not records:
+            # All forecasts dated after today (not yet public) → treat as no
+            # forecast (mirror the df-empty branch above).
+            inactive += 1
+            rows.append((
+                ts_code, "L9.company.earnings_guidance",
+                json.dumps({"reason": "no forecast available"}, ensure_ascii=False),
+                "Inactive", 0.85, "tushare:forecast", now,
+            ))
+            continue
         # Latest end_date first; within the same end_date, latest ann_date.
         records.sort(
             key=lambda r: (r.get("end_date") or "", r.get("ann_date") or ""),
@@ -4951,7 +5004,7 @@ def _get_fina_indicator_records(pro, ts_code: str, now: int) -> list[dict]:
     if df is None or len(df) == 0:
         _cache_put(_FINA_CACHE, ts_code, [], now)
         return []
-    records = df.to_dict(orient="records")
+    records = _drop_future_filings(df.to_dict(orient="records"))  # L1: drop not-yet-announced
     records.sort(key=lambda r: r.get("end_date") or "", reverse=True)
     _cache_put(_FINA_CACHE, ts_code, records, now)
     return records
@@ -6161,7 +6214,7 @@ def _get_forecast_records(pro, ts_code: str, now: int) -> list[dict]:
     if df is None or len(df) == 0:
         _cache_put(_FORECAST_CACHE, ts_code, [], now)
         return []
-    records = df.to_dict(orient="records")
+    records = _drop_future_filings(df.to_dict(orient="records"))  # L2: drop not-yet-public
     # Latest ann_date first; ties broken by end_date desc.
     records.sort(
         key=lambda r: (r.get("ann_date") or "", r.get("end_date") or ""),
