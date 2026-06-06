@@ -352,14 +352,16 @@ class _DockCaseCachedPro:
         from . import dockcase_cache
         if name not in dockcase_cache.CACHEABLE_ENDPOINTS or not dockcase_cache.available():
             return real_method
+        real_pro = self._real
 
         def _cached(*args, **kwargs):
             if args:  # positional call shape isn't mappable → live API
                 return real_method(*args, **kwargs)
             df = dockcase_cache.read(name, kwargs)
             if df is not None:
-                return df
-            return real_method(**kwargs)
+                return df  # cache hit
+            # miss: write freshly-downloaded by-symbol data back into DockCase.
+            return dockcase_cache.fetch_writeback(name, kwargs, real_method, real_pro)
 
         return _cached
 

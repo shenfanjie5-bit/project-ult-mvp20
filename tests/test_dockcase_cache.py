@@ -87,3 +87,65 @@ def test_unmapped_endpoint_and_miss(cache_root):
 def test_disabled_returns_none(cache_root, monkeypatch):
     monkeypatch.setenv("DOCKCASE_CACHE", "0")
     assert dc.read("income", {"ts_code": "600519.SH"}) is None
+
+
+# ── write-back ──────────────────────────────────────────────────────────────
+
+class _FakePro:
+    """Minimal stand-in: full_method returns full history; stock_basic a name."""
+    def __init__(self, full_df):
+        self._full = full_df
+        self.calls = []
+
+    def income(self, **kw):
+        self.calls.append(kw)
+        if "limit" in kw or "fields" in kw:  # the requested (filtered) shape
+            return dc._apply_filters(self._full.copy(), "income", kw)
+        return self._full.copy()  # full history
+
+    def stock_basic(self, **kw):
+        import pandas as pd
+        return pd.DataFrame([{"ts_code": "999001.SZ", "name": "新股测试"}])
+
+
+def test_writeback_creates_file_and_serves_filtered(cache_root, monkeypatch):
+    import pandas as pd
+    dc._PATH_CACHE.clear(); dc._NAME_CACHE.clear()
+    full = pd.read_csv(__import__("io").StringIO(_income_csv()), dtype=str)
+    pro = _FakePro(full)
+    monkeypatch.setenv("DOCKCASE_WRITEBACK", "1")
+    # 999001.SZ is absent → write-back path
+    out = dc.fetch_writeback("income", {"ts_code": "999001.SZ", "limit": 2},
+                             pro.income, pro)
+    assert out is not None and len(out) == 2          # filtered subset returned
+    # a new file was created under by_symbol with the resolved name + CRLF
+    f = cache_root / "股票数据/财务数据/利润表/by_symbol/999001.SZ+新股测试.csv"
+    assert f.exists()
+    raw = f.read_bytes()
+    assert b"\r\n" in raw                             # CRLF like the archive
+    assert len(pd.read_csv(f, dtype=str)) == 3        # FULL history written
+
+
+def test_writeback_never_overwrites_existing(cache_root, monkeypatch):
+    import pandas as pd
+    dc._PATH_CACHE.clear()
+    full = pd.read_csv(__import__("io").StringIO(_income_csv()), dtype=str)
+    pro = _FakePro(full)
+    # 600519.SH already exists (seeded) → write-back must NOT touch it / re-fetch
+    before = (cache_root / "股票数据/财务数据/利润表/by_symbol/600519.SH+测试.csv").read_bytes()
+    out = dc.fetch_writeback("income", {"ts_code": "600519.SH", "limit": 2},
+                             pro.income, pro)
+    assert out is not None
+    after = (cache_root / "股票数据/财务数据/利润表/by_symbol/600519.SH+测试.csv").read_bytes()
+    assert before == after  # untouched
+
+
+def test_writeback_disabled_just_calls_live(cache_root, monkeypatch):
+    import pandas as pd
+    monkeypatch.setenv("DOCKCASE_WRITEBACK", "0")
+    pro = _FakePro(pd.read_csv(__import__("io").StringIO(_income_csv()), dtype=str))
+    out = dc.fetch_writeback("income", {"ts_code": "999002.SZ", "limit": 12,
+                                        "fields": "ts_code,end_date"}, pro.income, pro)
+    assert out is not None
+    # no file created
+    assert not (cache_root / "股票数据/财务数据/利润表/by_symbol/999002.SZ+新股测试.csv").exists()

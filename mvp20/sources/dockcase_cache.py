@@ -66,6 +66,8 @@ CACHEABLE_ENDPOINTS = frozenset(_ENDPOINT_FOLDER)
 
 # in-process cache of resolved file paths (globbing a slow USB drive is costly).
 _PATH_CACHE: dict[tuple[str, str], str | None] = {}
+# lazy ts_code -> name map (for write-back filenames), built from stock_basic once.
+_NAME_CACHE: dict[str, str] = {}
 
 
 def root() -> Path | None:
@@ -117,32 +119,21 @@ def _read_faithful(path: str):
     return df
 
 
-def read(endpoint: str, kwargs: dict[str, Any]):
-    """Return a tushare-shaped DataFrame for a by-symbol call, or ``None`` to fall
-    through to the live API (cache disabled / miss / unsupported call shape)."""
+def _is_by_symbol(kwargs: dict[str, Any]) -> bool:
+    """True if this is a single-symbol call we can serve / write (no cross-
+    sectional ``trade_date=`` or date-range / multi-code filters)."""
     ts_code = kwargs.get("ts_code")
-    # only by-symbol: a single ts_code and no cross-sectional / date-range param.
-    if (not ts_code or "," in str(ts_code)
-            or kwargs.get("trade_date") or kwargs.get("start_date")
-            or kwargs.get("end_date") or kwargs.get("ann_date")):
-        return None
-    path = _csv_path(endpoint, str(ts_code))
-    if not path:
-        return None
-    try:
-        df = _read_faithful(path)
-    except Exception as exc:  # noqa: BLE001 — any read error → fall through to live
-        log.debug("[dockcase] read failed %s %s: %s", endpoint, ts_code, exc)
-        return None
-    if df is None or len(df) == 0:
-        return None
+    return bool(ts_code and "," not in str(ts_code)
+                and not kwargs.get("trade_date") and not kwargs.get("start_date")
+                and not kwargs.get("end_date") and not kwargs.get("ann_date"))
 
-    # period filter (financials): exact end_date match, as tushare does.
+
+def _apply_filters(df, endpoint: str, kwargs: dict[str, Any]):
+    """Replicate tushare's period / limit / fields semantics on a full-history df."""
     period = kwargs.get("period")
     if period and "end_date" in df.columns:
         df = df[df["end_date"].astype(str) == str(period)]
 
-    # recency sort so `limit` returns the most recent N (tushare default order).
     col = _RECENCY_COL.get(endpoint)
     if not col:
         for cand in ("end_date", "trade_date", "ann_date", "report_date"):
@@ -167,3 +158,96 @@ def read(endpoint: str, kwargs: dict[str, Any]):
             df = df[keep]
 
     return df.reset_index(drop=True)
+
+
+def read(endpoint: str, kwargs: dict[str, Any]):
+    """Return a tushare-shaped DataFrame for a by-symbol call, or ``None`` to fall
+    through to the live API (cache disabled / miss / unsupported call shape)."""
+    if not _is_by_symbol(kwargs):
+        return None
+    path = _csv_path(endpoint, str(kwargs["ts_code"]))
+    if not path:
+        return None
+    try:
+        df = _read_faithful(path)
+    except Exception as exc:  # noqa: BLE001 — any read error → fall through to live
+        log.debug("[dockcase] read failed %s %s: %s", endpoint, kwargs.get("ts_code"), exc)
+        return None
+    if df is None or len(df) == 0:
+        return None
+    return _apply_filters(df, endpoint, kwargs)
+
+
+# ── write-back: persist freshly-downloaded per-symbol data INTO DockCase ──────
+# Honors "新数据写进 DockCase": on a by-symbol cache MISS we fetch the full history
+# live, write it as a new <分类>/by_symbol/<ts_code>+<name>.csv (matching the
+# archive's layout + CRLF style), and serve the filtered subset. CREATE-ONLY — an
+# existing DockCase file is NEVER modified, so the user's archive can't be broken.
+# Toggle with DOCKCASE_WRITEBACK=0.
+
+
+def writeback_enabled() -> bool:
+    return available() and os.environ.get("DOCKCASE_WRITEBACK", "1") != "0"
+
+
+def _name_for(ts_code: str, real_pro) -> str:
+    """ts_code -> stock name for the filename (lazy stock_basic map; falls back to
+    the numeric symbol so the file always carries the '+<name>' the reader globs)."""
+    code = ts_code.upper()
+    if not _NAME_CACHE:
+        try:
+            sb = real_pro.stock_basic(exchange="", list_status="L",
+                                      fields="ts_code,name")
+            for r in (sb.to_dict(orient="records") if sb is not None else []):
+                _NAME_CACHE[str(r.get("ts_code", "")).upper()] = str(r.get("name") or "")
+        except Exception:  # noqa: BLE001 — name lookup is best-effort
+            pass
+    name = _NAME_CACHE.get(code) or code.split(".")[0]
+    # filesystem-safe: DockCase names contain CJK but never '/' or '+'.
+    return name.replace("/", "_").replace("+", "_")
+
+
+def _write_csv(endpoint: str, ts_code: str, name: str, full_df) -> bool:
+    """Write full history to DockCase by_symbol as <ts_code>+<name>.csv. Returns
+    True on a new write; refuses to overwrite an existing file (archive safety)."""
+    r = root()
+    folder = _ENDPOINT_FOLDER.get(endpoint)
+    if r is None or not folder or full_df is None or len(full_df) == 0:
+        return False
+    bysym = r / folder / "by_symbol"
+    out = bysym / f"{ts_code}+{name}.csv"
+    if out.exists():  # CREATE-ONLY — never touch an existing archive file.
+        return False
+    try:
+        bysym.mkdir(parents=True, exist_ok=True)
+        tmp = bysym / f".{ts_code}.tmp.csv"  # atomic: write tmp then rename
+        full_df.to_csv(tmp, index=False, lineterminator="\r\n", encoding="utf-8")
+        os.replace(tmp, out)
+        _PATH_CACHE[(endpoint, ts_code.upper())] = str(out)  # now cached
+        log.info("[dockcase] write-back %s %s (%d rows)", endpoint, ts_code, len(full_df))
+        return True
+    except Exception as exc:  # noqa: BLE001 — write failure must never break onboard
+        log.warning("[dockcase] write-back failed %s %s: %s", endpoint, ts_code, exc)
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+
+def fetch_writeback(endpoint: str, kwargs: dict[str, Any], real_method, real_pro):
+    """Cache-miss handler: for a by-symbol call whose file is absent, fetch the
+    FULL history live, write it into DockCase (create-only), and return the
+    filtered subset. Any non-by-symbol / disabled / error path just calls live."""
+    if not (writeback_enabled() and endpoint in _ENDPOINT_FOLDER
+            and _is_by_symbol(kwargs) and _csv_path(endpoint, str(kwargs["ts_code"])) is None):
+        return real_method(**kwargs)
+    ts_code = str(kwargs["ts_code"])
+    try:
+        full = real_method(ts_code=ts_code)  # full history, all columns
+    except Exception:  # noqa: BLE001 — fall back to the exact requested call
+        return real_method(**kwargs)
+    if full is None or len(full) == 0:
+        return real_method(**kwargs)
+    _write_csv(endpoint, ts_code, _name_for(ts_code, real_pro), full)
+    return _apply_filters(full, endpoint, kwargs)
