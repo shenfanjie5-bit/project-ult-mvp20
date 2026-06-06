@@ -551,11 +551,22 @@ def _verify_compiled_snapshot(db_path: Path, ts_code: str) -> bool:
 def run_onboard(
     db_path: Path, ts_code: str, name: str, industry_id: str, *,
     do_codex: bool = True, year: int = 2025,
+    do_compile: bool = True, do_peer_context: bool = True,
     progress: Callable[[int, str], None] | None = None,
     on_preliminary: Callable[[dict], None] | None = None,
 ) -> dict:
     """Synchronous onboarding pipeline for one stock. Returns the result dict
-    (preliminary score, and full score if do_codex). Raises on hard failure."""
+    (preliminary score, and full score if do_codex). Raises on hard failure.
+
+    ``do_compile`` / ``do_peer_context`` default True (the single-add UI path).
+    Bulk onboarding sets BOTH False: compile-overlays and build_peer_context each
+    scan the WHOLE corpus, so running them per-stock under the pipeline lock is
+    O(corpus) per stock → O(corpus²) over a 1525-stock batch (≈8 days of compile
+    alone at the tail). They are non-scoring for the per-stock result (the score
+    reads YAML+realtime; peer_context only refines valuation) and are rebuilt ONCE
+    at the end of the batch (final compile + peer rebuild + full rescore), so
+    deferring them keeps per-stock cost flat (codex-bound) regardless of corpus
+    size. Item ②/⑥ parity is satisfied by that final pass."""
 
     def step(idx: int) -> None:
         if progress:
@@ -637,9 +648,15 @@ def run_onboard(
     #    snapshot and surface a non-fatal flag if it didn't (stale /stock-overlay
     #    for this stock), rather than silently swallowing the compile result.
     step(5)
-    with _ONBOARD_PIPELINE_LOCK:
-        rc, out = _run_cli(["compile-overlays", "--db", str(db_path)])
-    compile_ok = _verify_compiled_snapshot(db_path, ts_code)
+    if do_compile:
+        with _ONBOARD_PIPELINE_LOCK:
+            rc, out = _run_cli(["compile-overlays", "--db", str(db_path)])
+        compile_ok = _verify_compiled_snapshot(db_path, ts_code)
+    else:
+        # bulk mode: whole-corpus compile is deferred to a single end-of-batch
+        # pass (O(corpus²) if run per stock). Score is unaffected (reads YAML +
+        # realtime); only the /stock-overlay snapshot is stale until then.
+        compile_ok = False
 
     # 7. build cross-sectional peer-context so THIS newly-added stock enters the
     #    valuation pools BEFORE it is scored. Without it, score-company loads a
@@ -652,7 +669,14 @@ def run_onboard(
     #    stale) rather than failing the whole onboarding.
     step(6)
     peer_context_warning: str | None = None
-    if is_a:
+    if is_a and not do_peer_context:
+        # bulk mode: whole-universe peer-context rebuild is deferred to a single
+        # end-of-batch pass (O(corpus²) if run per stock). This stock's valuation
+        # uses the absolute fallback until the final rebuild + rescore.
+        peer_context_warning = (
+            "peer-context rebuild deferred (bulk mode); valuation uses the "
+            "absolute fallback until the end-of-batch rebuild + rescore")
+    elif is_a:
         try:
             from mvp20.peer_context import build_and_save_peer_context
             _codes = [fp.stem for fp in (ROOT / "config" / "stock_overlays").glob("**/*.yaml")]
@@ -752,10 +776,13 @@ def run_onboard(
 
     # 10. recompile (materialize the codex fill into the compiled snapshot that
     #    the /stock-overlay API serves). Serialized with other onboard jobs'
-    #    compiled-DB writes via the pipeline lock.
+    #    compiled-DB writes via the pipeline lock. Deferred in bulk mode (the
+    #    step 9.5 normalization already wrote a compile-clean overlay to disk for
+    #    the single end-of-batch compile to pick up).
     step(9)
-    with _ONBOARD_PIPELINE_LOCK:
-        _run_cli(["compile-overlays", "--db", str(db_path)])
+    if do_compile:
+        with _ONBOARD_PIPELINE_LOCK:
+            _run_cli(["compile-overlays", "--db", str(db_path)])
 
     # 11. rescore (full)
     step(10)
