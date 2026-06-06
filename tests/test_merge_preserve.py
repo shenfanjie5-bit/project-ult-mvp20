@@ -22,6 +22,7 @@ from mvp20.overlays import (
     generate_overlay_files,
     merge_preserve_existing_overlay,
     normalize_overlay_file_status,
+    restore_overlay_top_level,
     sanitize_node_scalar_fields,
 )
 
@@ -686,6 +687,30 @@ def test_sanitize_leaves_scalar_confidence_and_nulls_bad_materiality() -> None:
     assert sanitize_node_scalar_fields(overlay) == 1  # only the bad-materiality node
     assert overlay["nodes"][0]["confidence"] == 0.7
     assert overlay["nodes"][1]["materiality"] is None
+
+
+def test_restore_overlay_top_level_recovers_dropped_sections(tmp_path: Path) -> None:
+    """A fill that rewrote only `nodes` and dropped scores/views/edges is repaired
+    from the pre-fill snapshot; the fill's `nodes` are kept."""
+    ref = {"ts_code": "X", "nodes": [{"dp_id": "a"}], "scores": {"s": 1},
+           "views": {"v": 2}, "causal_edges": [], "hierarchy_edges": [], "coverage": {}}
+    p = tmp_path / "x.yaml"
+    p.write_text(yaml.safe_dump({"ts_code": "X", "nodes": [{"dp_id": "a", "filled": True}]},
+                                allow_unicode=True), encoding="utf-8")
+    assert restore_overlay_top_level(p, ref) is True
+    out = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert out["scores"] == {"s": 1} and out["views"] == {"v": 2}  # restored
+    assert out["nodes"][0]["filled"] is True                       # fill kept
+
+
+def test_restore_overlay_top_level_noop_when_intact(tmp_path: Path) -> None:
+    ref = {"nodes": [{"dp_id": "a"}], "scores": {"s": 1}}
+    p = tmp_path / "x.yaml"
+    p.write_text(yaml.safe_dump({"nodes": [{"dp_id": "a"}], "scores": {"s": 9}},
+                                allow_unicode=True), encoding="utf-8")
+    # scores present in post (different value) → not overwritten, no restore
+    assert restore_overlay_top_level(p, ref) is False
+    assert yaml.safe_load(p.read_text(encoding="utf-8"))["scores"] == {"s": 9}
 
 
 # ---------------------------------------------------------------------------

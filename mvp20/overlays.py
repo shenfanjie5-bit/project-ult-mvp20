@@ -1360,6 +1360,32 @@ def normalize_overlay_file_status(path: Path) -> int:
     return n
 
 
+def restore_overlay_top_level(path: Path, reference: dict[str, Any]) -> bool:
+    """After a fill, restore any non-``nodes`` top-level overlay section that the
+    fill dropped. An agentic fill engine (observed with Claude) sometimes rewrites
+    only ``nodes`` and loses scores/views/causal_edges/hierarchy_edges/coverage →
+    the overlay is missing required top-level fields → compile-invalid. ``reference``
+    is the pre-fill overlay snapshot (full structure). The fill only legitimately
+    touches ``nodes``, so every other top-level key is restored verbatim. If the
+    fill nuked ``nodes`` entirely, restore those too (lose the fill but stay valid).
+    Returns True if anything was restored."""
+    try:
+        post = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    changed = False
+    for k, v in (reference or {}).items():
+        if k != "nodes" and k not in post:
+            post[k] = v
+            changed = True
+    if not post.get("nodes") and (reference or {}).get("nodes"):
+        post["nodes"] = reference["nodes"]
+        changed = True
+    if changed:
+        _write_yaml_if_changed(path, post)
+    return changed
+
+
 def generate_overlay_files(
     *,
     universe_path: Path,

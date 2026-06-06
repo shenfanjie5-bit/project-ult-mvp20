@@ -63,9 +63,12 @@ def _select(ledger: dict, codes: list[str] | None, limit: int | None) -> list[di
             else:
                 out.append(e)
         return out
-    # next pending (or retryable failed with attempts < MAX_ATTEMPTS)
+    # next pending (or retryable failed with attempts < MAX_ATTEMPTS), biggest
+    # market cap first (operator policy: prioritise large caps; ``reserved``
+    # entries — the ≤200亿 placeholders — are excluded by the status filter).
     pend = [e for e in ents if e["status"] == "pending"
             or (e["status"] == "failed" and e.get("attempts", 0) < MAX_ATTEMPTS)]
+    pend.sort(key=lambda e: e.get("total_mv_yi") or 0, reverse=True)
     return pend[: (limit or len(pend))]
 
 
@@ -108,9 +111,12 @@ def _onboard_one(entry: dict, *, do_codex: bool, defer_heavy: bool = True,
         rec["trading_signal"] = par["trading_signal"]
         rec["peer_context_member"] = par["peer_context_member"]
         # In defer_heavy mode, items ② (compiled snapshot) and ⑥ (peer_context)
-        # are EXPECTED to gap — they are resolved by the end-of-batch finalize
-        # pass — so judge per-stock success on the "core" items ①③④⑤ only.
+        # are EXPECTED to gap — resolved by the end-of-batch finalize pass. When
+        # the LLM fill is OFF (do_codex=False) item ④ (qualitative fill) is also
+        # intentionally deferred. Judge per-stock success on the remaining items.
         deferred = {"2_overlay_compiled", "6_peer_context"} if defer_heavy else set()
+        if not do_codex:
+            deferred.add("4_codex_qual_filled")
         core_items = {k: v for k, v in par["items"].items() if k not in deferred}
         rec["parity_pass"] = par["pass"]
         rec["core_parity_pass"] = all(core_items.values())

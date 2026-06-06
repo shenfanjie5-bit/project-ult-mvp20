@@ -338,9 +338,38 @@ def is_a_share(ts_code: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+class _DockCaseCachedPro:
+    """Wraps a tushare pro_api so by-symbol calls for DockCase-cached endpoints
+    read the local archive first (avoiding re-download), and fall through to the
+    live API on cache miss / unsupported call shape / positional args. Read-only:
+    the DockCase drive is never written. Transparent for every other endpoint."""
+
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        real_method = getattr(self._real, name)
+        from . import dockcase_cache
+        if name not in dockcase_cache.CACHEABLE_ENDPOINTS or not dockcase_cache.available():
+            return real_method
+
+        def _cached(*args, **kwargs):
+            if args:  # positional call shape isn't mappable → live API
+                return real_method(*args, **kwargs)
+            df = dockcase_cache.read(name, kwargs)
+            if df is not None:
+                return df
+            return real_method(**kwargs)
+
+        return _cached
+
+
 def _get_pro_api():
     """Lazy-init Tushare pro_api with TUSHARE_TOKEN from env. Returns None
-    if token is missing — caller treats that as 'source unavailable'."""
+    if token is missing — caller treats that as 'source unavailable'.
+
+    When the DockCase 2TB archive is mounted (and DOCKCASE_CACHE != 0) the pro is
+    wrapped so per-symbol calls reuse the local cache instead of re-downloading."""
 
     import tushare as ts  # type: ignore
 
@@ -353,7 +382,14 @@ def _get_pro_api():
     if not token:
         return None
     ts.set_token(token)
-    return ts.pro_api(timeout=_tushare_timeout_seconds())
+    pro = ts.pro_api(timeout=_tushare_timeout_seconds())
+    try:
+        from . import dockcase_cache
+        if dockcase_cache.available():
+            return _DockCaseCachedPro(pro)
+    except Exception:  # noqa: BLE001 — cache wrapping must never break live access
+        pass
+    return pro
 
 
 def _tushare_timeout_seconds() -> float:
