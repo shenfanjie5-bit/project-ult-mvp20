@@ -69,23 +69,27 @@ def _select(ledger: dict, codes: list[str] | None, limit: int | None) -> list[di
     return pend[: (limit or len(pend))]
 
 
-def _onboard_one(entry: dict, *, do_codex: bool, defer_heavy: bool = True) -> dict:
+def _onboard_one(entry: dict, *, do_codex: bool, defer_heavy: bool = True,
+                 fill_engine: str = "codex") -> dict:
     """Run the full pipeline for one stock; return a result record (never raises).
 
     ``defer_heavy`` (default) skips the per-stock whole-corpus compile + peer-
     context rebuild — both O(corpus) per stock → O(corpus²) over the batch. They
     are run ONCE at end-of-batch (Phase 4: final compile + peer rebuild + full
     rescore), so item ②/⑥ parity is "deferred" (GAP) during the batch and
-    resolved at the finalize pass."""
+    resolved at the finalize pass. ``fill_engine`` picks the qualitative-fill
+    provider (codex/OpenAI or claude/Anthropic Opus) so the batch fans out
+    across both."""
     from mvp20.onboard import run_onboard
     from scripts.onboard_parity import parity_check
 
     ts_code, name, theme = entry["ts_code"], entry["name"], entry["theme"]
     t0 = time.time()
-    rec: dict = {"ts_code": ts_code, "theme": theme}
+    rec: dict = {"ts_code": ts_code, "theme": theme, "fill_engine": fill_engine}
     try:
         res = run_onboard(DB_PATH, ts_code, name, theme, do_codex=do_codex,
-                          do_compile=not defer_heavy, do_peer_context=not defer_heavy)
+                          do_compile=not defer_heavy, do_peer_context=not defer_heavy,
+                          fill_engine=fill_engine)
         full = res.get("full") or {}
         prelim = res.get("preliminary") or {}
         rec["codex_warning"] = full.get("codex_warning")
@@ -146,6 +150,7 @@ def _record(rec: dict) -> None:
                 e["ev_filled"] = rec.get("ev_filled")
                 e["signal"] = rec.get("trading_signal")
                 e["base_score"] = rec.get("base_score")
+                e["fill_engine"] = rec.get("fill_engine")
                 break
         if rec["status"] == "done":
             td = ledger["meta"].setdefault("phase2", {}).setdefault("trial_done", [])
@@ -165,12 +170,28 @@ def main() -> None:
     ap.add_argument("--no-codex", action="store_true")
     ap.add_argument("--no-defer", action="store_true",
                     help="run per-stock compile + peer-context (default defers both to finalize)")
+    ap.add_argument("--claude-frac", type=float, default=0.0,
+                    help="fraction of stocks filled by claude/Opus (rest by codex); 0.5 = "
+                         "half-and-half. Spreads the LLM load across two providers.")
     args = ap.parse_args()
 
     codes = [c.strip() for c in args.codes.split(",")] if args.codes else None
     do_codex = not args.no_codex
     defer_heavy = not args.no_defer
-    conc = max(1, min(args.concurrency, 2))  # never exceed the sanctioned ceiling of 2
+    claude_frac = max(0.0, min(args.claude_frac, 1.0))
+    # defer mode holds the pipeline lock only for the ~1-2s universe append, so
+    # concurrency scales near-linearly until codex/claude/tushare rate limits bite.
+    # Spec default is 2; the operator raised it to shorten wall-clock. Hard cap 16
+    # (10-core/32GB box; fills are I/O-bound API waits, so CPU isn't the limit).
+    conc = max(1, min(args.concurrency, 16))
+
+    def engine_for(i: int) -> str:
+        if claude_frac <= 0:
+            return "codex"
+        if claude_frac >= 1:
+            return "claude"
+        # even spread: claude when the running fraction crosses an integer boundary
+        return "claude" if int((i + 1) * claude_frac) > int(i * claude_frac) else "codex"
 
     ledger = _load_ledger()
     batch = _select(ledger, codes, args.limit)
@@ -178,14 +199,17 @@ def main() -> None:
         print("nothing to do (no pending/selected entries)")
         return
     n = len(batch)
+    n_claude = sum(1 for i in range(n) if engine_for(i) == "claude")
     print(f"== bulk onboard: {n} stocks, codex={'ON' if do_codex else 'OFF'}, "
-          f"concurrency={conc}, defer_heavy={'ON' if defer_heavy else 'OFF'} ==", flush=True)
+          f"concurrency={conc}, defer_heavy={'ON' if defer_heavy else 'OFF'}, "
+          f"engines: codex={n - n_claude} claude={n_claude} ==", flush=True)
 
     done = failed = parity_pass = 0
     completed = 0
 
-    def work(entry: dict) -> dict:
-        rec = _onboard_one(entry, do_codex=do_codex, defer_heavy=defer_heavy)
+    def work(entry: dict, idx: int) -> dict:
+        rec = _onboard_one(entry, do_codex=do_codex, defer_heavy=defer_heavy,
+                           fill_engine=engine_for(idx))
         _record(rec)
         return rec
 
@@ -197,20 +221,20 @@ def main() -> None:
             parity_pass += 1 if rec.get("parity_pass") else 0
         else:
             failed += 1
-        print(f"[{completed}/{n}] {rec['ts_code']} ({rec.get('theme')}) → {rec['status']} "
-              f"| wall={rec.get('wall_s')}s | signal={rec.get('trading_signal')} "
+        print(f"[{completed}/{n}] {rec['ts_code']} ({rec.get('theme')}/{rec.get('fill_engine')}) "
+              f"→ {rec['status']} | wall={rec.get('wall_s')}s | signal={rec.get('trading_signal')} "
               f"| core_dp={rec.get('core_l567')} | ev={rec.get('ev_filled')} "
               f"| parity={'PASS' if rec.get('parity_pass') else 'GAP'} "
-              f"| codex_warn={'Y' if rec.get('codex_warning') else 'N'}", flush=True)
+              f"| fill_warn={'Y' if rec.get('codex_warning') else 'N'}", flush=True)
         if rec.get("reason"):
             print(f"    reason: {rec['reason']}", flush=True)
 
     if conc == 1:
-        for entry in batch:
-            report(work(entry))
+        for i, entry in enumerate(batch):
+            report(work(entry, i))
     else:
         with ThreadPoolExecutor(max_workers=conc) as ex:
-            futs = {ex.submit(work, entry): entry for entry in batch}
+            futs = {ex.submit(work, entry, i): entry for i, entry in enumerate(batch)}
             for fut in as_completed(futs):
                 try:
                     report(fut.result())

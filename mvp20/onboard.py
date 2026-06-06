@@ -552,6 +552,7 @@ def run_onboard(
     db_path: Path, ts_code: str, name: str, industry_id: str, *,
     do_codex: bool = True, year: int = 2025,
     do_compile: bool = True, do_peer_context: bool = True,
+    fill_engine: str = "codex",
     progress: Callable[[int, str], None] | None = None,
     on_preliminary: Callable[[dict], None] | None = None,
 ) -> dict:
@@ -720,10 +721,17 @@ def run_onboard(
     if not do_codex:
         return result
 
-    # 9. codex hardened-low fill (reuses the Phase-C1 machinery: the schema-
-    #    hardened prompt-gen + low-effort runner). codex edits the overlay.
+    # 9. qualitative L1-L3 fill (reuses the Phase-C1 machinery: the schema-
+    #    hardened prompt-gen + a low-effort agent runner that edits the overlay).
+    #    The prompt is engine-agnostic; ``fill_engine`` picks the runner so the
+    #    bulk batch can fan out across two providers — "codex" (OpenAI) or
+    #    "claude" (Anthropic Opus 4.8 low). Both are non-scoring after R-6.
     step(8)
     codex_warning: str | None = None
+    _runner = {
+        "codex": "scripts/codex_run_prompt_low.sh",
+        "claude": "scripts/claude_run_prompt_low.sh",
+    }.get(fill_engine, "scripts/codex_run_prompt_low.sh")
     prompt_path = Path("/tmp") / f"codex_onboard_{ts_code.replace('.', '_')}.md"
     subprocess.run(
         [sys.executable, "scripts/codex_prompt_gen.py",
@@ -734,30 +742,30 @@ def run_onboard(
     if not prompt_text:
         codex_warning = "codex prompt generation produced no prompt"
     elif any(m in prompt_text for m in ("已全部填完", "没有可填字段")):
-        pass  # nothing left to fill — don't burn a codex run (run_c2_fill parity)
+        pass  # nothing left to fill — don't burn a fill run (run_c2_fill parity)
     else:
         env = {**os.environ, "CODEX_WORKDIR": str(ROOT)}
-        codex_ok = False
+        fill_ok = False
         for _attempt in range(2):  # one retry on a FAST failure; NOT after a timeout
             try:
                 cp = subprocess.run(
-                    ["bash", "scripts/codex_run_prompt_low.sh", str(prompt_path)],
+                    ["bash", _runner, str(prompt_path)],
                     cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=1800,
                 )
                 if cp.returncode == 0:
-                    codex_ok = True
+                    fill_ok = True
                     break
             except subprocess.TimeoutExpired:
                 break  # don't spend another ~30 min on a hung run
-        if not codex_ok:
-            # The codex L1-L3 layer is non-scoring after R-6, so a failure does NOT
+        if not fill_ok:
+            # The L1-L3 fill layer is non-scoring after R-6, so a failure does NOT
             # affect the score — but surface it so the (sparse) descriptive layer
             # isn't silently mistaken for a complete one.
-            codex_warning = ("codex qualitative fill failed/timed out; the "
+            codex_warning = (f"{fill_engine} qualitative fill failed/timed out; the "
                              "descriptive L1-L3 layer may be sparse (non-scoring "
                              "after R-6 → score is unaffected)")
             logging.getLogger(__name__).warning(
-                "onboard codex fill failed for %s", ts_code)
+                "onboard %s fill failed for %s", fill_engine, ts_code)
 
     # 9.5 normalize status-induced invariants on the codex-filled overlay. codex
     #    marks a node N/A by setting data_status AFTER the last generate-overlays,

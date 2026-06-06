@@ -1316,15 +1316,45 @@ def apply_status_induced_invariants(overlay: dict[str, Any]) -> int:
     return modified
 
 
+def sanitize_node_scalar_fields(overlay: dict[str, Any]) -> int:
+    """Coerce node fields that map to scalar SQL columns back to scalars so a
+    malformed fill can't crash compile (``sqlite3.ProgrammingError: type 'list'
+    is not supported`` when binding the node row). The observed failure: a fill
+    engine occasionally writes the evidence_sources list into ``confidence`` —
+    recover it into evidence_sources when that slot is empty, then null the
+    scalar. Returns the count of nodes modified."""
+    modified = 0
+    for node in overlay.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        changed = False
+        conf = node.get("confidence")
+        if isinstance(conf, (list, dict)):
+            # recover a misplaced evidence list into evidence_sources when empty
+            if (isinstance(conf, list) and conf
+                    and all(isinstance(x, dict) for x in conf)
+                    and not node.get("evidence_sources")):
+                node["evidence_sources"] = conf
+            node["confidence"] = None
+            changed = True
+        if node.get("materiality") is not None and not isinstance(node.get("materiality"), (int, float)):
+            node["materiality"] = None
+            changed = True
+        if changed:
+            modified += 1
+    return modified
+
+
 def normalize_overlay_file_status(path: Path) -> int:
-    """Load an overlay YAML, apply ``apply_status_induced_invariants``, and write
-    it back (via the canonical serializer, only if changed). Returns modified
-    node count (0 = no change / file absent / parse error → best-effort)."""
+    """Load an overlay YAML, apply ``apply_status_induced_invariants`` +
+    ``sanitize_node_scalar_fields``, and write it back (via the canonical
+    serializer, only if changed). Returns modified node count (0 = no change /
+    file absent / parse error → best-effort)."""
     try:
         overlay = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         return 0
-    n = apply_status_induced_invariants(overlay)
+    n = apply_status_induced_invariants(overlay) + sanitize_node_scalar_fields(overlay)
     if n:
         _write_yaml_if_changed(path, overlay)
     return n
