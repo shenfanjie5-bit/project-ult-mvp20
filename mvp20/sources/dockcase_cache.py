@@ -235,6 +235,67 @@ def _write_csv(endpoint: str, ts_code: str, name: str, full_df) -> bool:
         return False
 
 
+def refresh_existing(endpoint: str, ts_code: str, real_method) -> int:
+    """Append live rows STRICTLY NEWER than the existing file's max date-key into
+    the existing DockCase file. Returns rows appended (0 if no file / nothing new /
+    disabled). Safety:
+      * never reorders/dedups/edits existing rows — appends only genuinely-new
+        periods (financials) or trading days (market) → multi-report_type rows per
+        period are preserved (a naive end_date-dedup would DROP them).
+      * preserves the existing column order + CRLF; atomic tmp+rename write.
+    Honors "增量追加到对应文件" while only fetching the small recent delta."""
+    if not writeback_enabled():
+        return 0
+    path = _csv_path(endpoint, ts_code)
+    if not path or not os.path.exists(path):
+        return 0
+    try:
+        existing = _read_faithful(path)
+    except Exception:  # noqa: BLE001
+        return 0
+    if existing is None or len(existing) == 0:
+        return 0
+    cols = list(existing.columns)
+    key = _RECENCY_COL.get(endpoint)
+    if not key:
+        for cand in ("end_date", "trade_date", "ann_date", "report_date"):
+            if cand in cols:
+                key = cand
+                break
+    if not key or key not in cols:
+        return 0
+    fmax = str(existing[key].dropna().astype(str).max())
+    try:
+        if key == "trade_date":
+            live = real_method(ts_code=ts_code, start_date=fmax)  # fmax inclusive
+        else:
+            live = real_method(ts_code=ts_code, limit=8)          # recent filings
+    except Exception:  # noqa: BLE001
+        return 0
+    if live is None or len(live) == 0 or key not in getattr(live, "columns", []):
+        return 0
+    new = live[live[key].astype(str) > fmax]   # STRICTLY newer only
+    if len(new) == 0:
+        return 0
+    import pandas as pd
+    merged = pd.concat([existing, new[[c for c in cols if c in new.columns]]],
+                       ignore_index=True)[cols]
+    merged = merged.sort_values(key, ascending=False, kind="stable").reset_index(drop=True)
+    tmp = path + ".reftmp"
+    try:
+        merged.to_csv(tmp, index=False, lineterminator="\r\n", encoding="utf-8")
+        os.replace(tmp, path)
+        log.info("[dockcase] refresh %s %s +%d rows", endpoint, ts_code, len(new))
+        return len(new)
+    except Exception as exc:  # noqa: BLE001 — never break on a write failure
+        log.warning("[dockcase] refresh failed %s %s: %s", endpoint, ts_code, exc)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return 0
+
+
 def fetch_writeback(endpoint: str, kwargs: dict[str, Any], real_method, real_pro):
     """Cache-miss handler: for a by-symbol call whose file is absent, fetch the
     FULL history live, write it into DockCase (create-only), and return the

@@ -149,3 +149,51 @@ def test_writeback_disabled_just_calls_live(cache_root, monkeypatch):
     assert out is not None
     # no file created
     assert not (cache_root / "股票数据/财务数据/利润表/by_symbol/999002.SZ+新股测试.csv").exists()
+
+
+# ── refresh_existing (incremental append to existing files) ─────────────────
+
+def test_refresh_appends_only_strictly_newer_preserving_multi_rows(cache_root, monkeypatch):
+    """Append only periods strictly newer than the file max; NEVER drop the
+    existing multi-report_type rows of a period (the bug a naive end_date-dedup
+    would cause)."""
+    import io, pandas as pd
+    dc._PATH_CACHE.clear()
+    # seed: 600519.SH income with TWO report_type rows for the SAME end_date 20250930
+    seed = ("ts_code,end_date,report_type,total_revenue\n"
+            "600519.SH,20250930,1,300.0\n"
+            "600519.SH,20250930,4,305.0\n"      # same period, different report_type
+            "600519.SH,20241231,1,200.0\n")
+    _seed(cache_root, "股票数据/财务数据/利润表", "600519.SH", seed)
+
+    # live returns recent 8: includes the existing periods + a NEW one (20251231)
+    live = pd.read_csv(io.StringIO(
+        "ts_code,end_date,report_type,total_revenue\n"
+        "600519.SH,20251231,1,400.0\n"
+        "600519.SH,20250930,1,300.0\n"
+        "600519.SH,20250930,4,305.0\n"), dtype=str)
+
+    def real_income(**kw):
+        return live
+
+    n = dc.refresh_existing("income", "600519.SH", real_income)
+    assert n == 1  # only the one strictly-newer row (20251231) appended
+    f = next((cache_root / "股票数据/财务数据/利润表/by_symbol").glob("600519.SH+*.csv"))
+    after = pd.read_csv(f, dtype=str)
+    assert len(after) == 4                                   # 3 existing + 1 new (none dropped)
+    assert sorted(after["end_date"].tolist()) == ["20241231", "20250930", "20250930", "20251231"]
+    assert b"\r\n" in f.read_bytes()                         # CRLF preserved
+
+
+def test_refresh_noop_when_already_current(cache_root):
+    import io, pandas as pd
+    dc._PATH_CACHE.clear()
+    _seed(cache_root, "股票数据/财务数据/利润表", "600519.SH", _income_csv())
+    fmax = pd.read_csv(io.StringIO(_income_csv()), dtype=str)["end_date"].max()
+    live = pd.DataFrame([{"ts_code": "600519.SH", "end_date": fmax, "total_revenue": "1"}])
+    assert dc.refresh_existing("income", "600519.SH", lambda **k: live) == 0  # nothing newer
+
+
+def test_refresh_noop_when_no_file(cache_root):
+    dc._PATH_CACHE.clear()
+    assert dc.refresh_existing("income", "999999.SZ", lambda **k: None) == 0
