@@ -735,6 +735,21 @@ def run_onboard(
             logging.getLogger(__name__).warning(
                 "onboard codex fill failed for %s", ts_code)
 
+    # 9.5 normalize status-induced invariants on the codex-filled overlay. codex
+    #    marks a node N/A by setting data_status AFTER the last generate-overlays,
+    #    so merge_preserve's Z5 induction never ran on it and the node reaches
+    #    compile with the SLOT_DEFS-default missing_policy → "N/A node must use
+    #    not_applicable_remove" hard error. That fails the WHOLE compile (one bad
+    #    overlay starves every other stock of its compiled snapshot), so repair
+    #    the invariant before recompiling.
+    if is_a:
+        try:
+            from mvp20.overlays import normalize_overlay_file_status
+            ov_path = ROOT / "config" / "stock_overlays" / industry_id / f"{ts_code}.yaml"
+            normalize_overlay_file_status(ov_path)
+        except Exception:  # noqa: BLE001 — best-effort; recompile would still warn
+            pass
+
     # 10. recompile (materialize the codex fill into the compiled snapshot that
     #    the /stock-overlay API serves). Serialized with other onboard jobs'
     #    compiled-DB writes via the pipeline lock.

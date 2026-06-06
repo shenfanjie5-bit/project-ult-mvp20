@@ -1280,6 +1280,56 @@ def merge_preserve_existing_overlay(
     return result
 
 
+def apply_status_induced_invariants(overlay: dict[str, Any]) -> int:
+    """Ensure every node's missing_policy / active_weight / legacy ``status`` field
+    match its ``data_status`` semantics (the same canonical mapping merge_preserve
+    applies via ``Z5 Fix 1``). Returns the count of nodes modified.
+
+    Runnable as a standalone post-fill pass: codex marks a node N/A by setting
+    ``data_status`` AFTER the last generate-overlays, so the merge-time induction
+    never sees it and the node reaches compile carrying the SLOT_DEFS default
+    ``missing_policy`` → ``N/A node must use not_applicable_remove`` hard error.
+    That error fails the WHOLE compile (one bad overlay starves every other stock
+    of its compiled snapshot), so the onboard pipeline calls this right after the
+    codex fill, before recompile.
+    """
+    modified = 0
+    for node in overlay.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        ds = node.get("data_status")
+        induced = _STATUS_INDUCED_FIELDS.get(ds)
+        if not induced:
+            continue
+        changed = False
+        for k, v in induced.items():
+            if node.get(k) != v:
+                node[k] = v
+                changed = True
+        # mirror data_status into the legacy ``status`` field (validator reads
+        # data_status; coverage/alerts read status — keep them consistent).
+        if "status" in node and node.get("status") != ds:
+            node["status"] = ds
+            changed = True
+        if changed:
+            modified += 1
+    return modified
+
+
+def normalize_overlay_file_status(path: Path) -> int:
+    """Load an overlay YAML, apply ``apply_status_induced_invariants``, and write
+    it back (via the canonical serializer, only if changed). Returns modified
+    node count (0 = no change / file absent / parse error → best-effort)."""
+    try:
+        overlay = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return 0
+    n = apply_status_induced_invariants(overlay)
+    if n:
+        _write_yaml_if_changed(path, overlay)
+    return n
+
+
 def generate_overlay_files(
     *,
     universe_path: Path,

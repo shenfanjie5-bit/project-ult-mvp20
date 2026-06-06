@@ -52,8 +52,14 @@ def compiled_overlay_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def test_membership_expansion_count() -> None:
     memberships = expand_memberships(UNIVERSE_PATH, INDUSTRIES_PATH)
 
-    assert len({m.ts_code for m in memberships}) == 328
-    assert len(memberships) == 353
+    # Corpus-size-agnostic (the universe grows via bulk-onboard): assert the
+    # invariant — every universe constituent expands to >=1 membership and the
+    # set of unique ts_codes matches the universe exactly — rather than a frozen
+    # count that would drift on every onboard.
+    universe = _load(UNIVERSE_PATH)
+    n_constituents = len({str(c["ts_code"]).upper() for c in universe.get("constituents", [])})
+    assert len({m.ts_code.upper() for m in memberships}) == n_constituents
+    assert len(memberships) >= n_constituents  # a stock may join >1 industry
     assert sum(1 for m in memberships if m.ts_code == "300750.SZ") == 1
 
 
@@ -70,7 +76,11 @@ def test_space_economy_pending_stub() -> None:
 
 def test_stock_overlay_path_scheme() -> None:
     nested_files = list(STOCK_OVERLAYS_DIR.glob("*/*.yaml"))
-    assert len(nested_files) == 353
+    flat_files = list(STOCK_OVERLAYS_DIR.glob("*.yaml"))
+    # Invariant (growth-robust): overlays live under <industry>/<code>.yaml — no
+    # flat files at the root — and there is at least one nested overlay.
+    assert not flat_files, f"overlays must be nested <industry>/<code>.yaml; flat: {flat_files[:5]}"
+    assert len(nested_files) > 0
     assert (STOCK_OVERLAYS_DIR / "STORAGE_GRID" / "300750.SZ.yaml").exists()
     assert (STOCK_OVERLAYS_DIR / "AI_COMPUTE" / "002463.SZ.yaml").exists()
     assert (STOCK_OVERLAYS_DIR / "CONSUMER_ELECTRONICS" / "002463.SZ.yaml").exists()
@@ -179,9 +189,13 @@ def test_validate_overlay_set_accepts_generated_corpus() -> None:
     )
 
     assert result.ok, result.errors[:10]
-    assert result.stock_overlay_count == 353
+    # Growth-robust: the counts must be internally consistent (one overlay per
+    # membership, count matches the files on disk) rather than a frozen number
+    # that drifts as bulk-onboard grows the universe.
+    nested = list(STOCK_OVERLAYS_DIR.glob("*/*.yaml"))
+    assert result.stock_overlay_count == len(nested)
+    assert result.membership_count == result.stock_overlay_count
     assert result.industry_overlay_count == 13
-    assert result.membership_count == 353
     assert result.warnings
 
 
