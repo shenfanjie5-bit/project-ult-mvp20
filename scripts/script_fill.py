@@ -190,8 +190,14 @@ def _fina_mainbz_latest_complete(ts_code: str):
 
 # ── unified extract ─────────────────────────────────────────────────────────
 
-def extract(ts_code: str, db_path: Path = ROOT / "runtime" / "hot.sqlite") -> dict[str, dict]:
-    """年报优先 + fina_mainbz 兜底,产出可写入 overlay 的字段字典。"""
+def extract(ts_code: str, db_path: Path = ROOT / "runtime" / "hot.sqlite",
+            include_catalysts: bool = True) -> dict[str, dict]:
+    """年报优先 + fina_mainbz 兜底,产出可写入 overlay 的字段字典。
+
+    ``include_catalysts``: 关掉则跳过 dividend/forecast 抓取。当前 catalyst 产出的
+    dp_id(L9.company.buyback_dividend / earnings_guidance)在 SLOT_DEFS 里【未实例化为
+    overlay 节点】,write_to_overlay 会丢弃 → 批量补空时关掉以省去无谓的逐股抓取。
+    待这些 slot 被加进图谱后再开启。"""
     secs = _annual_sections(ts_code, db_path)
     ar_year = None
     try:
@@ -251,8 +257,9 @@ def extract(ts_code: str, db_path: Path = ROOT / "runtime" / "hot.sqlite") -> di
                               "source": f"fina_mainbz {per} 按地区"},
                     "evidence_sources": fmb_ev(per)}
 
-    # 纯结构化 catalysts(无需年报)
-    out.update(_catalysts(ts_code))
+    # 纯结构化 catalysts(无需年报)——仅在目标 slot 存在时才值得抓取
+    if include_catalysts:
+        out.update(_catalysts(ts_code))
     return _native(out)
 
 
