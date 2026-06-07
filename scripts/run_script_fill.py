@@ -65,7 +65,9 @@ def main() -> None:
     ap.add_argument("--frozen-only", action="store_true",
                     help="仅跑冻结清单 1525 新股(交 universe 取)")
     ap.add_argument("--catalysts", action="store_true",
-                    help="同时抓 dividend/forecast(当前目标 slot 未实例化 → 默认关)")
+                    help="抓 dividend/forecast/stk_holdertrade 填 Track-B 节点(走 DockCase 缓存)")
+    ap.add_argument("--management-change", action="store_true",
+                    help="额外填 L8.gov.management_change(走【联网】stk_managers,慢;隐含开 --catalysts)")
     ap.add_argument("--dry-run", action="store_true", help="只统计,不写 overlay")
     ap.add_argument("--limit", type=int, default=0, help="只跑前 N 只(冒烟用)")
     args = ap.parse_args()
@@ -86,7 +88,8 @@ def main() -> None:
     conc = max(1, min(args.concurrency, 8))
 
     print(f"== script-fill 批量补空: {len(codes)} 只 A 股, concurrency={conc}, "
-          f"catalysts={'on' if args.catalysts else 'off'}, "
+          f"catalysts={'on' if (args.catalysts or args.management_change) else 'off'}, "
+          f"mgmt_change={'on(live)' if args.management_change else 'off'}, "
           f"{'DRY-RUN' if args.dry_run else 'WRITE'} ==", flush=True)
 
     lock = threading.Lock()
@@ -96,7 +99,9 @@ def main() -> None:
 
     def work(ts_code: str):
         try:
-            ex = sf.extract(ts_code, include_catalysts=args.catalysts)
+            ex = sf.extract(ts_code,
+                            include_catalysts=args.catalysts or args.management_change,
+                            include_management_change=args.management_change)
             if args.dry_run:
                 # 统计「将被补」的节点数:extract 命中且节点当前为空
                 n, hit_nodes = _count_would_fill(ts_code, ex)

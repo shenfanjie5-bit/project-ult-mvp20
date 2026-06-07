@@ -179,3 +179,26 @@ def test_management_change_none_when_no_departures():
         {"name": "赵六", "title": "总经理", "begin_date": "20260101", "ann_date": "20260105"},
     ], asof="20260606") is None
     assert parse_management_change([], asof="20260606") is None
+
+
+def test_management_change_dedups_person_and_excludes_reelection_and_nonkey():
+    # 换届实景(茅台式):张德芹 同日"离任"4 个职位但次日再任(有在任记录)→ 不算离任;
+    # 郑尚勋 监事离任未回任 → 非核心高管 → 不计。两者合起来应判 None,而不是把一次换届
+    # 当成全员离任、风险拉满(这是修复前的 bug:title-行计数 + 不排再任 + 不限核心)。
+    recs = (
+        [{"name": "张德芹", "title": t, "end_date": "20251128", "ann_date": "20251129"}
+         for t in ("董事长", "董事", "法定代表人", "战略委员会主任")]
+        + [{"name": "张德芹", "title": "董事长", "begin_date": "20251129", "ann_date": "20251129"}]
+        + [{"name": "郑尚勋", "title": "监事", "end_date": "20251128", "ann_date": "20251129"}]
+    )
+    assert parse_management_change(recs, asof="20260607") is None
+
+
+def test_management_change_fires_on_real_key_departure():
+    # CFO 离任且未回任 → 恰好 1 名核心高管,score = tanh(1.5/3) ≈ 0.4621。
+    out = parse_management_change([
+        {"name": "王勇", "title": "财务总监", "begin_date": "20200101",
+         "end_date": "20251201", "ann_date": "20251205"},
+    ], asof="20260607")
+    assert out and out["value"]["departure_count"] == 1
+    assert abs(out["value"]["score"] - 0.4621) < 0.001

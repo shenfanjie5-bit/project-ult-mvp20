@@ -438,32 +438,49 @@ def parse_insider_sell(records: list[dict], *, asof: str | None = None) -> dict 
 def parse_management_change(records: list[dict], *, asof: str | None = None) -> dict | None:
     """L8.gov.management_change ← tushare ``stk_managers`` (LIVE 联网,非缓存)。
 
-    近一年高管【离任 end_date 非空】数量 → 风险强度;核心高管(董事长/总经理/CFO/
-    董秘…)离任额外加权。score = tanh(加权离任数 / 3.0)。direction negative。
-    无离任 → None。"""
+    近一年【真正离任且未回任】的高管人数 → 风险强度。stk_managers 每个职位一行,
+    且换届时全员同日"离任"、次日再任 → 必须:(1) 按【人】去重(同一人多职位/多行只算一次);
+    (2) 排除【仍在任/已回任】的人——该人有任一在任记录(end_date 空)即视为换届再任而非离任
+    (否则蓝筹换届会被误判成全员离任、风险拉满)。核心高管(董事长/总经理/CFO/董秘…)
+    离任额外加权。score = tanh(加权人数 / 3.0)。direction negative。无真离任 → None。"""
     if not records:
         return None
     cutoff = _cutoff(asof, _ONE_YEAR_DAYS)
-    departures = []
+
+    def _ended(r) -> str:
+        e = str(r.get("end_date") or "").strip()
+        return "" if e.lower() in ("", "nan", "none") else e
+
+    by_name: dict[str, list[dict]] = {}
     for r in records:
-        end_date = str(r.get("end_date") or "").strip()
-        ann = str(r.get("ann_date") or "")
-        if end_date and end_date.lower() not in ("nan", "none") and ann >= cutoff:
-            departures.append(r)
-    if not departures:
+        nm = str(r.get("name") or "").strip()
+        if nm:
+            by_name.setdefault(nm, []).append(r)
+
+    real: list[tuple[str, bool]] = []  # (name, is_key) — fully left within the window
+    for nm, rows in by_name.items():
+        if any(not _ended(r) for r in rows):
+            continue  # 有在任记录 → 仍在职/已回任(换届),不算离任
+        ends = [_ended(r) for r in rows]
+        if max(ends) < cutoff:
+            continue  # 最近离任不在近一年窗口内
+        # 只计【核心高管】离任(董事长/总经理/CFO/董秘…)。普通董事/监事换届轮换噪声太大
+        # (实测蓝筹换届会让 3-6 名监事"离任"→ 误判风险),C 位高管中途离任才是真治理信号。
+        is_key = any(any(t in str(r.get("title") or "") for t in _KEY_TITLES) for r in rows)
+        if not is_key:
+            continue
+        real.append((nm, True))
+    if not real:
         return None
-    weighted = 0.0
-    for r in departures:
-        title = str(r.get("title") or "")
-        weighted += 1.5 if any(t in title for t in _KEY_TITLES) else 1.0
-    score = _clip01(math.tanh(weighted / 3.0))
+    weighted = 1.5 * len(real)          # 每名核心高管离任权重 1.5
+    score = _clip01(math.tanh(weighted / 3.0))  # 1名→0.46 / 2名→0.76 / 3名→0.91
     return {
         "data_status": "Known", "direction": "negative",
         "value": {
             "score": round(score, 4),
-            "departure_count": len(departures),
+            "departure_count": len(real),
             "weighted_departures": round(weighted, 2),
-            "people": [str(r.get("name") or "") for r in departures[:5] if r.get("name")],
+            "people": [nm for nm, _ in real[:5]],
             "window_days": _ONE_YEAR_DAYS,
             "source": "tushare:stk_managers",
         },
