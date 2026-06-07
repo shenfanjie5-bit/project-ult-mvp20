@@ -312,6 +312,9 @@ _Z3_COMPANY_DERIVED_SLOTS: tuple[SlotDef, ...] = (
     # ── L8 risk offsets (15 slots) — event-driven default Inactive ─────────
     SlotDef("L8.gov.fraud_control", "财务造假/内控", "Risk Offset", "risk_governance", direction="negative", materiality=0.85, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
     SlotDef("L8.gov.litigation", "法律诉讼", "Risk Offset", "risk_governance", direction="negative", materiality=0.7, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
+    # Track-B 可脚本填充的 risk 节点(stk_holdertrade 减持 / stk_managers 高管离任);data_point_roles participates_in_score=true。
+    SlotDef("L8.gov.insider_sell", "股东减持", "Risk Offset", "risk_governance", direction="negative", materiality=0.65, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
+    SlotDef("L8.gov.management_change", "管理层变动", "Risk Offset", "risk_governance", direction="negative", materiality=0.6, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
     SlotDef("L8.industry.demand_supply", "行业需求/供给恶化", "Risk Offset", "risk_industry", direction="negative", materiality=0.7, calculation_type="risk_factor", aggregation_policy="subtract_risk"),
     SlotDef("L8.industry.price_war", "行业价格战", "Risk Offset", "risk_industry", direction="negative", materiality=0.7, calculation_type="risk_factor", aggregation_policy="subtract_risk"),
     SlotDef("L8.industry.substitute", "替代品出现", "Risk Offset", "risk_industry", direction="negative", materiality=0.65, calculation_type="risk_factor", aggregation_policy="subtract_risk"),
@@ -328,6 +331,9 @@ _Z3_COMPANY_DERIVED_SLOTS: tuple[SlotDef, ...] = (
     # ── L9 catalysts (3 stock-level slots) — event-driven defaults ─────────
     SlotDef("L9.company.ma", "并购", "Company Catalyst", "catalyst_company", materiality=0.6, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="or_gate", aggregation_policy="or_max_trigger", active_weight=0.0, default_missing_reason=None),
     SlotDef("L9.company.product_order", "新产品发布/大订单", "Company Catalyst", "catalyst_company", materiality=0.65, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="or_gate", aggregation_policy="or_max_trigger", active_weight=0.0, default_missing_reason=None),
+    # Track-B 可脚本填充的 catalyst 节点(dividend 分红回购 / forecast 业绩指引);data_point_roles participates_in_score=true。
+    SlotDef("L9.company.buyback_dividend", "分红回购", "Company Catalyst", "catalyst_company", materiality=0.6, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="or_gate", aggregation_policy="or_max_trigger", active_weight=0.0, default_missing_reason=None),
+    SlotDef("L9.company.earnings_guidance", "业绩指引", "Company Catalyst", "catalyst_company", materiality=0.7, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="or_gate", aggregation_policy="or_max_trigger", active_weight=0.0, default_missing_reason=None),
     SlotDef("L9.media.short_report", "做空报告", "Media Catalyst", "catalyst_media", direction="negative", materiality=0.7, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
 )
 

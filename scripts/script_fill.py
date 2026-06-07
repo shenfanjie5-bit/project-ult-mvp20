@@ -17,12 +17,25 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# ── Track-B structured catalyst/risk constants ──────────────────────────────
+# 业绩预告 type → expectation-gap direction. tushare ``forecast.type`` vocab.
+# Positive = 上调预期(抬 expectation_gap);negative = 下调预期(压 expectation_gap)。
+_FORECAST_POS_TYPES = ("预增", "略增", "扭亏", "续盈", "首盈", "减亏")
+_FORECAST_NEG_TYPES = ("预减", "略减", "首亏", "续亏", "增亏", "预亏")
+# A real (nonzero) guidance call must not collapse to ~0 when p_change is tiny/None.
+_GUIDANCE_FLOOR = 0.15
+# stk_managers 离任职位权重:核心高管离任比普通董监高更受关注。
+_KEY_TITLES = ("董事长", "总经理", "总裁", "财务总监", "CFO", "CEO", "董事会秘书", "董秘")
+# 一年窗口(自然日)用于 insider_sell / management_change 的近一年聚合。
+_ONE_YEAR_DAYS = 365
 
 # 国内/境外 地区标签(覆盖各家年报/接口的写法变体)
 _DOMESTIC = ("中国大陆", "中国境内", "中国内地", "境内", "内销", "国内", "内地", "大陆", "中国")
@@ -55,6 +68,23 @@ def _is_domestic(name: str) -> bool:
     if any(x in s for x in _OVERSEAS):
         return False
     return any(x in s for x in _DOMESTIC)
+
+
+def _to_float(x: Any) -> float | None:
+    """Best-effort float; numpy/pandas/str-safe; NaN/None → None."""
+    if x is None:
+        return None
+    if isinstance(x, float) and x != x:  # NaN
+        return None
+    try:
+        f = float(x)
+    except (TypeError, ValueError):
+        return None
+    return None if f != f else f
+
+
+def _clip01(x: float) -> float:
+    return max(0.0, min(1.0, x))
 
 
 # ── annual-report parsing ───────────────────────────────────────────────────
@@ -191,13 +221,19 @@ def _fina_mainbz_latest_complete(ts_code: str):
 # ── unified extract ─────────────────────────────────────────────────────────
 
 def extract(ts_code: str, db_path: Path = ROOT / "runtime" / "hot.sqlite",
-            include_catalysts: bool = True) -> dict[str, dict]:
+            include_catalysts: bool = True,
+            include_management_change: bool = False) -> dict[str, dict]:
     """年报优先 + fina_mainbz 兜底,产出可写入 overlay 的字段字典。
 
-    ``include_catalysts``: 关掉则跳过 dividend/forecast 抓取。当前 catalyst 产出的
-    dp_id(L9.company.buyback_dividend / earnings_guidance)在 SLOT_DEFS 里【未实例化为
-    overlay 节点】,write_to_overlay 会丢弃 → 批量补空时关掉以省去无谓的逐股抓取。
-    待这些 slot 被加进图谱后再开启。"""
+    ``include_catalysts``: 关掉则跳过 Track-B 结构化 catalyst/risk 抓取
+    (buyback_dividend / earnings_guidance / insider_sell / management_change)。
+    这 4 个 dp_id 现已实例化为 overlay 节点(L9.company.* / L8.gov.*),
+    write_to_overlay 会写入。批量补空若想省去逐股抓取可关掉。
+
+    ``include_management_change``: L8.gov.management_change ← tushare
+    ``stk_managers``,该接口【不在 DockCase 缓存】→ 走【联网 live 读】。默认 False
+    (关闭),避免批量补空时为每只股触发网络。其余三个字段全走 DockCase 缓存(零下载)。
+    """
     secs = _annual_sections(ts_code, db_path)
     ar_year = None
     try:
@@ -257,47 +293,240 @@ def extract(ts_code: str, db_path: Path = ROOT / "runtime" / "hot.sqlite",
                               "source": f"fina_mainbz {per} 按地区"},
                     "evidence_sources": fmb_ev(per)}
 
-    # 纯结构化 catalysts(无需年报)——仅在目标 slot 存在时才值得抓取
+    # 纯结构化 catalysts/risks(无需年报)——走 DockCase 缓存(零下载)。
+    # management_change 例外:走联网 stk_managers,默认关。
     if include_catalysts:
-        out.update(_catalysts(ts_code))
+        out.update(_catalysts(ts_code,
+                              include_management_change=include_management_change))
     return _native(out)
 
 
-def _catalysts(ts_code: str) -> dict[str, dict]:
-    """L9.company.buyback_dividend ← dividend;earnings_guidance ← forecast。
-    走缓存 pro(命中 DockCase 不下载),最近一条记录。"""
+# ── Track-B structured catalyst/risk parsers (pure, hermetically testable) ──
+#
+# Each parser takes a list of endpoint records (DataFrame.to_dict("records"))
+# and returns an overlay-node payload {data_status, value, evidence_sources,
+# direction?} or None. The crucial field is ``value.score`` — a [0,1] MAGNITUDE
+# that the scoring aggregator reads via ``_to_scalar`` (it looks for score/
+# intensity/strength). Sign/direction is carried by the node's ``direction``
+# (positive → 抬 expectation_gap;negative → 进 risk_discount / 压 expectation_gap),
+# so a value with no ``score`` key would contribute ZERO regardless of direction.
+#
+# expectation_gap is a SIGNED damped sum (Σ score×conf / max(1,Σconf)); risk_
+# discount is the ABS-value damped sum (sign ignored, magnitude subtracted).
+
+
+def _ev(endpoint: str, period: str | None = None) -> list[dict]:
+    src = f"tushare:{endpoint}" + (f":{period}" if period else "")
+    return [{"kind": "local_dp_id", "dp_id": endpoint, "source": src}]
+
+
+def parse_buyback_dividend(records: list[dict]) -> dict | None:
+    """L9.company.buyback_dividend ← tushare ``dividend``.
+
+    取最新【已实施 div_proc=='实施'】记录(没有已实施的则回落到最新一条)。
+    有实质现金分红/送转→正向 expectation_gap。score 由现金分红(主)+ 送转股(辅)
+    的存在与力度编码,封顶 1.0。direction 恒 positive(分红是利好)。"""
+    if not records:
+        return None
+    impl = [r for r in records if str(r.get("div_proc") or "").strip() == "实施"]
+    pool = impl or records
+
+    def _key(r: dict) -> str:
+        return str(r.get("end_date") or r.get("ann_date") or "")
+
+    r = sorted(pool, key=_key, reverse=True)[0]
+    cash = _to_float(r.get("cash_div")) or 0.0          # 每股现金分红(元/税前)
+    stk = _to_float(r.get("stk_div")) or 0.0            # 每股送转股
+    if cash <= 0 and stk <= 0:
+        return None
+    # 分红是温和利好,不应主导 expectation_gap。现金分红 knee 在 1.0 元/股
+    # (0.3 元/股 → ~0.29;1.0 元/股 → ~0.76),送转每 0.5 股加 ~0.23(辅)。
+    score = _clip01(0.8 * math.tanh(cash / 1.0) + 0.2 * math.tanh(stk / 0.5))
+    if score <= 0:
+        return None
+    return {
+        "data_status": "Known", "direction": "positive",
+        "value": {
+            "score": round(score, 4),
+            "div_proc": str(r.get("div_proc") or "").strip() or None,
+            "cash_div": _to_float(r.get("cash_div")),
+            "stk_div": _to_float(r.get("stk_div")),
+            "latest_end_date": str(r.get("end_date") or "") or None,
+            "ann_date": str(r.get("ann_date") or "") or None,
+            "source": "tushare:dividend",
+        },
+        "evidence_sources": _ev("dividend", str(r.get("end_date") or "") or None),
+    }
+
+
+def parse_earnings_guidance(records: list[dict]) -> dict | None:
+    """L9.company.earnings_guidance ← tushare ``forecast``.
+
+    取最新一期业绩预告。type(预增/扭亏/略增 → 正;预减/首亏/续亏 → 负)定方向;
+    p_change_min/max 的均值经 tanh 编码 magnitude(+100% → ~0.76)。方向写进节点
+    ``direction``(预减时为 negative → 压低 expectation_gap)。"""
+    if not records:
+        return None
+
+    def _key(r: dict) -> str:
+        return str(r.get("end_date") or r.get("ann_date") or "")
+
+    r = sorted(records, key=_key, reverse=True)[0]
+    typ = str(r.get("type") or "").strip()
+    if any(t in typ for t in _FORECAST_POS_TYPES):
+        direction = "positive"
+    elif any(t in typ for t in _FORECAST_NEG_TYPES):
+        direction = "negative"
+    else:
+        # 不确定/续盈无幅度/未知类型 → 不构成清晰方向,跳过(不污染 expectation_gap)。
+        return None
+    pmin = _to_float(r.get("p_change_min"))
+    pmax = _to_float(r.get("p_change_max"))
+    vals = [v for v in (pmin, pmax) if v is not None]
+    mag = math.tanh(abs(sum(vals) / len(vals)) / 100.0) if vals else 0.0
+    score = _clip01(max(mag, _GUIDANCE_FLOOR))          # 真实预告不塌到 ~0
+    return {
+        "data_status": "Known", "direction": direction,
+        "value": {
+            "score": round(score, 4),
+            "type": typ or None,
+            "p_change_min": pmin, "p_change_max": pmax,
+            "end_date": str(r.get("end_date") or "") or None,
+            "summary": (str(r.get("summary"))[:120] if r.get("summary") else None),
+            "source": "tushare:forecast",
+        },
+        "evidence_sources": _ev("forecast", str(r.get("end_date") or "") or None),
+    }
+
+
+def parse_insider_sell(records: list[dict], *, asof: str | None = None) -> dict | None:
+    """L8.gov.insider_sell ← tushare ``stk_holdertrade``.
+
+    近一年股东/高管【减持 in_de=='DE'】的净减持比例 + 笔数 → 风险强度。
+    score = tanh(净减持比例% / 3.0)(3% 净减持 ≈ 0.76),笔数多再小幅加成。
+    direction negative(进 risk_discount;magnitude 被 abs 取用)。无减持 → None。"""
+    if not records:
+        return None
+    cutoff = _cutoff(asof, _ONE_YEAR_DAYS)
+    rows = [r for r in records if str(r.get("ann_date") or "") >= cutoff]
+    decreases = [r for r in rows if str(r.get("in_de") or "").upper() == "DE"]
+    if not decreases:
+        return None
+    net_de_pct = 0.0
+    for r in decreases:
+        ratio = _to_float(r.get("change_ratio"))
+        if ratio is not None:
+            net_de_pct += abs(ratio)                     # change_ratio 为幅度,DE 即减持
+    if net_de_pct <= 0:
+        return None
+    n = len(decreases)
+    score = _clip01(math.tanh(net_de_pct / 3.0) + 0.05 * min(n, 4))
+    return {
+        "data_status": "Known", "direction": "negative",
+        "value": {
+            "score": round(score, 4),
+            "net_decrease_pct": round(net_de_pct, 3),
+            "decrease_count": n,
+            "latest_ann_date": str(decreases[0].get("ann_date") or "") or None,
+            "window_days": _ONE_YEAR_DAYS,
+            "source": "tushare:stk_holdertrade",
+        },
+        "evidence_sources": _ev("stk_holdertrade"),
+    }
+
+
+def parse_management_change(records: list[dict], *, asof: str | None = None) -> dict | None:
+    """L8.gov.management_change ← tushare ``stk_managers`` (LIVE 联网,非缓存)。
+
+    近一年高管【离任 end_date 非空】数量 → 风险强度;核心高管(董事长/总经理/CFO/
+    董秘…)离任额外加权。score = tanh(加权离任数 / 3.0)。direction negative。
+    无离任 → None。"""
+    if not records:
+        return None
+    cutoff = _cutoff(asof, _ONE_YEAR_DAYS)
+    departures = []
+    for r in records:
+        end_date = str(r.get("end_date") or "").strip()
+        ann = str(r.get("ann_date") or "")
+        if end_date and end_date.lower() not in ("nan", "none") and ann >= cutoff:
+            departures.append(r)
+    if not departures:
+        return None
+    weighted = 0.0
+    for r in departures:
+        title = str(r.get("title") or "")
+        weighted += 1.5 if any(t in title for t in _KEY_TITLES) else 1.0
+    score = _clip01(math.tanh(weighted / 3.0))
+    return {
+        "data_status": "Known", "direction": "negative",
+        "value": {
+            "score": round(score, 4),
+            "departure_count": len(departures),
+            "weighted_departures": round(weighted, 2),
+            "people": [str(r.get("name") or "") for r in departures[:5] if r.get("name")],
+            "window_days": _ONE_YEAR_DAYS,
+            "source": "tushare:stk_managers",
+        },
+        "evidence_sources": _ev("stk_managers"),
+    }
+
+
+def _cutoff(asof: str | None, days: int) -> str:
+    """YYYYMMDD cutoff = asof - days. asof None → today (UTC date)."""
+    from datetime import datetime, timedelta, timezone
+    if asof:
+        try:
+            base = datetime.strptime(str(asof)[:8], "%Y%m%d")
+        except ValueError:
+            base = datetime.now(tz=timezone.utc)
+    else:
+        base = datetime.now(tz=timezone.utc)
+    return (base - timedelta(days=days)).strftime("%Y%m%d")
+
+
+def _records(df) -> list[dict]:
+    """DataFrame → list[dict] records; None/empty → []."""
+    if df is None or len(df) == 0:
+        return []
+    try:
+        return df.to_dict(orient="records")
+    except AttributeError:
+        return list(df)
+
+
+def _catalysts(ts_code: str, *, include_management_change: bool = False) -> dict[str, dict]:
+    """Fetch + parse the 4 Track-B structured fields. dividend / forecast /
+    stk_holdertrade hit the DockCase cache (零下载, DOCKCASE_WRITEBACK 由调用方置 0);
+    stk_managers (management_change) 走【联网 live 读】且默认关闭。"""
     out: dict[str, dict] = {}
     try:
         from mvp20.sources import tushare_source as tsrc
         pro = tsrc._get_pro_api()
     except Exception:  # noqa: BLE001
         return out
-    try:
-        dv = pro.dividend(ts_code=ts_code,
-                          fields="ts_code,end_date,ann_date,div_proc,cash_div,stk_div,pay_date")
-        if dv is not None and len(dv):
-            r = dv.sort_values("end_date", ascending=False).iloc[0]
-            out["L9.company.buyback_dividend"] = {"data_status": "Known",
-                "value": {"latest_end_date": str(r.get("end_date")), "div_proc": r.get("div_proc"),
-                          "cash_div": r.get("cash_div"), "stk_div": r.get("stk_div"),
-                          "source": "tushare:dividend"},
-                "evidence_sources": [{"kind": "local_dp_id", "dp_id": "dividend",
-                                      "source": "tushare:dividend"}]}
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        fc = pro.forecast(ts_code=ts_code)
-        if fc is not None and len(fc):
-            r = fc.sort_values("end_date", ascending=False).iloc[0]
-            out["L9.company.earnings_guidance"] = {"data_status": "Known",
-                "value": {"end_date": str(r.get("end_date")), "type": r.get("type"),
-                          "p_change_min": r.get("p_change_min"), "p_change_max": r.get("p_change_max"),
-                          "summary": str(r.get("summary"))[:120] if r.get("summary") else None,
-                          "source": "tushare:forecast"},
-                "evidence_sources": [{"kind": "local_dp_id", "dp_id": "forecast",
-                                      "source": "tushare:forecast"}]}
-    except Exception:  # noqa: BLE001
-        pass
+
+    def _safe_fetch(fn, **kw):
+        try:
+            return _records(fn(**kw))
+        except Exception:  # noqa: BLE001
+            return []
+
+    parsed = {
+        "L9.company.buyback_dividend": parse_buyback_dividend(
+            _safe_fetch(pro.dividend, ts_code=ts_code,
+                        fields="ts_code,end_date,ann_date,div_proc,cash_div,stk_div,pay_date")),
+        "L9.company.earnings_guidance": parse_earnings_guidance(
+            _safe_fetch(pro.forecast, ts_code=ts_code)),
+        "L8.gov.insider_sell": parse_insider_sell(
+            _safe_fetch(pro.stk_holdertrade, ts_code=ts_code)),
+    }
+    if include_management_change:
+        # 联网读(stk_managers 不在 DockCase 缓存)。
+        parsed["L8.gov.management_change"] = parse_management_change(
+            _safe_fetch(pro.stk_managers, ts_code=ts_code))
+    for dp, node in parsed.items():
+        if node is not None:
+            out[dp] = node
     return out
 
 
@@ -320,6 +549,22 @@ def write_to_overlay(ts_code: str, extracted: dict[str, dict],
             node["data_status"] = "Known"
             node["value"] = ex["value"]
             node["evidence_sources"] = ex["evidence_sources"]
+            # Event-driven slots default Inactive/active_weight=0 + missing_policy
+            # 'inactive_zero_weight'. Once a real event is observed, activate the
+            # node so its status/coverage round-trip correctly. (active_weight is
+            # scoring-inert for these parent_node=None standalone leaves — their
+            # leaf score is stored weight-independent — but the frontend / coverage
+            # accounting read it, so keep it consistent.)
+            if node.get("missing_policy") == "inactive_zero_weight":
+                node["missing_policy"] = "known"
+                if not node.get("active_weight"):
+                    node["active_weight"] = node.get("base_weight") or 1.0
+            # ``direction`` is LOAD-BEARING for earnings_guidance: a 预减/亏损 forecast
+            # must carry direction='negative' so it LOWERS the signed expectation_gap
+            # (the slot default is 'positive'). buyback/insider/mgmt directions match
+            # their slot default but we set it uniformly for correctness.
+            if ex.get("direction"):
+                node["direction"] = ex["direction"]
             filled += 1
     if filled:
         from mvp20.overlays import _write_yaml_if_changed

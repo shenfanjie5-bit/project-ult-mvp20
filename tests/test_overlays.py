@@ -100,8 +100,10 @@ def test_required_node_fields() -> None:
     }
 
     # X5: 32 original derived slots + 26 closed-loop slots = 58.
-    # Z3: + 53 net-new bucket-C/D LLM-candidate slots → 111 total.
-    assert len([n for n in payload["nodes"] if n.get("derived_slot")]) == 111
+    # Z3: + 53 net-new bucket-C/D LLM-candidate slots → 111.
+    # Track-B: + 4 script-fillable scoring slots (L9.company.buyback_dividend /
+    # earnings_guidance, L8.gov.insider_sell / management_change) → 115 total.
+    assert len([n for n in payload["nodes"] if n.get("derived_slot")]) == 115
     for node in payload["nodes"]:
         assert required_fields <= set(node)
 

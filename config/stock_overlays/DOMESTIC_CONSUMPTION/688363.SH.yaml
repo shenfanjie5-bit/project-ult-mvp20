@@ -127,6 +127,8 @@ nodes:
   - 688363.SH:L5.fcst.beat_probability
   - 688363.SH:L8.gov.fraud_control
   - 688363.SH:L8.gov.litigation
+  - 688363.SH:L8.gov.insider_sell
+  - 688363.SH:L8.gov.management_change
   - 688363.SH:L8.industry.demand_supply
   - 688363.SH:L8.industry.price_war
   - 688363.SH:L8.industry.substitute
@@ -142,6 +144,8 @@ nodes:
   - 688363.SH:L8.shock.supply_break
   - 688363.SH:L9.company.ma
   - 688363.SH:L9.company.product_order
+  - 688363.SH:L9.company.buyback_dividend
+  - 688363.SH:L9.company.earnings_guidance
   - 688363.SH:L9.media.short_report
   direction: neutral
   base_weight: 1.0
@@ -987,7 +991,7 @@ nodes:
   missing_reason: null
   materiality: 0.75
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     strength: 一般
     components:
@@ -1005,7 +1009,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1029,7 +1033,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1043,30 +1047,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.8
   data_coverage: null
-  evidence_quality: low
-  value:
-    retention_rate: null
-    switching_cost: null
-    churn_signals: []
+  evidence_quality: null
+  value: null
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1078,9 +1079,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: null
-  last_filled_period: null
-  last_event_id: null
 - node_id: 688363.SH:L2.newbiz.tam
   dp_id: L2.newbiz.tam
   node_name: 新业务潜在空间
@@ -1118,7 +1116,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: existing_multi_segment
@@ -1145,7 +1143,7 @@ nodes:
   field_role: score_component
   score_target: optionality_score
   derived_target: optionality_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: scenario_weighted
   governance_aggregation_policy: scenario_probability_weighted
   governance_missing_policy: optionality_track
@@ -1171,12 +1169,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Unknown
+  status: Optionality
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -1185,28 +1183,22 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: optional
-  data_status: Unknown
+  data_status: Optionality
   missing_policy: optionality_track
   calculation_type: scenario_weighted
   aggregation_policy: scenario_probability_weighted
   alert_policy: no_alert
-  missing_reason: no_local_evidence
+  missing_reason: null
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
-    current_contribution:
-      level: null
-      factors:
-      - L9.company.product_order missing in SQLite
-    future_option_value:
-      level: null
-      catalyst_required:
-      - 本地新产品/大订单证据
+    current_contribution: null
+    future_option_value: null
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
@@ -1224,9 +1216,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: null
-  last_filled_period: null
-  last_event_id: null
 - node_id: 688363.SH:L3.product.lifecycle
   dp_id: L3.product.lifecycle
   node_name: 产品生命周期阶段
@@ -1264,7 +1253,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     phase: 成熟
     competitive_score: 3.0
@@ -1284,7 +1273,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1336,7 +1325,7 @@ nodes:
   missing_reason: null
   materiality: 0.85
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     segments:
     - name: 医药/化妆品/食品制造企业
@@ -1361,7 +1350,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1411,7 +1400,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     direct_pct: null
     distributor_pct: null
@@ -1453,7 +1442,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1467,40 +1456,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    tier1_pct: null
-    tier2_pct: null
-    tier3_pct: null
-    overseas_pct: null
-    notes: 公司未披露此项
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 以微生物发酵和交联两大技术平台,开发有助于人类生命健康的生物活性材料,从原料到医疗终端产品,功能性护肤品及功能性食品的全产业链业务体系,服务于全球的医药,化妆品,食品制造企业,医疗机构及终端用户.
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1510,9 +1486,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: e31c56c6f0105115
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L3.delivery.lead_time
   dp_id: L3.delivery.lead_time
   node_name: 交付周期
@@ -1524,7 +1497,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1538,39 +1511,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    lead_time_days: null
-    on_time_rate: null
-    trend: null
-    notes: 公司未披露交付周期或准时率
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 以微生物发酵和交联两大技术平台,开发有助于人类生命健康的生物活性材料,从原料到医疗终端产品,功能性护肤品及功能性食品的全产业链业务体系,服务于全球的医药,化妆品,食品制造企业,医疗机构及终端用户.
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 101522084.12, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: bottleneck_min
   governance_aggregation_policy: min_capacity_constraint
   governance_missing_policy: unknown_reduce_confidence
@@ -1580,9 +1541,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: 593f4601b7308896
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L3.delivery.csat
   dp_id: L3.delivery.csat
   node_name: 交付质量/满意度
@@ -1594,7 +1552,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1608,40 +1566,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.45
   data_coverage: null
-  evidence_quality: low
-  value:
-    nps_or_csat: null
-    complaint_rate: null
-    trend: null
-    notes: 本地无满意度/投诉率数据
-    evidence_summary: 媒体源为空且主营仅说明服务客户范围。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 以微生物发酵和交联两大技术平台,开发有助于人类生命健康的生物活性材料,从原料到医疗终端产品,功能性护肤品及功能性食品的全产业链业务体系,服务于全球的医药,化妆品,食品制造企业,医疗机构及终端用户.
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1651,9 +1596,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: 1d5318337cd16a20
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.volume.foot_traffic
   dp_id: L4.volume.foot_traffic
   node_name: 客流/订单流
@@ -1663,7 +1605,7 @@ nodes:
   child_nodes: []
   direction: positive
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.55
   time_horizon:
@@ -1691,7 +1633,7 @@ nodes:
   missing_reason: 非线下门店客流模式
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     yoy_pct: null
     monthly_trend: []
@@ -1734,7 +1676,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1748,38 +1690,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: daily
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    frequency_per_user: null
-    yoy_delta_pct: null
-    notes: 本地无复购/使用频次披露
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1789,9 +1720,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: 24ac1036dee422db
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.price.subscription
   dp_id: L4.price.subscription
   node_name: 订阅/价格模式
@@ -1801,7 +1729,7 @@ nodes:
   child_nodes: []
   direction: positive
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.55
   time_horizon:
@@ -1829,7 +1757,7 @@ nodes:
   missing_reason: 公司非订阅制业务模式
   materiality: 0.5
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     tiers: []
     trend: null
@@ -1898,7 +1826,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     avg_discount_pct: null
     trend: stable
@@ -1938,7 +1866,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1952,33 +1880,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: daily
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
-  value:
-    utilization_pct: null
-    trend: null
-    bottleneck: null
-    notes: 有 capex 和 PPE，但无产能利用率披露
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 101522084.12, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L5.bs.goodwill_ppe
-    source: tushare:balancesheet
-    excerpt: '"fix_assets_ppe": 3497348730.16'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -1994,9 +1910,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: 8107550cf912a088
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.eff.conversion_retention
   dp_id: L4.eff.conversion_retention
   node_name: 转化率/留存率
@@ -2006,7 +1919,7 @@ nodes:
   child_nodes: []
   direction: positive
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.55
   time_horizon:
@@ -2034,7 +1947,7 @@ nodes:
   missing_reason: 非互联网转化留存口径
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     conversion_pct: null
     retention_30d: null
@@ -2079,7 +1992,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -2093,34 +2006,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    customer_share_top5: null
-    channel_share: null
-    region_share: null
-    trend: null
-    notes: 本地无客户/渠道/区域份额
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -2136,9 +2036,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: 24ac1036dee422db
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L5.surprise.buy_whisper
   dp_id: L5.surprise.buy_whisper
   node_name: 买方预期差/业绩 whisper
@@ -2176,7 +2073,7 @@ nodes:
   missing_reason: null
   materiality: 0.85
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     whisper_eps: null
     whisper_revenue: null
@@ -2198,7 +2095,7 @@ nodes:
   field_role: score_component
   score_target: expectation_gap
   derived_target: expectation_gap
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2224,7 +2121,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -2238,33 +2135,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.8
   data_coverage: null
-  evidence_quality: low
-  value:
-    rank: null
-    share_pct: null
-    peers: []
-    trend: null
-    source_year: 2026Q1
-    market_size_unit: null
-    evidence_summary: 本地只有公司收入，缺市场规模/排名。
-    notes: 不推断份额。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -2280,9 +2165,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: d06f15bb6d1fbe2d
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L1.position.brand
   dp_id: L1.position.brand
   node_name: 品牌力与认知度
@@ -2320,7 +2202,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     tier: 挑战者
     category: 生物活性材料/医疗终端/功能性护肤品
@@ -2343,7 +2225,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2393,7 +2275,7 @@ nodes:
   missing_reason: null
   materiality: 0.8
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     moat_score: 3.5
     patent_count_known: null
@@ -2421,7 +2303,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2471,7 +2353,7 @@ nodes:
   missing_reason: null
   materiality: 0.75
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     duration: 中期
     vs_peers_gp_pct: null
@@ -2494,7 +2376,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2544,7 +2426,7 @@ nodes:
   missing_reason: null
   materiality: 0.75
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     strength: 中
     asp_yoy_pct: null
@@ -2572,7 +2454,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2622,7 +2504,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     segments:
     - name: 皮肤科学创新转化业务
@@ -2659,7 +2541,8 @@ nodes:
   - kind: local_dp_id
     dp_id: L2.segment.revenue_share
     source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct": 32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
+    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct":
+      32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
   - kind: local_dp_id
     dp_id: L5.cf.ocf
     source: tushare:cashflow
@@ -2669,7 +2552,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2719,7 +2602,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     exposures:
     - industry_id: 皮肤科学创新转化业务
@@ -2737,13 +2620,14 @@ nodes:
   - kind: local_dp_id
     dp_id: L2.segment.revenue_share
     source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct": 32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
+    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct":
+      32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2793,7 +2677,7 @@ nodes:
   missing_reason: no_active_compete_event
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     competitive_intensity: 中
     top_peers: []
@@ -2810,7 +2694,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2860,7 +2744,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     risk_factors:
     - type: 业务集中
@@ -2876,7 +2760,8 @@ nodes:
   - kind: local_dp_id
     dp_id: L2.segment.revenue_share
     source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct": 32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
+    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct":
+      32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
   - kind: local_dp_id
     dp_id: L9.industry.compete_risk
     source: tushare:media_report
@@ -2886,7 +2771,7 @@ nodes:
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -2936,7 +2821,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: not_separately_identified
@@ -2960,7 +2845,7 @@ nodes:
   field_role: score_component
   score_target: optionality_score
   derived_target: optionality_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: scenario_weighted
   governance_aggregation_policy: scenario_probability_weighted
   governance_missing_policy: optionality_track
@@ -3010,7 +2895,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: not_separately_identified
@@ -3042,13 +2927,14 @@ nodes:
   - kind: local_dp_id
     dp_id: L2.segment.revenue_share
     source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct": 32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
+    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct":
+      32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: optionality_score
   derived_target: optionality_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: scenario_weighted
   governance_aggregation_policy: scenario_probability_weighted
   governance_missing_policy: optionality_track
@@ -3098,7 +2984,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: not_quantified
@@ -3118,7 +3004,7 @@ nodes:
   field_role: score_component
   score_target: optionality_score
   derived_target: optionality_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: scenario_weighted
   governance_aggregation_policy: scenario_probability_weighted
   governance_missing_policy: optionality_track
@@ -3168,7 +3054,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     top_customers_solvency:
     - name_proxy: 应收账款客户组合
@@ -3186,7 +3072,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -3210,7 +3096,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3224,32 +3110,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    overseas_revenue_pct: null
-    key_markets: []
-    localization_stage: null
-    evidence_summary: 本地无国内/海外收入结构。
-    notes: 不推断海外占比。
+  evidence_quality: null
+  value: null
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -3259,9 +3140,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: null
-  last_filled_period: null
-  last_event_id: null
 - node_id: 688363.SH:L3.region.key_risk
   dp_id: L3.region.key_risk
   node_name: 重点区域风险
@@ -3299,7 +3177,7 @@ nodes:
   missing_reason: no_active_geo_event
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     key_region: null
     risk_type: null
@@ -3317,7 +3195,7 @@ nodes:
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -3341,7 +3219,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3355,36 +3233,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    supplier_concentration: null
-    capacity_utilization_pct: null
-    bottleneck: null
-    evidence_summary: 本地有 capex，但缺供应商集中度/产能利用率。
-    notes: 公司未披露此项
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 101522084.12, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: bottleneck_min
   governance_aggregation_policy: min_capacity_constraint
   governance_missing_policy: unknown_reduce_confidence
@@ -3394,9 +3263,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 00a739124e6fa79d
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L0.price.contract_spot
   dp_id: L0.price.contract_spot
   node_name: 长协 vs 现货价差
@@ -3616,7 +3482,7 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 1.0
-  governance_source_status: missing
+  governance_source_status: ○
 - node_id: 688363.SH:L4.price.asp_aov_arpu
   dp_id: L4.price.asp_aov_arpu
   node_name: ASP/AOV/ARPU
@@ -3628,7 +3494,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3642,32 +3508,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    metric_kind: ASP
-    value: null
-    currency: CNY
-    yoy_pct: null
-    trend: null
-    notes: 只有收入，无销量/出货量分母，无法计算 ASP。
-    evidence_summary: 2026Q1 收入 8.294 亿元。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3683,9 +3538,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: d06f15bb6d1fbe2d
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.price.pricing_power
   dp_id: L4.price.pricing_power
   node_name: 公司定价权 (运营)
@@ -3723,7 +3575,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     strength: 中
     recent_price_adjustment: null
@@ -3744,7 +3596,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -3768,7 +3620,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3782,31 +3634,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    elasticity: null
-    estimation_method: null
-    notes: 缺 ASP 与销量，无法估计价格弹性。
-    evidence_summary: 依赖节点 L4.price.pricing_power/L4.price.asp_aov_arpu 未有量化价格和销量。
+  evidence_quality: null
+  value: null
   evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -3816,9 +3664,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: null
-  last_filled_period: null
-  last_event_id: null
 - node_id: 688363.SH:L4.cost.cac_production
   dp_id: L4.cost.cac_production
   node_name: 获客/单位生产成本
@@ -3856,7 +3701,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     cac_or_unit_cost: null
     trend: up
@@ -3904,7 +3749,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3918,31 +3763,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    rent_yoy_pct: null
-    energy_yoy_pct: null
-    logistics_yoy_pct: null
-    trend: null
-    notes: 本地没有租金/能源/物流分项成本。
-    evidence_summary: 仅有毛利率，不能拆分固定成本项。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.6783696861050311, "unit": "ratio", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3958,9 +3793,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: b7dbe2750689d0b5
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.eff.store_labor
   dp_id: L4.eff.store_labor
   node_name: 门店/人效
@@ -3970,7 +3802,7 @@ nodes:
   child_nodes: []
   direction: positive
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.55
   time_horizon:
@@ -3998,7 +3830,7 @@ nodes:
   missing_reason: 非门店经营口径
   materiality: 0.6
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     revenue_per_employee: null
     revenue_per_store: null
@@ -4016,7 +3848,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4645,7 +4477,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -4659,39 +4491,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: or_gate
   aggregation_policy: or_max_trigger
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: null
   materiality: 0.5
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 媒体源为空；宏观 CPI/PPI 有数但不构成公司级数据/价格事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.macro.cpi_employment
-    source: local_macro
-    excerpt: '"cpi_yoy_pct": 1.2, "cpi_mom_pct": 0.3, "ppi_yoy_pct": 2.8'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: true
   field_role: score_component
   score_target: expectation_gap
   derived_target: expectation_gap
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4701,9 +4521,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: a58e1073473a041e
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L9.macro.geo
   dp_id: L9.macro.geo
   node_name: 地缘事件
@@ -4715,7 +4532,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -4729,39 +4546,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 媒体源为空，USDCNH 20 日变动低于阈值。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.macro.fx
-    source: local_macro
-    excerpt: '"usdcnh_change_pct": -0.4145, "rmb_appreciation_pct": 0.4145'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: true
   field_role: score_component
   score_target: expectation_gap
   derived_target: expectation_gap
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4771,9 +4576,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: e7f0c86397dc5821
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L1.role.tag
   dp_id: L1.role.tag
   node_name: 行业角色标签
@@ -4811,7 +4613,7 @@ nodes:
   missing_reason: null
   materiality: 0.55
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     tags:
     - 生物活性材料全产业链企业
@@ -4827,7 +4629,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4877,7 +4679,7 @@ nodes:
   missing_reason: null
   materiality: 0.55
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     tags:
     - 微生物发酵和交联技术平台
@@ -4893,7 +4695,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4943,7 +4745,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     tags:
     - 技术平台
@@ -4963,7 +4765,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5013,7 +4815,7 @@ nodes:
   missing_reason: null
   materiality: 0.5
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     tags:
     - 估值修复
@@ -5037,7 +4839,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5087,7 +4889,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     rank: null
     growth_pct: -23.0554
@@ -5153,7 +4955,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: high
+  evidence_quality: null
   value:
     opex_ratio_pct: 56.31195132279863
     sga_total: 381269344.22
@@ -5173,7 +4975,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5223,7 +5025,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     operating_profit: 70898159.16
     net_profit: 65004705.35
@@ -5243,7 +5045,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5293,7 +5095,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     products:
     - name: 皮肤科学创新转化业务
@@ -5320,13 +5122,14 @@ nodes:
   - kind: local_dp_id
     dp_id: L2.segment.revenue_share
     source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct": 32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
+    excerpt: '{"segments": [{"item": "皮肤科学创新转化业务", "revenue_pct": 35.4172, "period": "20251231"}, {"item": "医疗终端", "revenue_pct":
+      32.6084, "period": "20251231"}, {"item": "原料产品", "revenue_pct": 28.8044, "period": "20251231"}'
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5376,7 +5179,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     gross_margin_pct: 67.8369686105031
     margin_tier: 高
@@ -5397,7 +5200,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5421,7 +5224,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -5435,40 +5238,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
-  value:
-    top5_revenue_pct: null
-    top10_revenue_pct: null
-    concentration_trend: null
-    notes: 本地问答为股东人数，不含客户集中度；应收账款无法识别客户集中度。
-    evidence_summary: 缺前五客户收入占比。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
-  - kind: local_dp_id
-    dp_id: L5.bs.ar_ap
-    source: tushare:balancesheet
-    excerpt: '"accounts_receivable": 598000775.94'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5478,9 +5268,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 105d86cdf5fb3637
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L3.channel.cost
   dp_id: L3.channel.cost
   node_name: 渠道费用
@@ -5518,7 +5305,7 @@ nodes:
   missing_reason: null
   materiality: 0.55
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     channel_cost_ratio_pct: 31.757
     sales_expense: 263396266.72
@@ -5558,7 +5345,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -5572,28 +5359,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    revenue_per_channel: null
-    trend: null
-    notes: 本地只有收入，无渠道数或渠道收入占比。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -5609,9 +5389,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: d06f15bb6d1fbe2d
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L3.region.domestic_overseas
   dp_id: L3.region.domestic_overseas
   node_name: 国内/海外收入结构
@@ -5623,7 +5400,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -5637,38 +5414,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    domestic_pct: null
-    overseas_pct: null
-    notes: 主营提到服务全球客户，但本地无国内/海外收入占比。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 以微生物发酵和交联两大技术平台,开发有助于人类生命健康的生物活性材料,从原料到医疗终端产品,功能性护肤品及功能性食品的全产业链业务体系,服务于全球的医药,化妆品,食品制造企业,医疗机构及终端用户.
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5678,9 +5444,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 0983c98c3f06d557
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L3.region.fx_geo
   dp_id: L3.region.fx_geo
   node_name: 汇率/地缘影响
@@ -5718,7 +5481,7 @@ nodes:
   missing_reason: no_active_fx_geo_event
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     fx_sensitivity: 低
     geo_risk: 低
@@ -5733,7 +5496,7 @@ nodes:
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -5783,7 +5546,7 @@ nodes:
   missing_reason: null
   materiality: 0.5
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     fulfillment_cost_ratio_pct: null
     trend: up
@@ -5826,7 +5589,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -5840,33 +5603,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
-  value:
-    share_pct: null
-    rank: null
-    trend: null
-    notes: 本地无市场规模或排名。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -5882,9 +5633,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 31953bbd8971eb28
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.share.substitution
   dp_id: L4.share.substitution
   node_name: 竞品替代
@@ -5922,7 +5670,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     substitution_risk: 中
     trend: up
@@ -5968,7 +5716,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -5982,35 +5730,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    metric: sales
-    value: null
-    unit: null
-    yoy_pct: null
-    trend: null
-    notes: 本地只有收入，缺销量/订单/出货/用户数。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -6026,9 +5760,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 31953bbd8971eb28
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.volume.orders
   dp_id: L4.volume.orders
   node_name: 订单量
@@ -6040,7 +5771,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6054,35 +5785,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    metric: orders
-    value: null
-    unit: null
-    yoy_pct: null
-    trend: null
-    notes: 本地只有收入，缺销量/订单/出货/用户数。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -6098,9 +5815,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 31953bbd8971eb28
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.volume.shipments
   dp_id: L4.volume.shipments
   node_name: 出货量/交付量
@@ -6112,7 +5826,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6126,35 +5840,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    metric: shipments
-    value: null
-    unit: null
-    yoy_pct: null
-    trend: null
-    notes: 本地只有收入，缺销量/订单/出货/用户数。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -6170,9 +5870,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 31953bbd8971eb28
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L4.volume.users
   dp_id: L4.volume.users
   node_name: 客户/用户数
@@ -6184,7 +5881,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.0
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6198,41 +5895,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    metric: users
-    value: null
-    unit: null
-    yoy_pct: null
-    trend: null
-    notes: 本地只有收入，缺销量/订单/出货/用户数。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 829407051.84, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -6242,9 +5925,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 31953bbd8971eb28
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L5.fcst.beat_probability
   dp_id: L5.fcst.beat_probability
   node_name: 业绩兑现概率
@@ -6282,7 +5962,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     beat_probability_pct: 45.0
     drivers:
@@ -6332,7 +6012,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6346,39 +6026,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: null
   materiality: 0.85
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 管理层变动窗口为 0，媒体源为空，未见内控/财务造假事件触发。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L8.gov.management_change
-    source: tushare:stk_managers
-    excerpt: '{"events": [], "count_window": 0, "lookback_days": 180, "reason": "no events in window"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6388,9 +6056,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: dd0cc5829da6cdb5
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.gov.litigation
   dp_id: L8.gov.litigation
   node_name: 法律诉讼
@@ -6402,7 +6067,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6416,33 +6081,76 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 本地管理层/诉讼事件窗口为 0，媒体源为空。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.company.mgmt_litigation
-    source: tushare:stk_managers
-    excerpt: '{"events": [], "count_window": 0, "lookback_days": 180, "reason": "no events in window"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
+  derived_slot: true
+  inherit_from_industry: false
+  field_role: discount
+  score_target: risk_discount
+  derived_target: risk_discount
+  participates_in_score: false
+  governance_calculation_type: risk_factor
+  governance_aggregation_policy: subtract_risk
+  governance_missing_policy: unknown_reduce_confidence
+  fallback_policy: unknown_zero_score
+  proxy_candidates: []
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 0.75
+  governance_source_status: ○
+- node_id: 688363.SH:L8.gov.insider_sell
+  dp_id: L8.gov.insider_sell
+  node_name: 股东减持
+  node_type: Risk Offset
+  layer: risk_governance
+  parent_node: 688363.SH:company
+  child_nodes: []
+  direction: negative
+  base_weight: 1.0
+  active_weight: 0.0
+  strength: null
+  confidence: null
+  time_horizon:
+  - short
+  - medium
+  - long
+  status: Inactive
+  priced_in: null
+  exposure: null
+  financial_sensitivity: null
+  valuation_sensitivity: null
+  related_business: []
+  related_metrics: []
+  trigger_condition: null
+  invalidation_condition: null
+  data_source: null
+  update_frequency: quarterly
+  last_updated: null
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: risk_factor
+  aggregation_policy: subtract_risk
+  alert_policy: warn_if_material
+  missing_reason: null
+  materiality: 0.65
+  data_coverage: null
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6457,10 +6165,62 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 0.75
-  governance_source_status: ○
-  source_fingerprint_at_fill: 361d6acce5c1c5bf
-  last_filled_period: 2026Q1
-  last_event_id: null
+  governance_source_status: ✓
+- node_id: 688363.SH:L8.gov.management_change
+  dp_id: L8.gov.management_change
+  node_name: 管理层变动
+  node_type: Risk Offset
+  layer: risk_governance
+  parent_node: 688363.SH:company
+  child_nodes: []
+  direction: negative
+  base_weight: 1.0
+  active_weight: 0.0
+  strength: null
+  confidence: null
+  time_horizon:
+  - short
+  - medium
+  - long
+  status: Inactive
+  priced_in: null
+  exposure: null
+  financial_sensitivity: null
+  valuation_sensitivity: null
+  related_business: []
+  related_metrics: []
+  trigger_condition: null
+  invalidation_condition: null
+  data_source: null
+  update_frequency: quarterly
+  last_updated: null
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: risk_factor
+  aggregation_policy: subtract_risk
+  alert_policy: warn_if_material
+  missing_reason: null
+  materiality: 0.6
+  data_coverage: null
+  evidence_quality: null
+  value: null
+  evidence_sources: []
+  derived_slot: true
+  inherit_from_industry: false
+  field_role: discount
+  score_target: risk_discount
+  derived_target: risk_discount
+  participates_in_score: true
+  governance_calculation_type: risk_factor
+  governance_aggregation_policy: subtract_risk
+  governance_missing_policy: unknown_reduce_confidence
+  fallback_policy: unknown_zero_score
+  proxy_candidates: []
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 0.75
+  governance_source_status: ✓
 - node_id: 688363.SH:L8.industry.demand_supply
   dp_id: L8.industry.demand_supply
   node_name: 行业需求/供给恶化
@@ -6470,14 +6230,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6486,33 +6246,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 本地行业竞争/媒体源 24h 为空，未触发事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6527,10 +6275,7 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 0.75
-  governance_source_status: missing
-  source_fingerprint_at_fill: 5e24600eb14c8150
-  last_filled_period: 2026Q1
-  last_event_id: null
+  governance_source_status: ○
 - node_id: 688363.SH:L8.industry.price_war
   dp_id: L8.industry.price_war
   node_name: 行业价格战
@@ -6540,14 +6285,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6556,39 +6301,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 本地行业竞争/媒体源 24h 为空，未触发事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6597,10 +6330,7 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 0.75
-  governance_source_status: missing
-  source_fingerprint_at_fill: 3ee0c05d4b30bb39
-  last_filled_period: 2026Q1
-  last_event_id: null
+  governance_source_status: ○
 - node_id: 688363.SH:L8.industry.substitute
   dp_id: L8.industry.substitute
   node_name: 替代品出现
@@ -6610,14 +6340,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6626,39 +6356,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 本地行业竞争/媒体源 24h 为空，未触发事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6668,9 +6386,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 3ee0c05d4b30bb39
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.op.customer_channel
   dp_id: L8.op.customer_channel
   node_name: 客户流失/渠道失效
@@ -6680,14 +6395,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6696,39 +6411,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 本地问答主要为股东人数，媒体源为空，未见客户流失/渠道失效事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6738,9 +6441,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: a9cb7284f37792ca
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.op.order_miss
   dp_id: L8.op.order_miss
   node_name: 订单不兑现
@@ -6750,14 +6450,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6766,39 +6466,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 业绩预告为预增，问答未显示订单不兑现事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.company.earnings_guidance
-    source: tushare:forecast
-    excerpt: '"type": "预增", "change_pct_min": 54.93, "change_pct_max": 83.63'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 尊敬的投资者，您好，截至2025年11月20日，公司股东人数为30,077户，感谢您的关注。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6808,9 +6496,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 624556707a6147ba
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.op.product_fail
   dp_id: L8.op.product_fail
   node_name: 产品失败
@@ -6820,14 +6505,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6836,35 +6521,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: L9.company.product_order 缺失且媒体源为空，未见产品失败事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6874,9 +6551,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.reg.license_risk
   dp_id: L8.reg.license_risk
   node_name: 牌照/准入风险
@@ -6886,14 +6560,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6902,35 +6576,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 政策变化媒体源为空，未触发监管/补贴/准入事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.policy_change
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6940,9 +6606,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.reg.subsidy_off
   dp_id: L8.reg.subsidy_off
   node_name: 补贴退坡
@@ -6952,14 +6615,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6968,35 +6631,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 政策变化媒体源为空，未触发监管/补贴/准入事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.policy_change
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -7006,9 +6661,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.reg.tax_trade
   dp_id: L8.reg.tax_trade
   node_name: 税收/出口限制 (个股)
@@ -7018,14 +6670,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -7034,35 +6686,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 汇率变动低于阈值，未见税收/贸易限制事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.macro.fx
-    source: local_macro
-    excerpt: '"usdcnh_change_pct": -0.4145, "rmb_appreciation_pct": 0.4145'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -7072,9 +6716,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 44a5d75292f34422
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.reg.tighten
   dp_id: L8.reg.tighten
   node_name: 监管收紧/反垄断 (个股)
@@ -7084,14 +6725,14 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 0.0
+  active_weight: 1.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -7100,35 +6741,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
-  missing_policy: inactive_zero_weight
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 政策变化媒体源为空，未触发监管/补贴/准入事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.policy_change
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -7138,9 +6771,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.shock.black_swan
   dp_id: L8.shock.black_swan
   node_name: 黑天鹅事件
@@ -7152,7 +6782,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7166,29 +6796,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: null
   materiality: 0.85
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 媒体源为空，未触发黑天鹅事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -7204,9 +6826,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.shock.crisis
   dp_id: L8.shock.crisis
   node_name: 安全/舆情危机
@@ -7218,7 +6837,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7232,33 +6851,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 媒体源为空且社交热股不在榜，未触发安全/舆情危机。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.social_buzz
-    source: tushare:ths_hot
-    excerpt: '{"in_xq_top_buzz": false, "as_of": "2026-05-30T08:09:28+02:00"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -7274,9 +6881,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 1695ebaad7d0df81
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L8.shock.supply_break
   dp_id: L8.shock.supply_break
   node_name: 供应中断/客户违约/自然灾害
@@ -7288,7 +6892,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7302,33 +6906,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_event
+  missing_reason: null
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    risk_level: 低
-    events_count: 0
-    notes: 本地行业竞争/媒体源 24h 为空，未触发事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -7344,9 +6936,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 5e24600eb14c8150
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L9.company.ma
   dp_id: L9.company.ma
   node_name: 并购
@@ -7358,7 +6947,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7372,35 +6961,27 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: or_gate
   aggregation_policy: or_max_trigger
   alert_policy: warn_if_material
-  missing_reason: no_active_ma_event
+  missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    event_count: 0
-    ma_signal: none_in_recent_filings
-    notes: 媒体源为空，本地 recent_filings 缺失，未确认并购事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: expectation_gap
   derived_target: expectation_gap
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -7410,9 +6991,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 688363.SH:L9.company.product_order
   dp_id: L9.company.product_order
   node_name: 新产品发布/大订单
@@ -7424,7 +7002,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7438,33 +7016,76 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: or_gate
   aggregation_policy: or_max_trigger
   alert_policy: warn_if_material
-  missing_reason: no_active_product_order_event
+  missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    event_count: 0
-    order_signal: none_in_recent_filings
-    notes: 近期公告标题为权益变动、股东会通知等，未见新产品/大订单公告。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.event.intraday_announcement
-    source: tushare:anns_d
-    excerpt: '"title": "华熙生物关于控股股东及其一致行动人权益变动跨越5%整数倍的提示性公告", "type": null, "ann_date": "20260530"'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
+  derived_slot: true
+  inherit_from_industry: false
+  field_role: score_component
+  score_target: expectation_gap
+  derived_target: expectation_gap
+  participates_in_score: false
+  governance_calculation_type: weighted_contribution
+  governance_aggregation_policy: weighted_sum
+  governance_missing_policy: unknown_reduce_confidence
+  fallback_policy: unknown_zero_score
+  proxy_candidates: []
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 1.0
+  governance_source_status: ○
+- node_id: 688363.SH:L9.company.buyback_dividend
+  dp_id: L9.company.buyback_dividend
+  node_name: 分红回购
+  node_type: Company Catalyst
+  layer: catalyst_company
+  parent_node: 688363.SH:company
+  child_nodes: []
+  direction: positive
+  base_weight: 1.0
+  active_weight: 0.0
+  strength: null
+  confidence: null
+  time_horizon:
+  - short
+  - medium
+  - long
+  status: Inactive
+  priced_in: null
+  exposure: null
+  financial_sensitivity: null
+  valuation_sensitivity: null
+  related_business: []
+  related_metrics: []
+  trigger_condition: null
+  invalidation_condition: null
+  data_source: null
+  update_frequency: quarterly
+  last_updated: null
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: or_gate
+  aggregation_policy: or_max_trigger
+  alert_policy: warn_if_material
+  missing_reason: null
+  materiality: 0.6
+  data_coverage: null
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -7479,10 +7100,62 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 1.0
-  governance_source_status: ○
-  source_fingerprint_at_fill: 78e41f34e6e93617
-  last_filled_period: 2026Q1
-  last_event_id: null
+  governance_source_status: ✓
+- node_id: 688363.SH:L9.company.earnings_guidance
+  dp_id: L9.company.earnings_guidance
+  node_name: 业绩指引
+  node_type: Company Catalyst
+  layer: catalyst_company
+  parent_node: 688363.SH:company
+  child_nodes: []
+  direction: positive
+  base_weight: 1.0
+  active_weight: 0.0
+  strength: null
+  confidence: null
+  time_horizon:
+  - short
+  - medium
+  - long
+  status: Inactive
+  priced_in: null
+  exposure: null
+  financial_sensitivity: null
+  valuation_sensitivity: null
+  related_business: []
+  related_metrics: []
+  trigger_condition: null
+  invalidation_condition: null
+  data_source: null
+  update_frequency: quarterly
+  last_updated: null
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: or_gate
+  aggregation_policy: or_max_trigger
+  alert_policy: warn_if_material
+  missing_reason: null
+  materiality: 0.7
+  data_coverage: null
+  evidence_quality: null
+  value: null
+  evidence_sources: []
+  derived_slot: true
+  inherit_from_industry: false
+  field_role: score_component
+  score_target: expectation_gap
+  derived_target: expectation_gap
+  participates_in_score: true
+  governance_calculation_type: weighted_contribution
+  governance_aggregation_policy: weighted_sum
+  governance_missing_policy: unknown_reduce_confidence
+  fallback_policy: unknown_zero_score
+  proxy_candidates: []
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 1.0
+  governance_source_status: ✓
 - node_id: 688363.SH:L9.media.short_report
   dp_id: L9.media.short_report
   node_name: 做空报告
@@ -7494,7 +7167,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.4
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7508,33 +7181,21 @@ nodes:
   related_metrics: []
   trigger_condition: null
   invalidation_condition: null
-  data_source: llm_derived
+  data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:00:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: no_active_short_report
+  missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    active: false
-    event_count: 0
-    short_report_signal: none
-    notes: 媒体源为空且社交热股不在榜，未见做空报告事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:media_report
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.social_buzz
-    source: tushare:ths_hot
-    excerpt: '{"in_xq_top_buzz": false, "as_of": "2026-05-30T08:09:28+02:00"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -7550,9 +7211,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 1695ebaad7d0df81
-  last_filled_period: 2026Q1
-  last_event_id: null
 llm_derived_slots:
 - dp_id: L0.demand.terminal
   node_name: 终端需求强度
@@ -8314,6 +7972,22 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
+- dp_id: L8.gov.insider_sell
+  node_name: 股东减持
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: risk_factor
+  aggregation_policy: subtract_risk
+  materiality: 0.65
+- dp_id: L8.gov.management_change
+  node_name: 管理层变动
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: risk_factor
+  aggregation_policy: subtract_risk
+  materiality: 0.6
 - dp_id: L8.industry.demand_supply
   node_name: 行业需求/供给恶化
   required_level: conditional_required
@@ -8434,6 +8108,22 @@ llm_derived_slots:
   calculation_type: or_gate
   aggregation_policy: or_max_trigger
   materiality: 0.65
+- dp_id: L9.company.buyback_dividend
+  node_name: 分红回购
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: or_gate
+  aggregation_policy: or_max_trigger
+  materiality: 0.6
+- dp_id: L9.company.earnings_guidance
+  node_name: 业绩指引
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: or_gate
+  aggregation_policy: or_max_trigger
+  materiality: 0.7
 - dp_id: L9.media.short_report
   node_name: 做空报告
   required_level: conditional_required
@@ -8579,11 +8269,11 @@ causal_edges:
   evidence: []
   current_status: inactive
 coverage:
-  data_coverage: 0.013633265167007493
+  data_coverage: 0.01317523056653491
   known_count: 1
   unknown_count: 94
   na_count: 0
-  inactive_count: 12
+  inactive_count: 16
   low_materiality_count: 0
   optionality_count: 5
   required_missing_count: 0
@@ -8689,7 +8379,8 @@ scores:
     positive_paths: []
     negative_paths: []
     net_path_score: null
-    formula: Direction × Event Strength × Transmission Strength × Company Exposure × Business Share × Profit Sensitivity × Confidence × Time Factor × Surprise × Funding Amplifier - Priced-in Discount - Risk Discount
+    formula: Direction × Event Strength × Transmission Strength × Company Exposure × Business Share × Profit Sensitivity ×
+      Confidence × Time Factor × Surprise × Funding Amplifier - Priced-in Discount - Risk Discount
   company_score:
     fundamental_score: null
     funding_score: null
@@ -8799,6 +8490,8 @@ views:
     - 688363.SH:L5.fcst.beat_probability
     - 688363.SH:L8.gov.fraud_control
     - 688363.SH:L8.gov.litigation
+    - 688363.SH:L8.gov.insider_sell
+    - 688363.SH:L8.gov.management_change
     - 688363.SH:L8.industry.demand_supply
     - 688363.SH:L8.industry.price_war
     - 688363.SH:L8.industry.substitute
@@ -8814,8 +8507,10 @@ views:
     - 688363.SH:L8.shock.supply_break
     - 688363.SH:L9.company.ma
     - 688363.SH:L9.company.product_order
+    - 688363.SH:L9.company.buyback_dividend
+    - 688363.SH:L9.company.earnings_guidance
     - 688363.SH:L9.media.short_report
-    edge_ids:
+    edge_ids: &id001
     - CAUSAL.688363.SH.demand_to_position
     - CAUSAL.688363.SH.pricing_power_to_surprise
     - CAUSAL.688363.SH.capacity_to_utilization
@@ -8886,13 +8581,7 @@ views:
     - 688363.SH:L4.cost.cac_production
     - 688363.SH:L4.cost.rent_energy_logistics
     - 688363.SH:L4.eff.store_labor
-    edge_ids:
-    - CAUSAL.688363.SH.demand_to_position
-    - CAUSAL.688363.SH.pricing_power_to_surprise
-    - CAUSAL.688363.SH.capacity_to_utilization
-    - CAUSAL.688363.SH.price_war_to_discount
-    - CAUSAL.688363.SH.discount_to_whisper
-    - CAUSAL.688363.SH.new_entrant_to_stickiness
+    edge_ids: *id001
     default_depth: 3
     top_n: 5
   valuation_expectation:
@@ -8910,13 +8599,7 @@ views:
     - 688363.SH:L2.newbiz.valuation_contrib
     - 688363.SH:L2.segment.opex_ratio
     - 688363.SH:L2.segment.profit_share
-    edge_ids:
-    - CAUSAL.688363.SH.demand_to_position
-    - CAUSAL.688363.SH.pricing_power_to_surprise
-    - CAUSAL.688363.SH.capacity_to_utilization
-    - CAUSAL.688363.SH.price_war_to_discount
-    - CAUSAL.688363.SH.discount_to_whisper
-    - CAUSAL.688363.SH.new_entrant_to_stickiness
+    edge_ids: *id001
     default_depth: 3
     top_n: 5
   risk_offset:

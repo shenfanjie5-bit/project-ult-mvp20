@@ -127,6 +127,8 @@ nodes:
   - 600258.SH:L5.fcst.beat_probability
   - 600258.SH:L8.gov.fraud_control
   - 600258.SH:L8.gov.litigation
+  - 600258.SH:L8.gov.insider_sell
+  - 600258.SH:L8.gov.management_change
   - 600258.SH:L8.industry.demand_supply
   - 600258.SH:L8.industry.price_war
   - 600258.SH:L8.industry.substitute
@@ -142,6 +144,8 @@ nodes:
   - 600258.SH:L8.shock.supply_break
   - 600258.SH:L9.company.ma
   - 600258.SH:L9.company.product_order
+  - 600258.SH:L9.company.buyback_dividend
+  - 600258.SH:L9.company.earnings_guidance
   - 600258.SH:L9.media.short_report
   direction: neutral
   base_weight: 1.0
@@ -987,7 +991,7 @@ nodes:
   missing_reason: null
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     strength: 一般
     components:
@@ -1010,7 +1014,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1060,7 +1064,7 @@ nodes:
   missing_reason: null
   materiality: 0.8
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     retention_rate: null
     switching_cost: 中
@@ -1082,7 +1086,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1134,7 +1138,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: low
@@ -1159,7 +1163,7 @@ nodes:
   field_role: score_component
   score_target: optionality_score
   derived_target: optionality_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: scenario_weighted
   governance_aggregation_policy: scenario_probability_weighted
   governance_missing_policy: optionality_track
@@ -1211,7 +1215,7 @@ nodes:
   missing_reason: null
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: low
@@ -1282,7 +1286,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     phase: 成熟
     competitive_score: 3.2
@@ -1302,7 +1306,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1354,7 +1358,7 @@ nodes:
   missing_reason: null
   materiality: 0.85
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     segments:
     - name: 住宿消费者/会员客户
@@ -1379,7 +1383,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1429,7 +1433,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     direct_pct: null
     distributor_pct: null
@@ -1475,7 +1479,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.25
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1491,38 +1495,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    tier1_pct: null
-    tier2_pct: null
-    tier3_pct: null
-    overseas_pct: null
-    notes: 本地主营与问答未披露城市层级结构。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1532,9 +1523,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: 45e09a3f0bfda144
-  last_filled_period: '2025'
-  last_event_id: null
 - node_id: 600258.SH:L3.delivery.lead_time
   dp_id: L3.delivery.lead_time
   node_name: 交付周期
@@ -1544,7 +1532,7 @@ nodes:
   child_nodes: []
   direction: positive
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.55
   time_horizon:
@@ -1572,7 +1560,7 @@ nodes:
   missing_reason: 酒店住宿服务天然不适用制造交付周期
   materiality: 0.55
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     lead_time_days: null
     on_time_rate: null
@@ -1592,7 +1580,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: bottleneck_min
   governance_aggregation_policy: min_capacity_constraint
   governance_missing_policy: unknown_reduce_confidence
@@ -1616,7 +1604,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.22
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1632,38 +1620,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.45
   data_coverage: null
-  evidence_quality: low
-  value:
-    nps_or_csat: null
-    complaint_rate: null
-    trend: null
-    notes: 本地资料未披露 NPS/CSAT 或投诉率。
-    evidence_summary: 媒体源 24h 无头条但不等于满意度数据。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1673,9 +1648,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: c8a9dace099c9154
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.volume.foot_traffic
   dp_id: L4.volume.foot_traffic
   node_name: 客流/订单流
@@ -1687,7 +1659,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.28
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1703,30 +1675,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: minute
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    yoy_pct: null
-    monthly_trend: []
-    notes: 酒店客流/入住人次适用，但本地仅有收入，未披露客流同比。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -1742,9 +1703,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: e074b024b3b1669d
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.volume.frequency
   dp_id: L4.volume.frequency
   node_name: 复购/使用频次
@@ -1756,7 +1714,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.25
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1772,36 +1730,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: daily
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    frequency_per_user: null
-    yoy_delta_pct: null
-    notes: 会员复购/入住频次适用，但本地未披露。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -1811,9 +1758,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: e074b024b3b1669d
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.price.subscription
   dp_id: L4.price.subscription
   node_name: 订阅/价格模式
@@ -1823,7 +1767,7 @@ nodes:
   child_nodes: []
   direction: positive
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.55
   time_horizon:
@@ -1851,7 +1795,7 @@ nodes:
   missing_reason: 非订阅商业模式
   materiality: 0.5
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     tiers: []
     trend: null
@@ -1894,7 +1838,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.35
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1910,31 +1854,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    avg_discount_pct: null
-    trend: mixed
-    season_high: null
-    notes: 本地问答称会因时因势推出多样化营销活动，但未披露平均折扣率；Q1毛利率为0.382099。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 公司目前暂未设置股东专属住店优惠政策，无论持股数量及持股时长，暂无针对股东的住宿专属折扣、权益礼遇等相关安排。
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -1950,9 +1882,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: 4884e2ae8b8ae0c5
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.eff.capacity_utilization
   dp_id: L4.eff.capacity_utilization
   node_name: 产能利用率/资源利用率
@@ -1964,7 +1893,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.3
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -1980,32 +1909,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: daily
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
-  value:
-    utilization_pct: null
-    trend: null
-    bottleneck: null
-    notes: 酒店可用房/出租率或景区承载利用率未在本地证据中披露；仅有资本开支和PPE。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 125539648.76, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L5.bs.goodwill_ppe
-    source: tushare:balancesheet
-    excerpt: '{"goodwill": 4691866361.51, "fix_assets_ppe": 1831534958.21, "goodwill_to_assets": 0.19055655472800492, "unit":
-      "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -2021,9 +1937,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: bf1efb85d8ed168b
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.eff.conversion_retention
   dp_id: L4.eff.conversion_retention
   node_name: 转化率/留存率
@@ -2035,7 +1948,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.23
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -2051,32 +1964,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: daily
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    conversion_pct: null
-    retention_30d: null
-    repurchase_rate: null
-    trend: null
-    notes: 本地未披露官网/APP转化率、会员留存或复购率。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -2092,9 +1992,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: e074b024b3b1669d
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.share.customer_channel
   dp_id: L4.share.customer_channel
   node_name: 客户/渠道份额
@@ -2106,7 +2003,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.22
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -2122,32 +2019,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    customer_share_top5: null
-    channel_share: null
-    region_share: null
-    trend: null
-    notes: 本地未披露客户份额、渠道份额或区域份额。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -2163,9 +2047,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.6
   governance_source_status: missing
-  source_fingerprint_at_fill: e074b024b3b1669d
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L5.surprise.buy_whisper
   dp_id: L5.surprise.buy_whisper
   node_name: 买方预期差/业绩 whisper
@@ -2203,7 +2084,7 @@ nodes:
   missing_reason: null
   materiality: 0.85
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     whisper_eps: null
     whisper_revenue: null
@@ -2226,7 +2107,7 @@ nodes:
   field_role: score_component
   score_target: expectation_gap
   derived_target: expectation_gap
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2252,7 +2133,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.25
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -2268,31 +2149,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.8
   data_coverage: null
-  evidence_quality: low
-  value:
-    rank: null
-    share_pct: null
-    peers: []
-    trend: null
-    source_year: 2026Q1
-    market_size_unit: null
-    evidence_summary: 本地仅有公司收入，缺少市场规模或同业完整口径。
-    notes: 不据训练记忆填排名或份额。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -2308,9 +2177,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 201626bd4e4741c8
-  last_filled_period: '2025'
-  last_event_id: null
 - node_id: 600258.SH:L1.position.brand
   dp_id: L1.position.brand
   node_name: 品牌力与认知度
@@ -2348,7 +2214,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     tier: 领导
     category: 酒店集团/连锁酒店
@@ -2371,7 +2237,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2421,7 +2287,7 @@ nodes:
   missing_reason: null
   materiality: 0.8
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     moat_score: 1.5
     patent_count_known: null
@@ -2445,7 +2311,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2495,7 +2361,7 @@ nodes:
   missing_reason: null
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     duration: 中期
     vs_peers_gp_pct: null
@@ -2520,7 +2386,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2570,7 +2436,7 @@ nodes:
   missing_reason: null
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     strength: 中
     asp_yoy_pct: null
@@ -2594,7 +2460,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2644,7 +2510,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     segments:
     - name: 酒店运营
@@ -2681,7 +2547,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2731,7 +2597,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     exposures:
     - industry_id: 酒店运营
@@ -2754,7 +2620,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2776,7 +2642,7 @@ nodes:
   child_nodes: []
   direction: positive
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.35
   time_horizon:
@@ -2797,14 +2663,14 @@ nodes:
   last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
-  missing_policy: unknown_reduce_confidence
+  missing_policy: inactive_zero_weight
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     competitive_intensity: 中
     top_peers: []
@@ -2825,7 +2691,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -2875,7 +2741,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     risk_factors:
     - type: 酒店运营占比较高
@@ -2902,7 +2768,7 @@ nodes:
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -2952,7 +2818,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: not_separately_disclosed
@@ -2980,7 +2846,7 @@ nodes:
   field_role: score_component
   score_target: optionality_score
   derived_target: optionality_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: scenario_weighted
   governance_aggregation_policy: scenario_probability_weighted
   governance_missing_policy: optionality_track
@@ -3030,7 +2896,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: not_separately_disclosed
@@ -3058,7 +2924,7 @@ nodes:
   field_role: score_component
   score_target: optionality_score
   derived_target: optionality_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: scenario_weighted
   governance_aggregation_policy: scenario_probability_weighted
   governance_missing_policy: optionality_track
@@ -3108,7 +2974,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     current_contribution:
       level: not_separately_disclosed
@@ -3129,7 +2995,7 @@ nodes:
   field_role: score_component
   score_target: optionality_score
   derived_target: optionality_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: scenario_weighted
   governance_aggregation_policy: scenario_probability_weighted
   governance_missing_policy: optionality_track
@@ -3179,7 +3045,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     top_customers_solvency:
     - name_proxy: 住宿消费者/会员客户
@@ -3204,7 +3070,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -3254,7 +3120,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     overseas_revenue_pct: 0.0
     key_markets:
@@ -3272,7 +3138,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -3322,7 +3188,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     key_region: 中国境内
     risk_type: 政策
@@ -3344,7 +3210,7 @@ nodes:
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -3368,7 +3234,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.28
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3384,34 +3250,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    supplier_concentration: null
-    capacity_utilization_pct: null
-    bottleneck: null
-    evidence_summary: 酒店房量/出租率未披露；仅有资本开支125539648.76元。
-    notes: 服务供给适用但产能利用率缺失。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 125539648.76, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: bottleneck_min
   governance_aggregation_policy: min_capacity_constraint
   governance_missing_policy: unknown_reduce_confidence
@@ -3421,9 +3278,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: f72acf34fac4fb7a
-  last_filled_period: '2025'
-  last_event_id: null
 - node_id: 600258.SH:L0.price.contract_spot
   dp_id: L0.price.contract_spot
   node_name: 长协 vs 现货价差
@@ -3643,7 +3497,7 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 1.0
-  governance_source_status: missing
+  governance_source_status: ○
 - node_id: 600258.SH:L4.price.asp_aov_arpu
   dp_id: L4.price.asp_aov_arpu
   node_name: ASP/AOV/ARPU
@@ -3655,7 +3509,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.25
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3671,30 +3525,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    metric_kind: AOV
-    value: null
-    currency: CNY
-    yoy_pct: null
-    trend: null
-    notes: 酒店客单价/ADR适用，但本地仅披露收入，未披露房晚/订单量分母。
-    evidence_summary: Q1收入1776980372.29元。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3710,9 +3553,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 201626bd4e4741c8
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.price.pricing_power
   dp_id: L4.price.pricing_power
   node_name: 公司定价权 (运营)
@@ -3750,7 +3590,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     strength: 中
     recent_price_adjustment: null
@@ -3771,7 +3611,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -3795,7 +3635,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.2
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3811,33 +3651,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    elasticity: null
-    estimation_method: null
-    notes: 缺少房价/客单价与订单量联动数据，无法估计价格弹性。
-    evidence_summary: 本地未披露ASP/AOV或订单量。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -3847,9 +3679,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: null
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.cost.cac_production
   dp_id: L4.cost.cac_production
   node_name: 获客/单位生产成本
@@ -3887,7 +3716,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     cac_or_unit_cost: null
     trend: flat
@@ -3937,7 +3766,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.25
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -3953,29 +3782,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    rent_yoy_pct: null
-    energy_yoy_pct: null
-    logistics_yoy_pct: null
-    trend: null
-    notes: 酒店租金/能源成本适用，但本地未拆分披露。
-    evidence_summary: 整体毛利率0.382099仅能反映综合成本压力。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -3991,9 +3810,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 4884e2ae8b8ae0c5
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.eff.store_labor
   dp_id: L4.eff.store_labor
   node_name: 门店/人效
@@ -4005,7 +3821,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.24
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -4021,36 +3837,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: daily
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    revenue_per_employee: null
-    revenue_per_store: null
-    yoy_pct: null
-    trend: null
-    notes: 门店数/员工数未在本地依赖中披露，无法计算店效或人效。
-    evidence_summary: SGA/R&D收入比0.21343976646811408可作费用强度背景。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.sga_rd
-    source: tushare:income
-    excerpt: '{"sga_total": 366069449.01, "sell_exp": 140350376.69, "admin_exp": 225719072.32, "rd_exp": 13208826.67, "sga_rd_ratio_revenue":
-      0.21343976646811408, "unit": "元", "period": "20260331"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4060,9 +3865,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: c65431a306fad1d8
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L0.policy.access_license
   dp_id: L0.policy.access_license
   node_name: 准入与牌照
@@ -4679,7 +4481,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.45
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -4695,7 +4497,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -4705,28 +4507,15 @@ nodes:
   missing_reason: null
   materiality: 0.5
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    event_type: null
-    severity: 低
-    notes: 媒体源无24h头条；宏观CPI/PPI为背景数据，未触发公司事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.macro.cpi_employment
-    source: local:macro
-    excerpt: '{"cpi_yoy_pct": 1.2, "cpi_mom_pct": 0.3, "ppi_yoy_pct": 2.8, "latest_month": "202604", "employment_unemployment_pct":
-      null}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: true
   field_role: score_component
   score_target: expectation_gap
   derived_target: expectation_gap
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4736,9 +4525,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: a58e1073473a041e
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L9.macro.geo
   dp_id: L9.macro.geo
   node_name: 地缘事件
@@ -4750,7 +4536,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.48
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -4766,7 +4552,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -4776,28 +4562,15 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    event_type: null
-    severity: 低
-    notes: 媒体源无24h头条，USDCNH变动未超过阈值且方向neutral。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.macro.fx
-    source: local:macro_fx
-    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct": -0.4145, "rmb_appreciation_pct":
-      0.4145, "threshold_pct": 1.0, "window_trading_days": 20, "latest_date": "20260601"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: true
   field_role: score_component
   score_target: expectation_gap
   derived_target: expectation_gap
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4807,9 +4580,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: e7f0c86397dc5821
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L1.role.tag
   dp_id: L1.role.tag
   node_name: 行业角色标签
@@ -4847,7 +4617,7 @@ nodes:
   missing_reason: null
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     tag: 酒店集团龙头
     tags:
@@ -4869,7 +4639,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4919,7 +4689,7 @@ nodes:
   missing_reason: null
   materiality: 0.55
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     tag: B2C+B2B管理输出
     tags:
@@ -4943,7 +4713,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -4993,7 +4763,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     tags:
     - 品牌
@@ -5019,7 +4789,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5069,7 +4839,7 @@ nodes:
   missing_reason: null
   materiality: 0.5
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     tags:
     - 内需消费
@@ -5090,7 +4860,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5140,7 +4910,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     rank: null
     bucket: 偏弱
@@ -5212,7 +4982,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     opex_ratio_pct: 21.34397664681141
     segments: []
@@ -5232,7 +5002,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5282,7 +5052,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     operating_profit: 248311212.28
     net_profit: 192984860.2
@@ -5302,7 +5072,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5352,7 +5122,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     products:
     - name: 酒店运营
@@ -5378,7 +5148,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5428,7 +5198,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     gross_margin_pct: 38.20994855700022
     margin_tier: 中
@@ -5456,7 +5226,7 @@ nodes:
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5480,7 +5250,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.22
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -5496,39 +5266,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
-  value:
-    top5_revenue_pct: null
-    top10_revenue_pct: null
-    concentration_trend: null
-    notes: 本地未披露前五/前十客户收入占比；应收账款可作弱背景。
-    evidence_summary: 应收账款220864802.46元。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.bs.ar_ap
-    source: tushare:balancesheet
-    excerpt: '{"accounts_receivable": 220864802.46, "accounts_payable": 131914232.65, "net_working_capital_change_proxy":
-      88950569.81, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: ratio_metric
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5538,9 +5294,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 1bdafeabb5f08b60
-  last_filled_period: '2025'
-  last_event_id: null
 - node_id: 600258.SH:L3.channel.cost
   dp_id: L3.channel.cost
   node_name: 渠道费用
@@ -5578,7 +5331,7 @@ nodes:
   missing_reason: null
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     channel_cost_pct: 21.34397664681141
     sales_expense: 140350376.69
@@ -5618,7 +5371,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.25
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -5634,30 +5387,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    revenue_per_channel: null
-    trend: null
-    notes: 本地有收入和渠道形态，但未披露各渠道收入或流量，无法计算渠道效率。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -5673,9 +5415,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 201626bd4e4741c8
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L3.region.domestic_overseas
   dp_id: L3.region.domestic_overseas
   node_name: 国内/海外收入结构
@@ -5713,7 +5452,7 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     domestic_revenue_pct: 100.0
     overseas_revenue_pct: 0.0
@@ -5732,7 +5471,7 @@ nodes:
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -5754,7 +5493,7 @@ nodes:
   child_nodes: []
   direction: negative
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.48
   time_horizon:
@@ -5775,14 +5514,14 @@ nodes:
   last_updated: '2026-06-05T12:30:00+08:00'
   required_level: conditional_required
   data_status: Inactive
-  missing_policy: unknown_reduce_confidence
+  missing_policy: inactive_zero_weight
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     fx_exposure: 低
     geo_exposure: 低
@@ -5802,7 +5541,7 @@ nodes:
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -5852,7 +5591,7 @@ nodes:
   missing_reason: null
   materiality: 0.5
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     fulfillment_cost_pct: 21.34397664681141
     trend: flat
@@ -5896,7 +5635,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.2
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -5912,31 +5651,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
-  missing_reason: no_local_evidence
+  missing_reason: pending LLM/company-specific research
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
-  value:
-    share_pct: null
-    rank: null
-    trend: null
-    notes: 市占率需要市场规模或同业完整收入口径，本地未提供。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -5952,9 +5679,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.share.substitution
   dp_id: L4.share.substitution
   node_name: 竞品替代
@@ -5992,7 +5716,7 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
+  evidence_quality: null
   value:
     substitution_risk: 中
     trend: flat
@@ -6036,7 +5760,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.22
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6052,31 +5776,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    sales_volume: null
-    unit: null
-    yoy_pct: null
-    notes: 酒店销量可对应房晚/间夜，但本地未披露。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -6092,9 +5804,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.volume.orders
   dp_id: L4.volume.orders
   node_name: 订单量
@@ -6106,7 +5815,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.22
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6122,30 +5831,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    orders: null
-    yoy_pct: null
-    notes: 订单量适用但本地未披露。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -6161,9 +5859,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L4.volume.shipments
   dp_id: L4.volume.shipments
   node_name: 出货量/交付量
@@ -6173,7 +5868,7 @@ nodes:
   child_nodes: []
   direction: positive
   base_weight: 1.0
-  active_weight: 1.0
+  active_weight: 0.0
   strength: null
   confidence: 0.55
   time_horizon:
@@ -6201,7 +5896,7 @@ nodes:
   missing_reason: 酒店服务天然不适用出货量/交付量口径
   materiality: 0.65
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     shipments: null
     unit: null
@@ -6241,7 +5936,7 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.22
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6257,36 +5952,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
-  missing_reason: 公司未披露此项
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    users: null
-    yoy_pct: null
-    notes: 会员数/入住用户数适用但本地未披露。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: fundamental_score
   derived_target: fundamental_score
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -6296,9 +5980,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
 - node_id: 600258.SH:L5.fcst.beat_probability
   dp_id: L5.fcst.beat_probability
   node_name: 业绩兑现概率
@@ -6336,7 +6017,7 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: medium
+  evidence_quality: null
   value:
     probability: 0.5
     drivers:
@@ -6389,7 +6070,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6405,7 +6086,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -6415,27 +6096,15 @@ nodes:
   missing_reason: null
   materiality: 0.85
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 仅见1名副总经理离职，媒体源无24h头条，未见本地内控/财务造假事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L8.gov.management_change
-    source: tushare:stk_managers
-    excerpt: '{"events": [{"type": "高管离职", "person": "张淑娟", "title": "副总经理", "ann_date": "20251201", "begin_date": "20221027",
-      "end_date": "20251130"}], "count_window": 1, "lookback_days": 180, "latest_ann_date": "20251201"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6445,9 +6114,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 5ffcd652addbfbb9
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.gov.litigation
   dp_id: L8.gov.litigation
   node_name: 法律诉讼
@@ -6459,7 +6125,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -6475,7 +6141,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -6485,21 +6151,64 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 本地诉讼/治理依赖仅含高管离职事件，媒体源无24h头条，未见诉讼触发。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L8.gov.management_change
-    source: tushare:stk_managers
-    excerpt: '{"events": [{"type": "高管离职", "person": "张淑娟", "title": "副总经理", "ann_date": "20251201", "begin_date": "20221027",
-      "end_date": "20251130"}], "count_window": 1, "lookback_days": 180, "latest_ann_date": "20251201"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
+  derived_slot: true
+  inherit_from_industry: false
+  field_role: discount
+  score_target: risk_discount
+  derived_target: risk_discount
+  participates_in_score: false
+  governance_calculation_type: risk_factor
+  governance_aggregation_policy: subtract_risk
+  governance_missing_policy: unknown_reduce_confidence
+  fallback_policy: unknown_zero_score
+  proxy_candidates: []
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 0.75
+  governance_source_status: ○
+- node_id: 600258.SH:L8.gov.insider_sell
+  dp_id: L8.gov.insider_sell
+  node_name: 股东减持
+  node_type: Risk Offset
+  layer: risk_governance
+  parent_node: 600258.SH:company
+  child_nodes: []
+  direction: negative
+  base_weight: 1.0
+  active_weight: 0.0
+  strength: null
+  confidence: null
+  time_horizon:
+  - short
+  - medium
+  - long
+  status: Inactive
+  priced_in: null
+  exposure: null
+  financial_sensitivity: null
+  valuation_sensitivity: null
+  related_business: []
+  related_metrics: []
+  trigger_condition: null
+  invalidation_condition: null
+  data_source: null
+  update_frequency: quarterly
+  last_updated: null
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: risk_factor
+  aggregation_policy: subtract_risk
+  alert_policy: warn_if_material
+  missing_reason: null
+  materiality: 0.65
+  data_coverage: null
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6514,10 +6223,62 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 0.75
-  governance_source_status: ○
-  source_fingerprint_at_fill: 145751f0725812a1
-  last_filled_period: null
-  last_event_id: null
+  governance_source_status: ✓
+- node_id: 600258.SH:L8.gov.management_change
+  dp_id: L8.gov.management_change
+  node_name: 管理层变动
+  node_type: Risk Offset
+  layer: risk_governance
+  parent_node: 600258.SH:company
+  child_nodes: []
+  direction: negative
+  base_weight: 1.0
+  active_weight: 0.0
+  strength: null
+  confidence: null
+  time_horizon:
+  - short
+  - medium
+  - long
+  status: Inactive
+  priced_in: null
+  exposure: null
+  financial_sensitivity: null
+  valuation_sensitivity: null
+  related_business: []
+  related_metrics: []
+  trigger_condition: null
+  invalidation_condition: null
+  data_source: null
+  update_frequency: quarterly
+  last_updated: null
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: risk_factor
+  aggregation_policy: subtract_risk
+  alert_policy: warn_if_material
+  missing_reason: null
+  materiality: 0.6
+  data_coverage: null
+  evidence_quality: null
+  value: null
+  evidence_sources: []
+  derived_slot: true
+  inherit_from_industry: false
+  field_role: discount
+  score_target: risk_discount
+  derived_target: risk_discount
+  participates_in_score: true
+  governance_calculation_type: risk_factor
+  governance_aggregation_policy: subtract_risk
+  governance_missing_policy: unknown_reduce_confidence
+  fallback_policy: unknown_zero_score
+  proxy_candidates: []
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 0.75
+  governance_source_status: ✓
 - node_id: 600258.SH:L8.industry.demand_supply
   dp_id: L8.industry.demand_supply
   node_name: 行业需求/供给恶化
@@ -6529,12 +6290,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.42
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6545,33 +6306,19 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 中
-    notes: 行业overlay显示终端需求下行，但24h竞争/媒体源为空；作为行业压力而非事件触发。
-  evidence_sources:
-  - kind: local_overlay
-    path: config/industry_overlays/DOMESTIC_CONSUMPTION.yaml
-    dp_id: L0.demand.terminal
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6586,10 +6333,7 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 0.75
-  governance_source_status: missing
-  source_fingerprint_at_fill: 5e24600eb14c8150
-  last_filled_period: null
-  last_event_id: null
+  governance_source_status: ○
 - node_id: 600258.SH:L8.industry.price_war
   dp_id: L8.industry.price_war
   node_name: 行业价格战
@@ -6601,12 +6345,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6617,32 +6361,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 本地价格战源缺失，竞争风险媒体源为空。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6651,10 +6388,7 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 0.75
-  governance_source_status: missing
-  source_fingerprint_at_fill: 3ee0c05d4b30bb39
-  last_filled_period: null
-  last_event_id: null
+  governance_source_status: ○
 - node_id: 600258.SH:L8.industry.substitute
   dp_id: L8.industry.substitute
   node_name: 替代品出现
@@ -6666,12 +6400,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6682,32 +6416,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 本地替代技术源缺失，竞争风险媒体源为空。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6717,9 +6444,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 3ee0c05d4b30bb39
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.op.customer_channel
   dp_id: L8.op.customer_channel
   node_name: 客户流失/渠道失效
@@ -6731,12 +6455,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6747,36 +6471,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 问答显示公司有官网、APP、小程序及多社媒官方渠道，媒体源无渠道失效事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6786,9 +6499,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 9ea4d45bbbfc9158
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.op.order_miss
   dp_id: L8.op.order_miss
   node_name: 订单不兑现
@@ -6800,12 +6510,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6816,37 +6526,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 本地业绩预告为扭亏，问答未见订单不兑现事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.company.earnings_guidance
-    source: tushare:forecast
-    excerpt: '{"type": "扭亏", "change_pct_min": 232.0, "change_pct_max": 243.0, "net_profit_min": 77000.0, "net_profit_max":
-      83000.0, "last_parent_net": -58217.0'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6856,9 +6554,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: da3647ac33214060
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.op.product_fail
   dp_id: L8.op.product_fail
   node_name: 产品失败
@@ -6870,12 +6565,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6886,32 +6581,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: L9.company.product_order 缺失且媒体源无头条，未见产品失败事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6921,9 +6609,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.reg.license_risk
   dp_id: L8.reg.license_risk
   node_name: 牌照/准入风险
@@ -6935,12 +6620,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -6951,32 +6636,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 行业政策变化媒体源为空，准入牌照本地源缺失。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -6986,9 +6664,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.reg.subsidy_off
   dp_id: L8.reg.subsidy_off
   node_name: 补贴退坡
@@ -7000,12 +6675,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -7016,32 +6691,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.55
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 行业政策变化媒体源为空，补贴源缺失。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -7051,9 +6719,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.reg.tax_trade
   dp_id: L8.reg.tax_trade
   node_name: 税收/出口限制 (个股)
@@ -7065,12 +6730,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -7081,33 +6746,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 海外/汇率暴露低，USDCNH方向neutral。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.macro.fx
-    source: local:macro_fx
-    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct": -0.4145, "rmb_appreciation_pct":
-      0.4145, "threshold_pct": 1.0, "window_trading_days": 20, "latest_date": "20260601"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -7117,9 +6774,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 44a5d75292f34422
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.reg.tighten
   dp_id: L8.reg.tighten
   node_name: 监管收紧/反垄断 (个股)
@@ -7131,12 +6785,12 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
   - long
-  status: Inactive
+  status: Unknown
   priced_in: null
   exposure: null
   financial_sensitivity: null
@@ -7147,32 +6801,25 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
-  missing_reason: null
+  missing_reason: pending LLM/company-specific research
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 行业政策变化媒体源为空，未见监管收紧事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
   score_target: risk_discount
   derived_target: risk_discount
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: risk_factor
   governance_aggregation_policy: subtract_risk
   governance_missing_policy: unknown_reduce_confidence
@@ -7182,9 +6829,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.shock.black_swan
   dp_id: L8.shock.black_swan
   node_name: 黑天鹅事件
@@ -7196,7 +6840,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7212,7 +6856,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -7222,16 +6866,9 @@ nodes:
   missing_reason: null
   materiality: 0.85
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 媒体源无24h头条，地缘事件未触发。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -7247,9 +6884,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.shock.crisis
   dp_id: L8.shock.crisis
   node_name: 安全/舆情危机
@@ -7261,7 +6895,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7277,7 +6911,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -7287,20 +6921,9 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 媒体源无24h头条，社媒热榜为false。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.social_buzz
-    source: tushare:ths_hot.热股
-    excerpt: '{"in_xq_top_buzz": false, "as_of": "2026-05-30T08:09:28+02:00"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -7316,9 +6939,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 1695ebaad7d0df81
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L8.shock.supply_break
   dp_id: L8.shock.supply_break
   node_name: 供应中断/客户违约/自然灾害
@@ -7330,7 +6950,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7346,7 +6966,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -7356,20 +6976,9 @@ nodes:
   missing_reason: null
   materiality: 0.75
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 媒体和竞争风险源均无24h头条。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -7385,9 +6994,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 0.75
   governance_source_status: ○
-  source_fingerprint_at_fill: 5e24600eb14c8150
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L9.company.ma
   dp_id: L9.company.ma
   node_name: 并购
@@ -7399,7 +7005,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7415,7 +7021,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -7425,22 +7031,15 @@ nodes:
   missing_reason: null
   materiality: 0.6
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 近期公告源缺失，媒体源无24h头条，未见并购事件。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
   score_target: expectation_gap
   derived_target: expectation_gap
-  participates_in_score: true
+  participates_in_score: false
   governance_calculation_type: weighted_contribution
   governance_aggregation_policy: weighted_sum
   governance_missing_policy: unknown_reduce_confidence
@@ -7450,9 +7049,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: null
-  last_event_id: null
 - node_id: 600258.SH:L9.company.product_order
   dp_id: L9.company.product_order
   node_name: 新产品发布/大订单
@@ -7464,7 +7060,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7480,7 +7076,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -7490,21 +7086,64 @@ nodes:
   missing_reason: null
   materiality: 0.65
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 近期公告主要为股东会文件、ESG报告和董事会决议；媒体源无新产品/大订单头条。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.event.intraday_announcement
-    source: tushare:anns_d
-    excerpt: '{"count_recent": 8, "top_announcements": [{"title": "北京首旅酒店（集团）股份有限公司2026年第二次临时股东会会议文件", "type": null, "ann_date":
-      "20260530"'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
+  derived_slot: true
+  inherit_from_industry: false
+  field_role: score_component
+  score_target: expectation_gap
+  derived_target: expectation_gap
+  participates_in_score: false
+  governance_calculation_type: weighted_contribution
+  governance_aggregation_policy: weighted_sum
+  governance_missing_policy: unknown_reduce_confidence
+  fallback_policy: unknown_zero_score
+  proxy_candidates: []
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 1.0
+  governance_source_status: ○
+- node_id: 600258.SH:L9.company.buyback_dividend
+  dp_id: L9.company.buyback_dividend
+  node_name: 分红回购
+  node_type: Company Catalyst
+  layer: catalyst_company
+  parent_node: 600258.SH:company
+  child_nodes: []
+  direction: positive
+  base_weight: 1.0
+  active_weight: 0.0
+  strength: null
+  confidence: null
+  time_horizon:
+  - short
+  - medium
+  - long
+  status: Inactive
+  priced_in: null
+  exposure: null
+  financial_sensitivity: null
+  valuation_sensitivity: null
+  related_business: []
+  related_metrics: []
+  trigger_condition: null
+  invalidation_condition: null
+  data_source: null
+  update_frequency: quarterly
+  last_updated: null
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: or_gate
+  aggregation_policy: or_max_trigger
+  alert_policy: warn_if_material
+  missing_reason: null
+  materiality: 0.6
+  data_coverage: null
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -7519,10 +7158,62 @@ nodes:
   min_required_coverage: 0.5
   neutral_value: 0.0
   confidence_penalty: 1.0
-  governance_source_status: ○
-  source_fingerprint_at_fill: 8219f7d92b9c2548
-  last_filled_period: null
-  last_event_id: null
+  governance_source_status: ✓
+- node_id: 600258.SH:L9.company.earnings_guidance
+  dp_id: L9.company.earnings_guidance
+  node_name: 业绩指引
+  node_type: Company Catalyst
+  layer: catalyst_company
+  parent_node: 600258.SH:company
+  child_nodes: []
+  direction: positive
+  base_weight: 1.0
+  active_weight: 0.0
+  strength: null
+  confidence: null
+  time_horizon:
+  - short
+  - medium
+  - long
+  status: Inactive
+  priced_in: null
+  exposure: null
+  financial_sensitivity: null
+  valuation_sensitivity: null
+  related_business: []
+  related_metrics: []
+  trigger_condition: null
+  invalidation_condition: null
+  data_source: null
+  update_frequency: quarterly
+  last_updated: null
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: or_gate
+  aggregation_policy: or_max_trigger
+  alert_policy: warn_if_material
+  missing_reason: null
+  materiality: 0.7
+  data_coverage: null
+  evidence_quality: null
+  value: null
+  evidence_sources: []
+  derived_slot: true
+  inherit_from_industry: false
+  field_role: score_component
+  score_target: expectation_gap
+  derived_target: expectation_gap
+  participates_in_score: true
+  governance_calculation_type: weighted_contribution
+  governance_aggregation_policy: weighted_sum
+  governance_missing_policy: unknown_reduce_confidence
+  fallback_policy: unknown_zero_score
+  proxy_candidates: []
+  min_required_coverage: 0.5
+  neutral_value: 0.0
+  confidence_penalty: 1.0
+  governance_source_status: ✓
 - node_id: 600258.SH:L9.media.short_report
   dp_id: L9.media.short_report
   node_name: 做空报告
@@ -7534,7 +7225,7 @@ nodes:
   base_weight: 1.0
   active_weight: 0.0
   strength: null
-  confidence: 0.5
+  confidence: null
   time_horizon:
   - short
   - medium
@@ -7550,7 +7241,7 @@ nodes:
   invalidation_condition: null
   data_source: null
   update_frequency: quarterly
-  last_updated: '2026-06-05T12:30:00+08:00'
+  last_updated: null
   required_level: conditional_required
   data_status: Inactive
   missing_policy: inactive_zero_weight
@@ -7560,20 +7251,9 @@ nodes:
   missing_reason: null
   materiality: 0.7
   data_coverage: null
-  evidence_quality: low
-  value:
-    event_signal: false
-    severity: 低
-    notes: 媒体源无24h头条，社媒热榜为false，未见做空报告。
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.social_buzz
-    source: tushare:ths_hot.热股
-    excerpt: '{"in_xq_top_buzz": false, "as_of": "2026-05-30T08:09:28+02:00"}'
+  evidence_quality: null
+  value: null
+  evidence_sources: []
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -7589,9 +7269,6 @@ nodes:
   neutral_value: 0.0
   confidence_penalty: 1.0
   governance_source_status: ○
-  source_fingerprint_at_fill: 1695ebaad7d0df81
-  last_filled_period: null
-  last_event_id: null
 llm_derived_slots:
 - dp_id: L0.demand.terminal
   node_name: 终端需求强度
@@ -7708,68 +7385,19 @@ llm_derived_slots:
 - dp_id: L1.position.channel_edge
   node_name: 渠道/供应链位置优势
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.75
-  status: Known
-  value:
-    strength: 一般
-    components:
-    - 直营酒店运营与酒店管理双线经营
-    - 官网、APP、小程序及多社媒官方渠道触达会员
-    - 景区业务形成小比例场景补充
-    peers_comparison: {}
-    evidence_summary: 本地证据能确认酒店投资运营管理与多官方直连渠道，但缺少渠道占比和同业份额。
-  confidence: 0.52
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: null
-  source_fingerprint_at_fill: null
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.position.stickiness
   node_name: 客户粘性与绑定深度
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.8
-  status: Known
-  value:
-    retention_rate: null
-    switching_cost: 中
-    churn_signals:
-    - 未披露会员留存率或复购率
-    - 本地问答确认如LIFE俱乐部/首享会会员权益渠道
-    evidence_summary: 会员体系存在但未披露留存率，粘性只能低置信定性。
-  confidence: 0.48
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  missing_reason: null
-  source_fingerprint_at_fill: null
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.newbiz.tam
   node_name: 新业务潜在空间
   required_level: optional
@@ -7778,33 +7406,6 @@ llm_derived_slots:
   calculation_type: scenario_weighted
   aggregation_policy: scenario_probability_weighted
   materiality: 0.65
-  status: Optionality
-  value:
-    current_contribution:
-      level: low
-      factors:
-      - 本地主营仍为酒店投资运营管理和景区经营，未见独立新业务收入披露
-    future_option_value:
-      level: unquantified
-      factors:
-      - 可围绕会员体系、线上渠道和轻管理输出延展，但无本地 TAM 数字
-      catalyst_required: 公司披露新业务单独收入或市场规模
-  confidence: 0.38
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: c8a9dace099c9154
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.newbiz.uncertainty
   node_name: 新业务不确定性
   required_level: optional
@@ -7813,125 +7414,30 @@ llm_derived_slots:
   calculation_type: scenario_weighted
   aggregation_policy: scenario_probability_weighted
   materiality: 0.55
-  status: Optionality
-  value:
-    current_contribution:
-      level: low
-      factors:
-      - 缺少本地产品/订单类新业务证据
-    future_option_value:
-      level: high_uncertainty
-      factors:
-      - L9.company.product_order 在 SQLite 缺失，无法验证新业务进展
-      catalyst_required: 新产品/大订单/新业务分部公告
-  confidence: 0.3
-  evidence_quality: low
-  evidence_sources:
-  - kind: industry_inference
-    framework: No local product-order source is available for company new-business optionality; keep future option unquantified.
-    confidence: 0.3
-  missing_reason: null
-  source_fingerprint_at_fill: null
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.product.lifecycle
   node_name: 产品生命周期阶段
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: saturation
   aggregation_policy: saturation_curve
   materiality: 0.65
-  status: Known
-  value:
-    phase: 成熟
-    competitive_score: 3.2
-    notes: 经济连锁及中高端酒店运营管理属于成熟服务业，景区为小比例补充。
-    evidence_summary: 主营业务直接指向酒店投资运营管理和景区经营。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: c8a9dace099c9154
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.customer.segment_mix
   node_name: 客户结构与集中度
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: add_uncertainty_penalty
   materiality: 0.85
-  status: Known
-  value:
-    segments:
-    - name: 住宿消费者/会员客户
-      revenue_pct: null
-    - name: 酒店业主/管理输出客户
-      revenue_pct: null
-    - name: 景区游客
-      revenue_pct: null
-    concentration_top5_pct: null
-    notes: 本地披露未提供客户类型收入占比或前五客户集中度。
-  confidence: 0.45
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: null
-  source_fingerprint_at_fill: 45e09a3f0bfda144
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.channel.mix
   node_name: 渠道结构
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.65
-  status: Known
-  value:
-    direct_pct: null
-    distributor_pct: null
-    ecommerce_pct: null
-    others_pct: null
-    notes: 本地问答披露官网、APP、小程序及多社媒官方账号触达；未披露直营/分销/电商占比，故比例留空。
-    trend: flat
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  missing_reason: null
-  source_fingerprint_at_fill: 45e09a3f0bfda144
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.region.tier_mix
   node_name: 区域/市场层级结构
   required_level: conditional_required
@@ -7940,59 +7446,14 @@ llm_derived_slots:
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.6
-  status: Unknown
-  value:
-    tier1_pct: null
-    tier2_pct: null
-    tier3_pct: null
-    overseas_pct: null
-    notes: 本地主营与问答未披露城市层级结构。
-  confidence: 0.25
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 45e09a3f0bfda144
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.delivery.lead_time
   node_name: 交付周期
   required_level: conditional_required
-  data_status: N/A
-  missing_policy: not_applicable_remove
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   materiality: 0.55
-  status: N/A
-  value:
-    lead_time_days: null
-    on_time_rate: null
-    trend: null
-    notes: 酒店住宿与景区服务不是制造交付周期模型，lead time/on-time rate 不适用。
-  confidence: 0.55
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 125539648.76, "unit": "元", "period": "20260331"}'
-  missing_reason: 酒店住宿服务天然不适用制造交付周期
-  source_fingerprint_at_fill: d6959c690d718803
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.delivery.csat
   node_name: 交付质量/满意度
   required_level: conditional_required
@@ -8001,29 +7462,6 @@ llm_derived_slots:
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.45
-  status: Unknown
-  value:
-    nps_or_csat: null
-    complaint_rate: null
-    trend: null
-    notes: 本地资料未披露 NPS/CSAT 或投诉率。
-    evidence_summary: 媒体源 24h 无头条但不等于满意度数据。
-  confidence: 0.22
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: c8a9dace099c9154
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.volume.foot_traffic
   node_name: 客流/订单流
   required_level: conditional_required
@@ -8032,27 +7470,6 @@ llm_derived_slots:
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.65
-  status: Unknown
-  value:
-    yoy_pct: null
-    monthly_trend: []
-    notes: 酒店客流/入住人次适用，但本地仅有收入，未披露客流同比。
-  confidence: 0.28
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: e074b024b3b1669d
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.volume.frequency
   node_name: 复购/使用频次
   required_level: conditional_required
@@ -8061,56 +7478,14 @@ llm_derived_slots:
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.55
-  status: Unknown
-  value:
-    frequency_per_user: null
-    yoy_delta_pct: null
-    notes: 会员复购/入住频次适用，但本地未披露。
-  confidence: 0.25
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: e074b024b3b1669d
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.price.subscription
   node_name: 订阅/价格模式
   required_level: conditional_required
-  data_status: N/A
-  missing_policy: not_applicable_remove
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   materiality: 0.5
-  status: N/A
-  value:
-    tiers: []
-    trend: null
-    notes: 公司以住宿、酒店管理和景区经营为主，并非订阅制收入模型；会员权益不是订阅价格。
-  confidence: 0.55
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 公司目前暂未设置股东专属住店优惠政策，无论持股数量及持股时长，暂无针对股东的住宿专属折扣、权益礼遇等相关安排。
-  missing_reason: 非订阅商业模式
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.price.discount
   node_name: 公司折扣率
   required_level: conditional_required
@@ -8119,28 +7494,6 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.65
-  status: Unknown
-  value:
-    avg_discount_pct: null
-    trend: mixed
-    season_high: null
-    notes: 本地问答称会因时因势推出多样化营销活动，但未披露平均折扣率；Q1毛利率为0.382099。
-  confidence: 0.35
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 公司目前暂未设置股东专属住店优惠政策，无论持股数量及持股时长，暂无针对股东的住宿专属折扣、权益礼遇等相关安排。
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 4884e2ae8b8ae0c5
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.eff.capacity_utilization
   node_name: 产能利用率/资源利用率
   required_level: conditional_required
@@ -8149,29 +7502,6 @@ llm_derived_slots:
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   materiality: 0.75
-  status: Unknown
-  value:
-    utilization_pct: null
-    trend: null
-    bottleneck: null
-    notes: 酒店可用房/出租率或景区承载利用率未在本地证据中披露；仅有资本开支和PPE。
-  confidence: 0.3
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 125539648.76, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L5.bs.goodwill_ppe
-    source: tushare:balancesheet
-    excerpt: '{"goodwill": 4691866361.51, "fix_assets_ppe": 1831534958.21, "goodwill_to_assets": 0.19055655472800492, "unit":
-      "元", "period": "20260331"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: bf1efb85d8ed168b
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.eff.conversion_retention
   node_name: 转化率/留存率
   required_level: conditional_required
@@ -8180,29 +7510,6 @@ llm_derived_slots:
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.7
-  status: Unknown
-  value:
-    conversion_pct: null
-    retention_30d: null
-    repurchase_rate: null
-    trend: null
-    notes: 本地未披露官网/APP转化率、会员留存或复购率。
-  confidence: 0.23
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: e074b024b3b1669d
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.share.customer_channel
   node_name: 客户/渠道份额
   required_level: conditional_required
@@ -8211,62 +7518,14 @@ llm_derived_slots:
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   materiality: 0.7
-  status: Unknown
-  value:
-    customer_share_top5: null
-    channel_share: null
-    region_share: null
-    trend: null
-    notes: 本地未披露客户份额、渠道份额或区域份额。
-  confidence: 0.22
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: e074b024b3b1669d
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L5.surprise.buy_whisper
   node_name: 买方预期差/业绩 whisper
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.85
-  status: Known
-  value:
-    whisper_eps: null
-    whisper_revenue: null
-    vs_consensus_pct: -0.36306319070558435
-    source_count: 0
-    notes: 无7日分析师动作；30日一致EPS修正为-0.3631%，未见买方whisper数。
-    evidence_summary: 以一致预期修正作为弱代理，source_count按买方whisper缺失置0。
-  confidence: 0.42
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.fcst.revisions
-    source: tushare:report_rc.derived
-    excerpt: '{"consensus_eps_revision_30d_pct": -0.36306319070558435, "direction": "flat", "recent_eps_avg": 0.8371875, "older_eps_avg":
-      0.8402380952380952, "recent_sample": 16, "older_sample": 21, "period": "2026Q4", "as_of": "20260529"}'
-  - kind: local_dp_id
-    dp_id: L9.media.analyst_action
-    source: tushare:report_rc
-    excerpt: '{"recent_changes": [], "count_7d": 0, "action_type": "none", "lookback_days": 7}'
-  missing_reason: null
-  source_fingerprint_at_fill: 8d1cbf392fc4630b
-  last_filled_period: 2026Q4
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.position.market_share
   node_name: 市场份额与排名
   required_level: conditional_required
@@ -8275,312 +7534,70 @@ llm_derived_slots:
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.8
-  status: Unknown
-  value:
-    rank: null
-    share_pct: null
-    peers: []
-    trend: null
-    source_year: 2026Q1
-    market_size_unit: null
-    evidence_summary: 本地仅有公司收入，缺少市场规模或同业完整口径。
-    notes: 不据训练记忆填排名或份额。
-  confidence: 0.25
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  missing_reason: no_local_evidence
-  source_fingerprint_at_fill: 201626bd4e4741c8
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.position.brand
   node_name: 品牌力与认知度
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.65
-  status: Known
-  value:
-    tier: 领导
-    category: 酒店集团/连锁酒店
-    qualitative_signals:
-    - 公司自述领先且具有市场规模较为突出优势
-    - 首旅如家官方APP/小程序和多平台官方账号触达会员
-    evidence_summary: 本地公司介绍与投关问答支持品牌和渠道认知，但未量化市占率。
-    notes: 品牌 tier 为本地文本定性，不含外部排名。
-  confidence: 0.55
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 公司是一家领先的、具有市场规模较为突出优势的酒店集团公司，专注于经济连锁型及中高端酒店的投资与运营管理，并兼有景区经营业务。
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: null
-  source_fingerprint_at_fill: 201626bd4e4741c8
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.position.tech_barrier
   node_name: 技术壁垒/专利
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.8
-  status: Known
-  value:
-    moat_score: 1.5
-    patent_count_known: null
-    key_tech:
-    - 酒店运营管理体系
-    - 会员与线上渠道运营
-    rd_intensity_pct: null
-    evidence_summary: 资本开支为125539648.76元，但主营为服务运营，技术/专利壁垒不是核心。
-    notes: 未披露专利数量或研发强度，低技术壁垒。
-  confidence: 0.45
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 125539648.76, "unit": "元", "period": "20260331"}'
-  missing_reason: null
-  source_fingerprint_at_fill: f72acf34fac4fb7a
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.position.cost_edge
   node_name: 成本优势
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.75
-  status: Known
-  value:
-    duration: 中期
-    vs_peers_gp_pct: null
-    drivers:
-    - 酒店管理分部毛利率较高
-    - Q1整体毛利率0.382099
-    - 规模化运营可能摊薄管理成本
-    evidence_summary: 分部毛利和整体毛利支持一定成本结构优势，但缺同业毛利差。
-    notes: 不填同业差额。
-  confidence: 0.48
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L2.segment.gross_margin
-    source: tushare:fina_mainbz
-    excerpt: 'segments=[{''item'': ''酒店管理'', ''gross_margin_pct'': 76.8626, ''period'': ''20251231''}, {''item'': ''景区'',
-      ''gross_margin_pct'': 64.934'
-  missing_reason: null
-  source_fingerprint_at_fill: 4884e2ae8b8ae0c5
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.position.pricing_power
   node_name: 公司定价权
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.75
-  status: Known
-  value:
-    strength: 中
-    asp_yoy_pct: null
-    switching_cost: 中
-    evidence:
-    - 公司有会员体系和官方渠道触达
-    - Q1整体毛利率0.382099
-    evidence_summary: 本地未披露房价/ADR调整，仅能从毛利率和会员渠道做低置信定性。
-    notes: 无ADR或ASP本地数据。
-  confidence: 0.45
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: null
-  source_fingerprint_at_fill: 4884e2ae8b8ae0c5
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.segment.cash_contrib
   node_name: 主营现金贡献结构
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.7
-  status: Known
-  value:
-    segments:
-    - name: 酒店运营
-      revenue_pct: 61.5867
-      gross_margin_pct: null
-      cash_contrib_pct: null
-    - name: 酒店管理
-      revenue_pct: 31.6723
-      gross_margin_pct: 76.8626
-      cash_contrib_pct: null
-    - name: 景区
-      revenue_pct: 6.7411
-      gross_margin_pct: 64.934
-      cash_contrib_pct: null
-    notes: 现金流未按分部披露；OCF为656346278.49元，分部现金贡献无法量化。
-    evidence_summary: 采用2025分部收入占比，现金贡献留空。
-  confidence: 0.58
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L2.segment.revenue_share
-    source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "酒店运营", "revenue_pct": 61.5867, "period": "20251231"}, {"item": "酒店管理", "revenue_pct":
-      31.6723, "period": "20251231"}, {"item": "景区", "revenue_pct": 6.7411, "period": "20251231"}], "period": "20251231"}'
-  - kind: local_dp_id
-    dp_id: L5.cf.ocf
-    source: tushare:cashflow
-    excerpt: '{"scalar": 656346278.49, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L2.segment.gross_margin
-    source: tushare:fina_mainbz
-    excerpt: 'segments=[{''item'': ''酒店管理'', ''gross_margin_pct'': 76.8626, ''period'': ''20251231''}, {''item'': ''景区'',
-      ''gross_margin_pct'': 64.934'
-  missing_reason: null
-  source_fingerprint_at_fill: 0da84fc8df91d0b4
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.segment.industry_exposure
   node_name: 细分行业敞口
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.7
-  status: Known
-  value:
-    exposures:
-    - industry_id: 酒店运营
-      weight_pct: 61.5867
-    - industry_id: 酒店管理
-      weight_pct: 31.6723
-    - industry_id: 景区
-      weight_pct: 6.7411
-    cyclical_sensitivity: 中
-    notes: 酒店与景区均对商旅/休闲出行周期敏感。
-    evidence_summary: 2025分部收入显示酒店业务占93.2590%。
-  confidence: 0.62
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L2.segment.revenue_share
-    source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "酒店运营", "revenue_pct": 61.5867, "period": "20251231"}, {"item": "酒店管理", "revenue_pct":
-      31.6723, "period": "20251231"}, {"item": "景区", "revenue_pct": 6.7411, "period": "20251231"}], "period": "20251231"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 2707fc93f7cde666
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.segment.compete_landscape
   node_name: 细分竞争格局
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.7
-  status: Inactive
-  value:
-    competitive_intensity: 中
-    top_peers: []
-    top3_share_pct: null
-    evidence_summary: 24h行业竞争风险源为空，未触发竞争事件。
-    notes: 缺少本地同业份额，竞争强度仅为行业框架低置信判断。
-  confidence: 0.35
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: industry_inference
-    framework: Hotel chains compete on brand, location, membership and price; with no local competitor event, classify as
-      medium baseline.
-    confidence: 0.35
-  missing_reason: null
-  source_fingerprint_at_fill: 3ee0c05d4b30bb39
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.segment.business_risk
   node_name: 业务结构性风险
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Known
-  value:
-    risk_factors:
-    - type: 酒店运营占比较高
-      severity: 中
-      rationale: 酒店运营收入占61.5867%，对入住率和房价敏感
-    - type: 景区小比例波动
-      severity: 低
-      rationale: 景区收入占6.7411%，占比较小
-    net_risk: 中
-    evidence_summary: 业务结构以酒店运营和管理为主，景区占比较小。
-    notes: 无24h竞争风险头条。
-  confidence: 0.56
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L2.segment.revenue_share
-    source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "酒店运营", "revenue_pct": 61.5867, "period": "20251231"}, {"item": "酒店管理", "revenue_pct":
-      31.6723, "period": "20251231"}, {"item": "景区", "revenue_pct": 6.7411, "period": "20251231"}], "period": "20251231"}'
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: a321f254d937a377
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.newbiz.commercialization
   node_name: 新业务商业化进度
   required_level: optional
@@ -8589,36 +7606,6 @@ llm_derived_slots:
   calculation_type: scenario_weighted
   aggregation_policy: scenario_probability_weighted
   materiality: 0.65
-  status: Optionality
-  value:
-    current_contribution:
-      level: not_separately_disclosed
-      revenue_pct: null
-      factors:
-      - 本地分部仅披露酒店运营、酒店管理、景区，未单列新业务
-    future_option_value:
-      level: unquantified
-      factors:
-      - 缺少新业务订单/产品公告或TAM本地证据
-      catalyst_required: 单列新业务收入、订单或战略披露
-  confidence: 0.32
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L2.segment.revenue_share
-    source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "酒店运营", "revenue_pct": 61.5867, "period": "20251231"}, {"item": "酒店管理", "revenue_pct":
-      31.6723, "period": "20251231"}, {"item": "景区", "revenue_pct": 6.7411, "period": "20251231"}], "period": "20251231"}'
-  - kind: local_dp_id
-    dp_id: L5.is.revenue_growth
-    source: tushare:income.derived
-    excerpt: '{"yoy_pct": -0.5146094428665123, "qoq_pct": -0.7663957247157629, "current_period": "20260331", "yoy_compare_period":
-      "20250630"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 2adcc45a082b1db5
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.newbiz.revenue_contrib
   node_name: 新业务当前营收占比
   required_level: optional
@@ -8627,36 +7614,6 @@ llm_derived_slots:
   calculation_type: scenario_weighted
   aggregation_policy: scenario_probability_weighted
   materiality: 0.6
-  status: Optionality
-  value:
-    current_contribution:
-      level: not_separately_disclosed
-      revenue_pct: null
-      factors:
-      - 本地分部仅披露酒店运营、酒店管理、景区，未单列新业务
-    future_option_value:
-      level: unquantified
-      factors:
-      - 缺少新业务订单/产品公告或TAM本地证据
-      catalyst_required: 单列新业务收入、订单或战略披露
-  confidence: 0.32
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L2.segment.revenue_share
-    source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "酒店运营", "revenue_pct": 61.5867, "period": "20251231"}, {"item": "酒店管理", "revenue_pct":
-      31.6723, "period": "20251231"}, {"item": "景区", "revenue_pct": 6.7411, "period": "20251231"}], "period": "20251231"}'
-  - kind: local_dp_id
-    dp_id: L5.is.revenue_growth
-    source: tushare:income.derived
-    excerpt: '{"yoy_pct": -0.5146094428665123, "qoq_pct": -0.7663957247157629, "current_period": "20260331", "yoy_compare_period":
-      "20250630"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 26121babd06a48ab
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.newbiz.valuation_contrib
   node_name: 新业务估值贡献
   required_level: optional
@@ -8665,124 +7622,30 @@ llm_derived_slots:
   calculation_type: scenario_weighted
   aggregation_policy: scenario_probability_weighted
   materiality: 0.7
-  status: Optionality
-  value:
-    current_contribution:
-      level: not_separately_disclosed
-      revenue_pct: null
-      factors:
-      - 本地分部仅披露酒店运营、酒店管理、景区，未单列新业务
-    future_option_value:
-      level: unquantified
-      factors:
-      - 缺少新业务订单/产品公告或TAM本地证据
-      catalyst_required: 单列新业务收入、订单或战略披露
-  confidence: 0.32
-  evidence_quality: low
-  evidence_sources:
-  - kind: industry_inference
-    framework: No local evidence for separate new-business valuation contribution; keep option value unquantified.
-    confidence: 0.3
-  missing_reason: null
-  source_fingerprint_at_fill: null
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.customer.solvency
   node_name: 大客户偿付能力
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: add_uncertainty_penalty
   materiality: 0.7
-  status: Known
-  value:
-    top_customers_solvency:
-    - name_proxy: 住宿消费者/会员客户
-      credit_signal: 中
-    - name_proxy: 酒店管理业主客户
-      credit_signal: 中
-    ar_concentration_risk: 中
-    evidence_summary: 应收账款220864802.46元，应付131914232.65元；无前五客户账龄披露。
-    notes: 客户偿付能力为低置信分类。
-  confidence: 0.42
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.bs.ar_ap
-    source: tushare:balancesheet
-    excerpt: '{"accounts_receivable": 220864802.46, "accounts_payable": 131914232.65, "net_working_capital_change_proxy":
-      88950569.81, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  missing_reason: null
-  source_fingerprint_at_fill: c269914d4cd7a52f
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.channel.overseas
   node_name: 海外渠道铺货与本土化
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.6
-  status: Known
-  value:
-    overseas_revenue_pct: 0.0
-    key_markets:
-    - 中国境内
-    localization_stage: 不适用
-    evidence_summary: 主营和经营范围未显示海外酒店运营收入，本地证据以国内住宿/餐饮/旅游服务为主。
-    notes: 海外收入未披露，按本地业务范围低置信置0。
-  confidence: 0.4
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  missing_reason: null
-  source_fingerprint_at_fill: null
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.region.key_risk
   node_name: 重点区域风险
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.65
-  status: Known
-  value:
-    key_region: 中国境内
-    risk_type: 政策
-    severity: 低
-    exposure_pct: null
-    evidence_summary: 本地无地缘事件源；业务范围主要为国内住宿、餐饮、旅游服务。
-    notes: 重点风险更偏国内消费/监管，非汇率地缘。
-  confidence: 0.38
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: null
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.delivery.capacity_supply
   node_name: 交付产能/供应链稳定
   required_level: conditional_required
@@ -8791,25 +7654,6 @@ llm_derived_slots:
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   materiality: 0.65
-  status: Unknown
-  value:
-    supplier_concentration: null
-    capacity_utilization_pct: null
-    bottleneck: null
-    evidence_summary: 酒店房量/出租率未披露；仅有资本开支125539648.76元。
-    notes: 服务供给适用但产能利用率缺失。
-  confidence: 0.28
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.cf.capex
-    source: tushare:cashflow
-    excerpt: '{"scalar": 125539648.76, "unit": "元", "period": "20260331"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: f72acf34fac4fb7a
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L0.price.contract_spot
   node_name: 长协 vs 现货价差
   required_level: conditional_required
@@ -8850,58 +7694,14 @@ llm_derived_slots:
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   materiality: 0.7
-  status: Unknown
-  value:
-    metric_kind: AOV
-    value: null
-    currency: CNY
-    yoy_pct: null
-    trend: null
-    notes: 酒店客单价/ADR适用，但本地仅披露收入，未披露房晚/订单量分母。
-    evidence_summary: Q1收入1776980372.29元。
-  confidence: 0.25
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 201626bd4e4741c8
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.price.pricing_power
   node_name: 公司定价权 (运营)
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.7
-  status: Known
-  value:
-    strength: 中
-    recent_price_adjustment: null
-    customer_pushback: null
-    evidence_summary: 整体毛利率0.382099，会员渠道存在；未披露近期调价或客户反馈。
-    notes: 定价权为低置信定性。
-  confidence: 0.42
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: null
-  source_fingerprint_at_fill: 4884e2ae8b8ae0c5
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.price.elasticity
   node_name: 价格弹性
   required_level: conditional_required
@@ -8910,60 +7710,14 @@ llm_derived_slots:
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   materiality: 0.55
-  status: Unknown
-  value:
-    elasticity: null
-    estimation_method: null
-    notes: 缺少房价/客单价与订单量联动数据，无法估计价格弹性。
-    evidence_summary: 本地未披露ASP/AOV或订单量。
-  confidence: 0.2
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: null
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.cost.cac_production
   node_name: 获客/单位生产成本
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.65
-  status: Known
-  value:
-    cac_or_unit_cost: null
-    trend: flat
-    drivers:
-    - 销售费用140350376.69元
-    - 管理费用225719072.32元
-    - SGA/R&D收入比0.21343976646811408
-    - 整体毛利率0.382099
-    evidence_summary: 费用率可作为获客/运营成本代理，但无单位CAC。
-    notes: 未披露每用户获客成本。
-  confidence: 0.5
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.sga_rd
-    source: tushare:income
-    excerpt: '{"sga_total": 366069449.01, "sell_exp": 140350376.69, "admin_exp": 225719072.32, "rd_exp": 13208826.67, "sga_rd_ratio_revenue":
-      0.21343976646811408, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 4f3018f1be97246a
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.cost.rent_energy_logistics
   node_name: 租金/能源/物流成本
   required_level: conditional_required
@@ -8972,26 +7726,6 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.55
-  status: Unknown
-  value:
-    rent_yoy_pct: null
-    energy_yoy_pct: null
-    logistics_yoy_pct: null
-    trend: null
-    notes: 酒店租金/能源成本适用，但本地未拆分披露。
-    evidence_summary: 整体毛利率0.382099仅能反映综合成本压力。
-  confidence: 0.25
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 4884e2ae8b8ae0c5
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.eff.store_labor
   node_name: 门店/人效
   required_level: conditional_required
@@ -9000,27 +7734,6 @@ llm_derived_slots:
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.6
-  status: Unknown
-  value:
-    revenue_per_employee: null
-    revenue_per_store: null
-    yoy_pct: null
-    trend: null
-    notes: 门店数/员工数未在本地依赖中披露，无法计算店效或人效。
-    evidence_summary: SGA/R&D收入比0.21343976646811408可作费用强度背景。
-  confidence: 0.24
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.sga_rd
-    source: tushare:income
-    excerpt: '{"sga_total": 366069449.01, "sell_exp": 140350376.69, "admin_exp": 225719072.32, "rd_exp": 13208826.67, "sga_rd_ratio_revenue":
-      0.21343976646811408, "unit": "元", "period": "20260331"}'
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: c65431a306fad1d8
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L0.policy.access_license
   node_name: 准入与牌照
   required_level: conditional_required
@@ -9117,29 +7830,6 @@ llm_derived_slots:
   calculation_type: or_gate
   aggregation_policy: or_max_trigger
   materiality: 0.5
-  status: Inactive
-  value:
-    event_signal: false
-    event_type: null
-    severity: 低
-    notes: 媒体源无24h头条；宏观CPI/PPI为背景数据，未触发公司事件。
-  confidence: 0.45
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.macro.cpi_employment
-    source: local:macro
-    excerpt: '{"cpi_yoy_pct": 1.2, "cpi_mom_pct": 0.3, "ppi_yoy_pct": 2.8, "latest_month": "202604", "employment_unemployment_pct":
-      null}'
-  missing_reason: null
-  source_fingerprint_at_fill: a58e1073473a041e
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L9.macro.geo
   node_name: 地缘事件
   required_level: conditional_required
@@ -9148,328 +7838,78 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.6
-  status: Inactive
-  value:
-    event_signal: false
-    event_type: null
-    severity: 低
-    notes: 媒体源无24h头条，USDCNH变动未超过阈值且方向neutral。
-  confidence: 0.48
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.macro.fx
-    source: local:macro_fx
-    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct": -0.4145, "rmb_appreciation_pct":
-      0.4145, "threshold_pct": 1.0, "window_trading_days": 20, "latest_date": "20260601"}'
-  missing_reason: null
-  source_fingerprint_at_fill: e7f0c86397dc5821
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.role.tag
   node_name: 行业角色标签
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.55
-  status: Known
-  value:
-    tag: 酒店集团龙头
-    tags:
-    - 酒店运营管理
-    - 连锁酒店
-    - 景区经营补充
-    notes: 本地公司介绍称领先且具有市场规模较为突出优势。
-  confidence: 0.58
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 公司是一家领先的、具有市场规模较为突出优势的酒店集团公司，专注于经济连锁型及中高端酒店的投资与运营管理，并兼有景区经营业务。
-  missing_reason: null
-  source_fingerprint_at_fill: 658ffe08e2963c26
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.model.tag
   node_name: 商业模式标签
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.55
-  status: Known
-  value:
-    tag: B2C+B2B管理输出
-    tags:
-    - 住宿服务
-    - 酒店管理输出
-    - 会员体系
-    - 景区经营
-    notes: 收入模型包括酒店运营、酒店管理和景区经营。
-  confidence: 0.6
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L2.segment.revenue_share
-    source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "酒店运营", "revenue_pct": 61.5867, "period": "20251231"}, {"item": "酒店管理", "revenue_pct":
-      31.6723, "period": "20251231"}, {"item": "景区", "revenue_pct": 6.7411, "period": "20251231"}], "period": "20251231"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 658ffe08e2963c26
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.moat.tags
   node_name: 护城河标签
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.7
-  status: Known
-  value:
-    tags:
-    - 品牌
-    - 规模
-    - 会员渠道
-    - 酒店管理能力
-    notes: 毛利率和会员渠道支持中等护城河，技术壁垒较弱。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 99486ab7a5d494f0
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.stock_attr.tags
   node_name: 股价属性标签
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.5
-  status: Known
-  value:
-    tags:
-    - 内需消费
-    - 旅游酒店周期
-    - 估值修复
-    notes: L6路径标签为估值修复；主营为酒店和景区。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L6.path.tag
-    source: derive:l6_path_tag
-    excerpt: '{"tag": "估值修复", "label": "repair", "pe_percentile": 0.01092896174863388, "confidence": 0.54}'
-  missing_reason: null
-  source_fingerprint_at_fill: c0659092a0c5238b
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L1.position.growth_rank
   node_name: 增速排名
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.6
-  status: Known
-  value:
-    rank: null
-    bucket: 偏弱
-    revenue_yoy_pct: 0.6552
-    revenue_growth_alt_yoy_pct: -0.5146094428665123
-    notes: 两套本地收入增速口径方向不完全一致；fina revenue_yoy小幅正，income.derived口径为负。
-  confidence: 0.42
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue_growth
-    source: tushare:income.derived
-    excerpt: '{"yoy_pct": -0.5146094428665123, "qoq_pct": -0.7663957247157629, "current_period": "20260331", "yoy_compare_period":
-      "20250630"}'
-  - kind: local_dp_id
-    dp_id: L5.fina.revenue_yoy
-    source: tushare:fina_indicator
-    excerpt: '{"value": 0.6552, "period": "20260331", "currency": "CNY", "unit": "ratio_pct"}'
-  missing_reason: null
-  source_fingerprint_at_fill: bfc597dffc919abf
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.segment.opex_ratio
   node_name: 业务线费用率
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   materiality: 0.6
-  status: Known
-  value:
-    opex_ratio_pct: 21.34397664681141
-    segments: []
-    notes: 未按分部披露费用率；以公司SGA/R&D收入比作为总费用率代理。
-  confidence: 0.55
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.sga_rd
-    source: tushare:income
-    excerpt: '{"sga_total": 366069449.01, "sell_exp": 140350376.69, "admin_exp": 225719072.32, "rd_exp": 13208826.67, "sga_rd_ratio_revenue":
-      0.21343976646811408, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  missing_reason: null
-  source_fingerprint_at_fill: ff60c3dbbc74b43d
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L2.segment.profit_share
   node_name: 业务线利润占比
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.65
-  status: Known
-  value:
-    operating_profit: 248311212.28
-    net_profit: 192984860.2
-    segments: []
-    notes: 本地未披露分部利润占比，仅填公司层面经营利润和净利润。
-  confidence: 0.5
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.operating_profit
-    source: tushare:income
-    excerpt: '{"scalar": 248311212.28, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L5.is.net_profit
-    source: tushare:income
-    excerpt: '{"scalar": 192984860.2, "unit": "元", "period": "20260331"}'
-  missing_reason: null
-  source_fingerprint_at_fill: e61e7225952223d4
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.product.portfolio
   node_name: 产品组合结构
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.65
-  status: Known
-  value:
-    products:
-    - name: 酒店运营
-      revenue_pct: 61.5867
-    - name: 酒店管理
-      revenue_pct: 31.6723
-    - name: 景区
-      revenue_pct: 6.7411
-    notes: 采用2025主营分部收入结构。
-    evidence_summary: 酒店运营+酒店管理合计93.2590%。
-  confidence: 0.65
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L2.segment.revenue_share
-    source: tushare:fina_mainbz
-    excerpt: '{"segments": [{"item": "酒店运营", "revenue_pct": 61.5867, "period": "20251231"}, {"item": "酒店管理", "revenue_pct":
-      31.6723, "period": "20251231"}, {"item": "景区", "revenue_pct": 6.7411, "period": "20251231"}], "period": "20251231"}'
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  missing_reason: null
-  source_fingerprint_at_fill: 45e09a3f0bfda144
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.product.margin_mix
   node_name: 产品毛利/价格结构
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.7
-  status: Known
-  value:
-    gross_margin_pct: 38.20994855700022
-    margin_tier: 中
-    product_margin_split:
-    - product: 酒店管理
-      gross_margin_pct: 76.8626
-    - product: 景区
-      gross_margin_pct: 64.934
-    - product: 酒店运营
-      gross_margin_pct: null
-    notes: 整体Q1毛利率38.21%，2025披露酒店管理和景区毛利率较高。
-    evidence_summary: 酒店运营毛利率未在注入片段中完整披露。
-  confidence: 0.58
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L2.segment.gross_margin
-    source: tushare:fina_mainbz
-    excerpt: 'segments=[{''item'': ''酒店管理'', ''gross_margin_pct'': 76.8626, ''period'': ''20251231''}, {''item'': ''景区'',
-      ''gross_margin_pct'': 64.934'
-  missing_reason: null
-  source_fingerprint_at_fill: 99486ab7a5d494f0
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.customer.concentration
   node_name: 客户集中度/流失风险
   required_level: conditional_required
@@ -9478,56 +7918,14 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.75
-  status: Unknown
-  value:
-    top5_revenue_pct: null
-    top10_revenue_pct: null
-    concentration_trend: null
-    notes: 本地未披露前五/前十客户收入占比；应收账款可作弱背景。
-    evidence_summary: 应收账款220864802.46元。
-  confidence: 0.22
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.bs.ar_ap
-    source: tushare:balancesheet
-    excerpt: '{"accounts_receivable": 220864802.46, "accounts_payable": 131914232.65, "net_working_capital_change_proxy":
-      88950569.81, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 1bdafeabb5f08b60
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.channel.cost
   node_name: 渠道费用
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.55
-  status: Known
-  value:
-    channel_cost_pct: 21.34397664681141
-    sales_expense: 140350376.69
-    notes: 未披露渠道成本；以SGA/R&D收入比和销售费用作代理。
-  confidence: 0.48
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.sga_rd
-    source: tushare:income
-    excerpt: '{"sga_total": 366069449.01, "sell_exp": 140350376.69, "admin_exp": 225719072.32, "rd_exp": 13208826.67, "sga_rd_ratio_revenue":
-      0.21343976646811408, "unit": "元", "period": "20260331"}'
-  missing_reason: null
-  source_fingerprint_at_fill: c65431a306fad1d8
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.channel.efficiency
   node_name: 渠道效率
   required_level: conditional_required
@@ -9536,116 +7934,30 @@ llm_derived_slots:
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.6
-  status: Unknown
-  value:
-    revenue_per_channel: null
-    trend: null
-    notes: 本地有收入和渠道形态，但未披露各渠道收入或流量，无法计算渠道效率。
-  confidence: 0.25
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 201626bd4e4741c8
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.region.domestic_overseas
   node_name: 国内/海外收入结构
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   materiality: 0.65
-  status: Known
-  value:
-    domestic_revenue_pct: 100.0
-    overseas_revenue_pct: 0.0
-    notes: 本地经营范围和主营描述均为国内住宿、餐饮、旅游服务；未披露海外收入。
-  confidence: 0.42
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 9efa63550f722c81
-  last_filled_period: '2025'
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.region.fx_geo
   node_name: 汇率/地缘影响
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.6
-  status: Inactive
-  value:
-    fx_exposure: 低
-    geo_exposure: 低
-    rationale: 海外收入按本地证据不显著，USDCNH方向neutral且未超过阈值。
-  confidence: 0.48
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.macro.fx
-    source: local:macro_fx
-    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct": -0.4145, "rmb_appreciation_pct":
-      0.4145, "threshold_pct": 1.0, "window_trading_days": 20, "latest_date": "20260601"}'
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  missing_reason: null
-  source_fingerprint_at_fill: 44a5d75292f34422
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L3.delivery.fulfillment_cost
   node_name: 履约/售后成本
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.5
-  status: Known
-  value:
-    fulfillment_cost_pct: 21.34397664681141
-    trend: flat
-    notes: 酒店服务履约成本未单列；以SGA/R&D收入比和毛利率作为弱代理。
-  confidence: 0.42
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.sga_rd
-    source: tushare:income
-    excerpt: '{"sga_total": 366069449.01, "sell_exp": 140350376.69, "admin_exp": 225719072.32, "rd_exp": 13208826.67, "sga_rd_ratio_revenue":
-      0.21343976646811408, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L5.is.gross_margin
-    source: tushare:income.derived
-    excerpt: '{"scalar": 0.3820994855700022, "unit": "ratio", "period": "20260331"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 4f3018f1be97246a
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.share.market
   node_name: 公司市占率
   required_level: conditional_required
@@ -9654,58 +7966,14 @@ llm_derived_slots:
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   materiality: 0.75
-  status: Unknown
-  value:
-    share_pct: null
-    rank: null
-    trend: null
-    notes: 市占率需要市场规模或同业完整收入口径，本地未提供。
-  confidence: 0.2
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: no_local_evidence
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.share.substitution
   node_name: 竞品替代
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.6
-  status: Known
-  value:
-    substitution_risk: 中
-    trend: flat
-    notes: 行业竞争风险源24h为空，但公司收入增长口径偏弱，替代/分流压力保留中性风险。
-  confidence: 0.36
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L5.is.revenue_growth
-    source: tushare:income.derived
-    excerpt: '{"yoy_pct": -0.5146094428665123, "qoq_pct": -0.7663957247157629, "current_period": "20260331", "yoy_compare_period":
-      "20250630"}'
-  missing_reason: null
-  source_fingerprint_at_fill: e003cca30a1f12fa
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.volume.sales
   node_name: 销量
   required_level: conditional_required
@@ -9714,28 +7982,6 @@ llm_derived_slots:
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.7
-  status: Unknown
-  value:
-    sales_volume: null
-    unit: null
-    yoy_pct: null
-    notes: 酒店销量可对应房晚/间夜，但本地未披露。
-  confidence: 0.22
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.volume.orders
   node_name: 订单量
   required_level: conditional_required
@@ -9744,53 +7990,14 @@ llm_derived_slots:
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.7
-  status: Unknown
-  value:
-    orders: null
-    yoy_pct: null
-    notes: 订单量适用但本地未披露。
-  confidence: 0.22
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.volume.shipments
   node_name: 出货量/交付量
   required_level: conditional_required
-  data_status: N/A
-  missing_policy: not_applicable_remove
+  data_status: Unknown
+  missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.65
-  status: N/A
-  value:
-    shipments: null
-    unit: null
-    yoy_pct: null
-    notes: 酒店住宿和景区服务不属于出货/发货模型。
-  confidence: 0.55
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L1.company.main_business
-    source: tushare:stock_company
-    excerpt: 主营业务:经济连锁型及中高端酒店的投资与运营管理,并兼有景区经营业务.
-  missing_reason: 酒店服务天然不适用出货量/交付量口径
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L4.volume.users
   node_name: 客户/用户数
   required_level: conditional_required
@@ -9799,66 +8006,14 @@ llm_derived_slots:
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.65
-  status: Unknown
-  value:
-    users: null
-    yoy_pct: null
-    notes: 会员数/入住用户数适用但本地未披露。
-  confidence: 0.22
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.is.revenue
-    source: tushare:income
-    excerpt: '{"scalar": 1776980372.29, "unit": "元", "period": "20260331"}'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: 公司未披露此项
-  source_fingerprint_at_fill: 609efc2c1fa27ebc
-  last_filled_period: 2026Q1
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L5.fcst.beat_probability
   node_name: 业绩兑现概率
   required_level: conditional_required
-  data_status: Known
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   materiality: 0.7
-  status: Known
-  value:
-    probability: 0.5
-    drivers:
-    - 2026Q4 EPS一致预期0.8389189189189189
-    - 30日EPS修正-0.36306319070558435%且direction flat
-    - 90日报告数37
-    notes: 一致预期稳定但略下修，兑现概率中性。
-  confidence: 0.5
-  evidence_quality: medium
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L5.fcst.revisions
-    source: tushare:report_rc.derived
-    excerpt: '{"consensus_eps_revision_30d_pct": -0.36306319070558435, "direction": "flat", "recent_eps_avg": 0.8371875, "older_eps_avg":
-      0.8402380952380952, "recent_sample": 16, "older_sample": 21, "period": "2026Q4", "as_of": "20260529"}'
-  - kind: local_dp_id
-    dp_id: L5.fcst.eps_cf
-    source: tushare:report_rc
-    excerpt: '{"eps_avg": 0.8389189189189189, "eps_low": 0.81, "eps_high": 0.9, "cashflow_estimate": null, "cashflow_available":
-      false, "num_analysts": 37, "period": "2026Q4", "unit": "CNY/share"}'
-  - kind: local_dp_id
-    dp_id: L5.surprise.sell_side
-    source: tushare:report_rc
-    excerpt: '{"n_reports_90d": 37, "rating_distribution": {"推荐": 7, "买入": 13, "增持": 13, "跑赢行业": 2, "无": 1, "优于大市": 1}, "latest_report_date":
-      "20260518"'
-  missing_reason: null
-  source_fingerprint_at_fill: de41e2bc51b9001e
-  last_filled_period: 2026Q4
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.gov.fraud_control
   node_name: 财务造假/内控
   required_level: conditional_required
@@ -9867,28 +8022,6 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.85
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 仅见1名副总经理离职，媒体源无24h头条，未见本地内控/财务造假事件。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L8.gov.management_change
-    source: tushare:stk_managers
-    excerpt: '{"events": [{"type": "高管离职", "person": "张淑娟", "title": "副总经理", "ann_date": "20251201", "begin_date": "20221027",
-      "end_date": "20251130"}], "count_window": 1, "lookback_days": 180, "latest_ann_date": "20251201"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 5ffcd652addbfbb9
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.gov.litigation
   node_name: 法律诉讼
   required_level: conditional_required
@@ -9897,295 +8030,102 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 本地诉讼/治理依赖仅含高管离职事件，媒体源无24h头条，未见诉讼触发。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L8.gov.management_change
-    source: tushare:stk_managers
-    excerpt: '{"events": [{"type": "高管离职", "person": "张淑娟", "title": "副总经理", "ann_date": "20251201", "begin_date": "20221027",
-      "end_date": "20251130"}], "count_window": 1, "lookback_days": 180, "latest_ann_date": "20251201"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 145751f0725812a1
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
+- dp_id: L8.gov.insider_sell
+  node_name: 股东减持
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: risk_factor
+  aggregation_policy: subtract_risk
+  materiality: 0.65
+- dp_id: L8.gov.management_change
+  node_name: 管理层变动
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: risk_factor
+  aggregation_policy: subtract_risk
+  materiality: 0.6
 - dp_id: L8.industry.demand_supply
   node_name: 行业需求/供给恶化
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 中
-    notes: 行业overlay显示终端需求下行，但24h竞争/媒体源为空；作为行业压力而非事件触发。
-  confidence: 0.42
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_overlay
-    path: config/industry_overlays/DOMESTIC_CONSUMPTION.yaml
-    dp_id: L0.demand.terminal
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 5e24600eb14c8150
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.industry.price_war
   node_name: 行业价格战
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 本地价格战源缺失，竞争风险媒体源为空。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 3ee0c05d4b30bb39
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.industry.substitute
   node_name: 替代品出现
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.65
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 本地替代技术源缺失，竞争风险媒体源为空。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 3ee0c05d4b30bb39
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.op.customer_channel
   node_name: 客户流失/渠道失效
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 问答显示公司有官网、APP、小程序及多社媒官方渠道，媒体源无渠道失效事件。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 9ea4d45bbbfc9158
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.op.order_miss
   node_name: 订单不兑现
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 本地业绩预告为扭亏，问答未见订单不兑现事件。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.company.earnings_guidance
-    source: tushare:forecast
-    excerpt: '{"type": "扭亏", "change_pct_min": 232.0, "change_pct_max": 243.0, "net_profit_min": 77000.0, "net_profit_max":
-      83000.0, "last_parent_net": -58217.0'
-  - kind: local_dp_id
-    dp_id: L9.disclosure.qa_recent
-    source: tushare:irm_qa_sh
-    excerpt: 也可以通过首旅酒店官方 APP、小程序等渠道注册成为“如LIFE俱乐部”或者“首享会”会员享受相关权益。
-  missing_reason: null
-  source_fingerprint_at_fill: da3647ac33214060
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.op.product_fail
   node_name: 产品失败
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: L9.company.product_order 缺失且媒体源无头条，未见产品失败事件。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.reg.license_risk
   node_name: 牌照/准入风险
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.65
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 行业政策变化媒体源为空，准入牌照本地源缺失。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.reg.subsidy_off
   node_name: 补贴退坡
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.55
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 行业政策变化媒体源为空，补贴源缺失。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.reg.tax_trade
   node_name: 税收/出口限制 (个股)
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.65
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 海外/汇率暴露低，USDCNH方向neutral。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.macro.fx
-    source: local:macro_fx
-    excerpt: '{"score": 0.0, "direction": "neutral", "symbol": "USDCNH.FXCM", "usdcnh_change_pct": -0.4145, "rmb_appreciation_pct":
-      0.4145, "threshold_pct": 1.0, "window_trading_days": 20, "latest_date": "20260601"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 44a5d75292f34422
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.reg.tighten
   node_name: 监管收紧/反垄断 (个股)
   required_level: conditional_required
-  data_status: Inactive
+  data_status: Unknown
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.65
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 行业政策变化媒体源为空，未见监管收紧事件。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: bf4d5d1445aaf904
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.shock.black_swan
   node_name: 黑天鹅事件
   required_level: conditional_required
@@ -10194,23 +8134,6 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.85
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 媒体源无24h头条，地缘事件未触发。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.shock.crisis
   node_name: 安全/舆情危机
   required_level: conditional_required
@@ -10219,27 +8142,6 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 媒体源无24h头条，社媒热榜为false。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.social_buzz
-    source: tushare:ths_hot.热股
-    excerpt: '{"in_xq_top_buzz": false, "as_of": "2026-05-30T08:09:28+02:00"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 1695ebaad7d0df81
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L8.shock.supply_break
   node_name: 供应中断/客户违约/自然灾害
   required_level: conditional_required
@@ -10248,27 +8150,6 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.75
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 媒体和竞争风险源均无24h头条。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.industry.compete_risk
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 5e24600eb14c8150
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L9.company.ma
   node_name: 并购
   required_level: conditional_required
@@ -10277,23 +8158,6 @@ llm_derived_slots:
   calculation_type: or_gate
   aggregation_policy: or_max_trigger
   materiality: 0.6
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 近期公告源缺失，媒体源无24h头条，未见并购事件。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 6feabb6f14496ca0
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 - dp_id: L9.company.product_order
   node_name: 新产品发布/大订单
   required_level: conditional_required
@@ -10302,28 +8166,22 @@ llm_derived_slots:
   calculation_type: or_gate
   aggregation_policy: or_max_trigger
   materiality: 0.65
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 近期公告主要为股东会文件、ESG报告和董事会决议；媒体源无新产品/大订单头条。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.event.intraday_announcement
-    source: tushare:anns_d
-    excerpt: '{"count_recent": 8, "top_announcements": [{"title": "北京首旅酒店（集团）股份有限公司2026年第二次临时股东会会议文件", "type": null, "ann_date":
-      "20260530"'
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 8219f7d92b9c2548
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
+- dp_id: L9.company.buyback_dividend
+  node_name: 分红回购
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: or_gate
+  aggregation_policy: or_max_trigger
+  materiality: 0.6
+- dp_id: L9.company.earnings_guidance
+  node_name: 业绩指引
+  required_level: conditional_required
+  data_status: Inactive
+  missing_policy: inactive_zero_weight
+  calculation_type: or_gate
+  aggregation_policy: or_max_trigger
+  materiality: 0.7
 - dp_id: L9.media.short_report
   node_name: 做空报告
   required_level: conditional_required
@@ -10332,27 +8190,6 @@ llm_derived_slots:
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   materiality: 0.7
-  status: Inactive
-  value:
-    event_signal: false
-    severity: 低
-    notes: 媒体源无24h头条，社媒热榜为false，未见做空报告。
-  confidence: 0.5
-  evidence_quality: low
-  evidence_sources:
-  - kind: local_dp_id
-    dp_id: L9.media.report
-    source: tushare:stock_info_global_cls
-    excerpt: '{"count_24h": 0, "top_headlines": [], "as_of": "2026-06-03T01:48:45+08:00", "reason": "upstream_error: stock_info_global_cls"}'
-  - kind: local_dp_id
-    dp_id: L9.media.social_buzz
-    source: tushare:ths_hot.热股
-    excerpt: '{"in_xq_top_buzz": false, "as_of": "2026-05-30T08:09:28+02:00"}'
-  missing_reason: null
-  source_fingerprint_at_fill: 1695ebaad7d0df81
-  last_filled_period: null
-  last_event_id: null
-  last_updated: '2026-06-05T12:30:00+08:00'
 hierarchy_edges:
 - edge_id: HIER.600258.SH.01.L0_demand_terminal
   from_node: 600258.SH:company
@@ -10490,11 +8327,11 @@ causal_edges:
   evidence: []
   current_status: inactive
 coverage:
-  data_coverage: 0.013633265167007493
+  data_coverage: 0.01317523056653491
   known_count: 1
   unknown_count: 94
   na_count: 0
-  inactive_count: 12
+  inactive_count: 16
   low_materiality_count: 0
   optionality_count: 5
   required_missing_count: 0
@@ -10711,6 +8548,8 @@ views:
     - 600258.SH:L5.fcst.beat_probability
     - 600258.SH:L8.gov.fraud_control
     - 600258.SH:L8.gov.litigation
+    - 600258.SH:L8.gov.insider_sell
+    - 600258.SH:L8.gov.management_change
     - 600258.SH:L8.industry.demand_supply
     - 600258.SH:L8.industry.price_war
     - 600258.SH:L8.industry.substitute
@@ -10726,8 +8565,10 @@ views:
     - 600258.SH:L8.shock.supply_break
     - 600258.SH:L9.company.ma
     - 600258.SH:L9.company.product_order
+    - 600258.SH:L9.company.buyback_dividend
+    - 600258.SH:L9.company.earnings_guidance
     - 600258.SH:L9.media.short_report
-    edge_ids:
+    edge_ids: &id001
     - CAUSAL.600258.SH.demand_to_position
     - CAUSAL.600258.SH.pricing_power_to_surprise
     - CAUSAL.600258.SH.capacity_to_utilization
@@ -10798,13 +8639,7 @@ views:
     - 600258.SH:L4.cost.cac_production
     - 600258.SH:L4.cost.rent_energy_logistics
     - 600258.SH:L4.eff.store_labor
-    edge_ids:
-    - CAUSAL.600258.SH.demand_to_position
-    - CAUSAL.600258.SH.pricing_power_to_surprise
-    - CAUSAL.600258.SH.capacity_to_utilization
-    - CAUSAL.600258.SH.price_war_to_discount
-    - CAUSAL.600258.SH.discount_to_whisper
-    - CAUSAL.600258.SH.new_entrant_to_stickiness
+    edge_ids: *id001
     default_depth: 3
     top_n: 5
   valuation_expectation:
@@ -10822,13 +8657,7 @@ views:
     - 600258.SH:L2.newbiz.valuation_contrib
     - 600258.SH:L2.segment.opex_ratio
     - 600258.SH:L2.segment.profit_share
-    edge_ids:
-    - CAUSAL.600258.SH.demand_to_position
-    - CAUSAL.600258.SH.pricing_power_to_surprise
-    - CAUSAL.600258.SH.capacity_to_utilization
-    - CAUSAL.600258.SH.price_war_to_discount
-    - CAUSAL.600258.SH.discount_to_whisper
-    - CAUSAL.600258.SH.new_entrant_to_stickiness
+    edge_ids: *id001
     default_depth: 3
     top_n: 5
   risk_offset:
