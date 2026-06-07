@@ -281,7 +281,12 @@ def main() -> int:
             results.append({"ts_code": ts, "ok": True, "skipped": True})
             continue
         print(f"  • {ts}: fetching…")
-        res = fetch_and_ingest(ts, args.year, args.db, dry_run=args.dry_run)
+        try:
+            res = fetch_and_ingest(ts, args.year, args.db, dry_run=args.dry_run)
+        except Exception as exc:  # noqa: BLE001 — isolate per-stock failures (PDF parse /
+            # sqlite-lock under parallel writers) so one bad stock can't kill a worker;
+            # the stock simply stays un-ingested and is retried on a later resume pass.
+            res = {"ts_code": ts, "ok": False, "reason": f"{type(exc).__name__}: {exc}"}
         if res.get("ok") and not res.get("dry_run"):
             print(f"      ✓ {res.get('total_chars')} chars; sections={res.get('sections')}")
         elif res.get("dry_run"):

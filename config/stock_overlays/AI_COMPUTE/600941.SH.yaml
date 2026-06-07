@@ -2165,7 +2165,7 @@ nodes:
     notes: 无买方whisper直接证据；用30日EPS一致预期上修作为弱proxy。
     evidence_summary: 30日EPS一致预期上修10.1931%，7日分析师行动为空。
   evidence_sources:
-  - &id014
+  - &id013
     kind: local_dp_id
     dp_id: L5.fcst.revisions
     source: tushare:report_rc.derived
@@ -3111,8 +3111,7 @@ nodes:
     evidence_summary: 应收账款1231.36亿元，应付账款3671.29亿元；客户广泛覆盖但top客户未披露。
     notes: 未披露top客户名单，按客户类型做弱判断。
   evidence_sources:
-  - &id013
-    kind: local_dp_id
+  - kind: local_dp_id
     dp_id: L5.bs.ar_ap
     source: tushare:balancesheet
     excerpt: '{"accounts_receivable": 123136000000.0, "accounts_payable": 367129000000.0, "net_working_capital_change_proxy":
@@ -5322,7 +5321,7 @@ nodes:
   update_frequency: quarterly
   last_updated: '2026-06-06T12:00:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
@@ -5332,13 +5331,13 @@ nodes:
   data_coverage: null
   evidence_quality: low
   value:
-    top5_revenue_pct: null
-    top10_revenue_pct: null
-    concentration_trend: null
-    notes: 本地未披露top5/top10客户收入集中度；应收账款无法推导客户集中度。
-    evidence_summary: 应收账款1231.36亿元。
+    top5_pct: 3.0
+    top5_supplier_pct: null
+    source: 年报2025前五名客户
   evidence_sources:
-  - *id013
+  - kind: local_dp_id
+    dp_id: L9.disclosure.annual_report
+    source: annual_report:2025:customer_segment
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -6102,7 +6101,7 @@ nodes:
     - 2026E EPS均值5.85元
     notes: 概率为基于本地一致预期修正和覆盖度的定性量化，不是外部模型结果。
   evidence_sources:
-  - *id014
+  - *id013
   - kind: local_dp_id
     dp_id: L5.fcst.eps_cf
     source: tushare:report_rc
@@ -6997,7 +6996,7 @@ nodes:
     notes: 媒体源为空，社交热度未进入顶部。
   evidence_sources:
   - *id003
-  - &id015
+  - &id014
     kind: local_dp_id
     dp_id: L9.media.social_buzz
     source: tushare:ths_hot.热股
@@ -7254,7 +7253,7 @@ nodes:
     notes: 媒体源为空，社交热度未进入顶部，未触发做空报告事件。
   evidence_sources:
   - *id003
-  - *id015
+  - *id014
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -8945,7 +8944,7 @@ views:
     - 600941.SH:L9.company.ma
     - 600941.SH:L9.company.product_order
     - 600941.SH:L9.media.short_report
-    edge_ids: &id016
+    edge_ids: &id015
     - CAUSAL.600941.SH.demand_to_position
     - CAUSAL.600941.SH.pricing_power_to_surprise
     - CAUSAL.600941.SH.capacity_to_utilization
@@ -9016,7 +9015,7 @@ views:
     - 600941.SH:L4.cost.cac_production
     - 600941.SH:L4.cost.rent_energy_logistics
     - 600941.SH:L4.eff.store_labor
-    edge_ids: *id016
+    edge_ids: *id015
     default_depth: 3
     top_n: 5
   valuation_expectation:
@@ -9034,7 +9033,7 @@ views:
     - 600941.SH:L2.newbiz.valuation_contrib
     - 600941.SH:L2.segment.opex_ratio
     - 600941.SH:L2.segment.profit_share
-    edge_ids: *id016
+    edge_ids: *id015
     default_depth: 3
     top_n: 5
   risk_offset:

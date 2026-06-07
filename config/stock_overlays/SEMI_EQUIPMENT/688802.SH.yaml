@@ -1207,7 +1207,7 @@ nodes:
     dp_id: L5.is.revenue_growth
     source: tushare:income.derived
     excerpt: '"yoy_pct": 75.37131912550367'
-  - &id014
+  - &id013
     kind: local_dp_id
     dp_id: L9.company.earnings_guidance
     source: tushare:forecast
@@ -2080,7 +2080,7 @@ nodes:
     notes: 无买方whisper绝对值；以30日一致预期EPS上修幅度作为预期差代理。
     evidence_summary: 2026Q4 EPS一致预期30日上修141.67%，近样本5，7日评级动作无新增。
   evidence_sources:
-  - &id013
+  - &id012
     kind: local_dp_id
     dp_id: L5.fcst.revisions
     source: tushare:report_rc.derived
@@ -2910,7 +2910,7 @@ nodes:
       - 收入拆分
       - 毛利和现金流转正证据
   evidence_sources:
-  - &id012
+  - &id011
     kind: industry_inference
     framework: 国产高性能GPU处于导入到成长期，技术迭代和生态适配决定商业化斜率；该判断为行业框架推断。
     confidence: 0.4
@@ -2977,8 +2977,7 @@ nodes:
     ar_concentration_risk: 中
     evidence_summary: 2026Q1应收账款932801446.87元，高于单季收入561916460.39元；未披露具体客户信用。
   evidence_sources:
-  - &id010
-    kind: local_dp_id
+  - kind: local_dp_id
     dp_id: L5.bs.ar_ap
     source: tushare:balancesheet
     excerpt: '"accounts_receivable": 932801446.87'
@@ -4474,7 +4473,7 @@ nodes:
     reason: no local geo event and FX direction neutral
   evidence_sources:
   - *id009
-  - &id011
+  - &id010
     kind: local_dp_id
     dp_id: L9.macro.fx
     source: local:macro_fx
@@ -5119,7 +5118,7 @@ nodes:
   update_frequency: quarterly
   last_updated: '2026-06-06T12:00:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
@@ -5128,9 +5127,14 @@ nodes:
   materiality: 0.75
   data_coverage: null
   evidence_quality: null
-  value: null
+  value:
+    top5_pct: 61.46
+    top5_supplier_pct: 82.34
+    source: 年报2025前五名客户
   evidence_sources:
-  - *id010
+  - kind: local_dp_id
+    dp_id: L9.disclosure.annual_report
+    source: annual_report:2025:customer_segment
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -5376,7 +5380,7 @@ nodes:
     currency_signal: neutral
     notes: USDCNH 20日变化未超过阈值；海外收入敞口未披露，GPU产业链仍有地缘敏感性。
   evidence_sources:
-  - *id011
+  - *id010
   - kind: industry_inference
     framework: B2B GPU/AI accelerator suppliers usually sell by project or direct enterprise account; channel, customer and
       ASP details are often not publicly disclosed.
@@ -5566,7 +5570,7 @@ nodes:
   evidence_sources:
   - *id002
   - *id009
-  - *id012
+  - *id011
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -5867,7 +5871,7 @@ nodes:
     - 2026E EPS均值仍为-0.021且现金流预测不可用
     notes: 概率为基于本地一致预期变化的低置信度分类，不是公司或卖方直接披露。
   evidence_sources:
-  - *id013
+  - *id012
   - kind: local_dp_id
     dp_id: L5.fcst.eps_cf
     source: tushare:report_rc
@@ -6317,7 +6321,7 @@ nodes:
     - 预计净利润区间仍为亏损
     evidence_summary: 业绩预告显示续亏，但无订单取消披露；判为中等兑现风险而非已发生订单miss。
   evidence_sources:
-  - *id014
+  - *id013
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6562,7 +6566,7 @@ nodes:
     risk_level: low
     reason: 本地无税收/贸易限制事件，FX方向neutral
   evidence_sources:
-  - *id011
+  - *id010
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6749,7 +6753,7 @@ nodes:
     reason: 媒体源无事件且未进入雪球热榜
   evidence_sources:
   - *id009
-  - &id015
+  - &id014
     kind: local_dp_id
     dp_id: L9.media.social_buzz
     source: tushare:ths_hot.热股
@@ -7002,7 +7006,7 @@ nodes:
     reason: 本地媒体源无做空报告，社交热榜为false
   evidence_sources:
   - *id009
-  - *id015
+  - *id014
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -8284,7 +8288,7 @@ views:
     - 688802.SH:L9.company.ma
     - 688802.SH:L9.company.product_order
     - 688802.SH:L9.media.short_report
-    edge_ids: &id016
+    edge_ids: &id015
     - CAUSAL.688802.SH.demand_to_position
     - CAUSAL.688802.SH.pricing_power_to_surprise
     - CAUSAL.688802.SH.capacity_to_utilization
@@ -8355,7 +8359,7 @@ views:
     - 688802.SH:L4.cost.cac_production
     - 688802.SH:L4.cost.rent_energy_logistics
     - 688802.SH:L4.eff.store_labor
-    edge_ids: *id016
+    edge_ids: *id015
     default_depth: 3
     top_n: 5
   valuation_expectation:
@@ -8373,7 +8377,7 @@ views:
     - 688802.SH:L2.newbiz.valuation_contrib
     - 688802.SH:L2.segment.opex_ratio
     - 688802.SH:L2.segment.profit_share
-    edge_ids: *id016
+    edge_ids: *id015
     default_depth: 3
     top_n: 5
   risk_offset:

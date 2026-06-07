@@ -2131,7 +2131,7 @@ nodes:
     notes: 无买方whisper本地证据；仅卖方EPS近30日修正基本持平。
     evidence_summary: EPS revision 30d +0.44%, 7日 analyst action none。
   evidence_sources:
-  - &id017
+  - &id016
     kind: local_dp_id
     dp_id: L5.fcst.revisions
     source: tushare:report_rc.derived
@@ -3083,8 +3083,7 @@ nodes:
     evidence_summary: 应收账款19.98亿元、应付账款62.84亿元，客户集中度缺失。
     notes: 本地无客户名单和信用信息。
   evidence_sources:
-  - &id016
-    kind: local_dp_id
+  - kind: local_dp_id
     dp_id: L5.bs.ar_ap
     source: tushare:balancesheet
     excerpt: '{"accounts_receivable": 1998220162.22, "accounts_payable": 6283791834.54, "net_working_capital_change_proxy":
@@ -5304,7 +5303,7 @@ nodes:
   update_frequency: quarterly
   last_updated: '2026-06-06T12:00:00+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
@@ -5314,13 +5313,13 @@ nodes:
   data_coverage: null
   evidence_quality: low
   value:
-    top5_revenue_pct: null
-    top10_revenue_pct: null
-    concentration_trend: null
-    notes: 本地无前五/前十大客户收入占比。
-    evidence_summary: 仅有应收应付数据，不能推算客户集中度。
+    top5_pct: 31.94
+    top5_supplier_pct: 32.33
+    source: 年报2025前五名客户
   evidence_sources:
-  - *id016
+  - kind: local_dp_id
+    dp_id: L9.disclosure.annual_report
+    source: annual_report:2025:customer_segment
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -6098,7 +6097,7 @@ nodes:
     - EPS low/high range wide
     notes: 概率为基于本地卖方一致预期与业绩预告的低置信结构化判断。
   evidence_sources:
-  - *id017
+  - *id016
   - kind: local_dp_id
     dp_id: L5.fcst.eps_cf
     source: tushare:report_rc
@@ -6109,7 +6108,7 @@ nodes:
     source: tushare:report_rc
     excerpt: '{"n_reports_90d": 32, "rating_distribution": {"买入": 20, "BUY": 1, "增持": 6, "推荐": 2, "无": 3}, "latest_report_date":
       "20260525"'
-  - &id018
+  - &id017
     kind: local_dp_id
     dp_id: L9.company.earnings_guidance
     source: tushare:forecast
@@ -6581,7 +6580,7 @@ nodes:
     - 2026Q1业绩预增55.91%-70.08%
     notes: 业绩预告为预增，未见订单不兑现证据。
   evidence_sources:
-  - *id018
+  - *id017
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -7041,7 +7040,7 @@ nodes:
     notes: 无安全/舆情危机触发。
   evidence_sources:
   - *id002
-  - &id019
+  - &id018
     kind: local_dp_id
     dp_id: L9.media.social_buzz
     source: tushare:ths_hot.热股
@@ -7303,7 +7302,7 @@ nodes:
     summary: 媒体报告为空且社交热度未在榜，无做空报告触发。
   evidence_sources:
   - *id002
-  - *id019
+  - *id018
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -8585,7 +8584,7 @@ views:
     - 605117.SH:L9.company.ma
     - 605117.SH:L9.company.product_order
     - 605117.SH:L9.media.short_report
-    edge_ids: &id020
+    edge_ids: &id019
     - CAUSAL.605117.SH.demand_to_position
     - CAUSAL.605117.SH.pricing_power_to_surprise
     - CAUSAL.605117.SH.capacity_to_utilization
@@ -8656,7 +8655,7 @@ views:
     - 605117.SH:L4.cost.cac_production
     - 605117.SH:L4.cost.rent_energy_logistics
     - 605117.SH:L4.eff.store_labor
-    edge_ids: *id020
+    edge_ids: *id019
     default_depth: 3
     top_n: 5
   valuation_expectation:
@@ -8674,7 +8673,7 @@ views:
     - 605117.SH:L2.newbiz.valuation_contrib
     - 605117.SH:L2.segment.opex_ratio
     - 605117.SH:L2.segment.profit_share
-    edge_ids: *id020
+    edge_ids: *id019
     default_depth: 3
     top_n: 5
   risk_offset:

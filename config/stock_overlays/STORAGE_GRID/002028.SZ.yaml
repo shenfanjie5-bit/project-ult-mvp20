@@ -2133,7 +2133,7 @@ nodes:
     notes: 无买方whisper绝对值；用30日一致EPS上修幅度作为预期差 proxy。
     evidence_summary: 2026E EPS一致预期30日上修3.37%，近样本2份。
   evidence_sources:
-  - &id015
+  - &id014
     kind: local_dp_id
     dp_id: L5.fcst.revisions
     source: tushare:report_rc.derived
@@ -2728,7 +2728,7 @@ nodes:
     evidence_summary: 本地竞争风险新闻源返回0且上游错误，缺少有效同业格局证据。
     notes: 不填具体竞争对手。
   evidence_sources:
-  - &id014
+  - &id013
     kind: local_dp_id
     dp_id: L9.industry.compete_risk
     source: tushare:media.report
@@ -2805,7 +2805,7 @@ nodes:
   evidence_sources:
   - *id001
   - *id007
-  - &id016
+  - &id015
     kind: local_overlay
     path: config/industry_overlays/STORAGE_GRID.yaml
     dp_id: L0.demand.terminal
@@ -3090,8 +3090,7 @@ nodes:
     evidence_summary: 应收账款77.99亿元，显示客户回款周期重要；无前五客户明细，偿付只能保守定性。
     notes: 不列具体客户名称。
   evidence_sources:
-  - &id013
-    kind: local_dp_id
+  - kind: local_dp_id
     dp_id: L5.bs.ar_ap
     source: tushare:balancesheet
     excerpt: '{"accounts_receivable": 7799346158.0, "accounts_payable": 8249123543.12, "net_working_capital_change_proxy":
@@ -5301,7 +5300,7 @@ nodes:
   update_frequency: quarterly
   last_updated: '2026-06-06T06:41:57+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
@@ -5311,13 +5310,13 @@ nodes:
   data_coverage: null
   evidence_quality: low
   value:
-    top5_revenue_pct: null
-    top10_revenue_pct: null
-    concentration_trend: null
-    notes: 本地无前五/前十客户收入占比；仅有应收账款余额。
-    evidence_summary: 应收账款77.99亿元提示回款风险，但不能推出集中度。
+    top5_pct: 9.48
+    top5_supplier_pct: 8.28
+    source: 年报2025前五名客户
   evidence_sources:
-  - *id013
+  - kind: local_dp_id
+    dp_id: L9.disclosure.annual_report
+    source: annual_report:2025:customer_segment
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -5491,7 +5490,7 @@ nodes:
   update_frequency: quarterly
   last_updated: '2026-06-06T06:41:57+08:00'
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
@@ -5501,11 +5500,30 @@ nodes:
   data_coverage: null
   evidence_quality: low
   value:
-    domestic_revenue_pct: null
-    overseas_revenue_pct: null
-    notes: 经营范围含国外工程和进出口，但未披露国内/海外收入拆分。
+    domestic_pct: 0
+    overseas_pct: 100
+    regions:
+    - name: 华东地区
+      revenue_pct: 22.53
+    - name: 华北地区
+      revenue_pct: 13.96
+    - name: 华南地区
+      revenue_pct: 6.49
+    - name: 东北地区
+      revenue_pct: 3.76
+    - name: 华中地区
+      revenue_pct: 7.71
+    - name: 西北地区
+      revenue_pct: 11.97
+    - name: 西南地区
+      revenue_pct: 6.64
+    - name: 海外地区
+      revenue_pct: 26.94
+    source: 年报2025按地区划分
   evidence_sources:
-  - *id002
+  - kind: local_dp_id
+    dp_id: L9.disclosure.annual_report
+    source: annual_report:2025:revenue_structure
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -5759,7 +5777,7 @@ nodes:
     notes: schema未注册该dp_id；收入高增缓冲替代压力，但行业竞争源无有效新闻。
   evidence_sources:
   - *id012
-  - *id014
+  - *id013
   derived_slot: true
   inherit_from_industry: false
   field_role: derived_metric
@@ -6072,7 +6090,7 @@ nodes:
     - 90日报告29份且评级以买入/增持为主
     notes: schema未注册该dp_id；概率为本地一致预期方向的保守判断。
   evidence_sources:
-  - *id015
+  - *id014
   - kind: local_dp_id
     dp_id: L5.fcst.eps_cf
     source: tushare:report_rc
@@ -6276,8 +6294,8 @@ nodes:
     risk_level: 中
     reason: 公司侧竞争风险新闻未触发；行业overlay显示终端需求偏弱、供给扩张。
   evidence_sources:
-  - *id014
-  - *id016
+  - *id013
+  - *id015
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6339,7 +6357,7 @@ nodes:
     risk_level: 中
     reason: 本地竞争风险新闻源未触发价格战，但行业定价权偏弱。
   evidence_sources:
-  - *id014
+  - *id013
   - *id008
   derived_slot: true
   inherit_from_industry: false
@@ -6402,7 +6420,7 @@ nodes:
     risk_level: 低
     reason: 本地竞争风险新闻源未提示替代技术事件。
   evidence_sources:
-  - *id014
+  - *id013
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -6975,7 +6993,7 @@ nodes:
     reason: 媒体源无有效危机新闻，社交热榜未入榜。
   evidence_sources:
   - *id010
-  - &id017
+  - &id016
     kind: local_dp_id
     dp_id: L9.media.social_buzz
     source: tushare:ths_hot.热股
@@ -7042,7 +7060,7 @@ nodes:
     reason: 媒体和竞争风险源均无供应中断事件。
   evidence_sources:
   - *id010
-  - *id014
+  - *id013
   derived_slot: true
   inherit_from_industry: false
   field_role: discount
@@ -7234,7 +7252,7 @@ nodes:
     reason: 媒体源无有效新闻，社交热榜未入榜。
   evidence_sources:
   - *id010
-  - *id017
+  - *id016
   derived_slot: true
   inherit_from_industry: false
   field_role: score_component
@@ -8516,7 +8534,7 @@ views:
     - 002028.SZ:L9.company.ma
     - 002028.SZ:L9.company.product_order
     - 002028.SZ:L9.media.short_report
-    edge_ids: &id018
+    edge_ids: &id017
     - CAUSAL.002028.SZ.demand_to_position
     - CAUSAL.002028.SZ.pricing_power_to_surprise
     - CAUSAL.002028.SZ.capacity_to_utilization
@@ -8587,7 +8605,7 @@ views:
     - 002028.SZ:L4.cost.cac_production
     - 002028.SZ:L4.cost.rent_energy_logistics
     - 002028.SZ:L4.eff.store_labor
-    edge_ids: *id018
+    edge_ids: *id017
     default_depth: 3
     top_n: 5
   valuation_expectation:
@@ -8605,7 +8623,7 @@ views:
     - 002028.SZ:L2.newbiz.valuation_contrib
     - 002028.SZ:L2.segment.opex_ratio
     - 002028.SZ:L2.segment.profit_share
-    edge_ids: *id018
+    edge_ids: *id017
     default_depth: 3
     top_n: 5
   risk_offset:
