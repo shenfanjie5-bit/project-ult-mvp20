@@ -117,3 +117,16 @@ cat factor_research/model/reports/enh_theme_speculation_stats_skeptic2.json  # �
 cat factor_research/model/reports/audit_residual.json
 cat factor_research/model/reports/audit_capability.json
 ```
+
+---
+
+## 附录 2026-06-10 晚:高波×高惊喜交互线索——已击杀(双 lens)
+
+融合研究标记的线索(mag 顶档漂移集中高波半区 +1.63%/20d t2.88,事后单切分)经专项验证(3 agents,22 配置):
+
+- **builder**(weak_positive):线索精确复现;可实施的 walk-forward 倾斜增益 +0.72%/20d t2.22、18/18 变体格同号、liquid-50/逐年存活;但 h10 不过自己的零分布、重叠校正后 NW t1.81/非重叠 t1.13。
+- **statistics skeptic(击杀)**:倾斜序列 acf1=0.554(持仓持续+窗口重叠)而置换零分布是 iid——同口径 MA(1) t1.56 < 零分布 q95 1.72;maxT 多重检验 p≈0.14;剔 2026+up_calm → +0.20% t0.48 消失;**"walk-forward"跑在发现线索的同一面板上,零独立数据**。
+- **economics skeptic(击杀)**:**不是交互,是彩票/ivol 因子再加载**——rvol⊥(ivol,max5) 后倾斜 t0.33,lottery⊥rvol 保留 t2.34;对全宇宙 vol 因子收益 beta 1.28,残差交互 alpha 仅 t1.56;换手 2.25×(~10-15bp/20d 成本);倾斜桶恰落概率层底部五分位。
+- **裁决**:不动生产;唯一可辩护残留 = c_cf 区间已按 vol 分桶(继续)。复活条件:~6 个月新面板日期 + 预注册非重叠重测。
+
+证据:`factor_research/enhancers/vol_surprise/` + `reports/enh_vol_surprise*.json`。
