@@ -1248,6 +1248,11 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
         "long_total": result.get("long_total"),
         "trading_signal": result.get("trading_signal"),
         "trading_meaning": final_score.get("trading_meaning"),
+        # RD-A dual-axis (parallel v2): merit/timing + matrix signal, shown
+        # alongside v1 until the P&L loop's matured comparison promotes it.
+        "merit": result.get("merit"),
+        "timing": result.get("timing"),
+        "trading_signal_v2": result.get("trading_signal_v2"),
         "company_score": result.get("company_score") or {},
         "final_score": final_score,
         "top_paths": top_paths,
@@ -1338,6 +1343,9 @@ def handle_ranking(_: ServerConfig, query: dict) -> HandlerResult:
         rows.append({
             "ts_code": ts,
             "trading_signal": s.get("trading_signal"),
+            "trading_signal_v2": s.get("signal_v2"),
+            "merit": s.get("merit"),
+            "timing": s.get("timing"),
             "base_score": s.get("base_score"),
             "base_score_pct": base_pct.get(ts),
             "quant": ({

@@ -61,6 +61,14 @@ CREATE TABLE IF NOT EXISTS eval_metrics (
     computed_at INTEGER NOT NULL,
     PRIMARY KEY (base_date, horizon_d)
 );
+CREATE TABLE IF NOT EXISTS scores_v2 (
+    ts_code TEXT NOT NULL,
+    base_date TEXT NOT NULL,
+    merit REAL,
+    timing REAL,
+    signal_v2 TEXT,
+    PRIMARY KEY (ts_code, base_date)
+);
 """
 
 
@@ -108,9 +116,30 @@ def production_score_fn(cfg) -> Callable[[str], dict | None]:
             "long_total": data.get("long_total"),
             "trading_signal": data.get("trading_signal"),
             "mode": data.get("mode_code") or data.get("mode"),
+            # RD-A parallel v2 (snapshotted so the matured comparison can
+            # promote/reject it on data)
+            "merit": data.get("merit"),
+            "timing": data.get("timing"),
+            "signal_v2": data.get("trading_signal_v2"),
         }
 
     return _score
+
+
+def _put_scores_v2(rows: list[dict], db_path: Path) -> None:
+    payload = [
+        (r["ts_code"], r["base_date"], r.get("merit"), r.get("timing"),
+         r.get("signal_v2"))
+        for r in rows if r.get("signal_v2") is not None
+    ]
+    if not payload:
+        return
+    with sqlite3.connect(str(db_path), isolation_level=None) as c:
+        c.executemany(
+            "INSERT OR REPLACE INTO scores_v2"
+            " (ts_code, base_date, merit, timing, signal_v2) VALUES (?,?,?,?,?)",
+            payload,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -165,8 +194,10 @@ def snapshot_scores(
         rows.append(row)
         if len(rows) >= 200:  # flush in batches so a crash resumes cheaply
             pstore.put_scores(rows, db_path)
+            _put_scores_v2(rows, db_path)
             rows = []
     pstore.put_scores(rows, db_path)
+    _put_scores_v2(rows, db_path)
     scored = len(todo) - failed
     # auditability: record the wall-clock of the snapshot so a mid-session or
     # back-dated run can always be detected after the fact.
@@ -293,9 +324,11 @@ def fill_returns(
 def _eval_one(db_path: Path, base_date: str, horizon: int) -> dict | None:
     with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as c:
         rows = c.execute(
-            """SELECT s.base_score, s.trading_signal, r.fwd_ret
+            """SELECT s.base_score, s.trading_signal, r.fwd_ret, v.signal_v2
                FROM scores s JOIN returns r
                  ON r.ts_code = s.ts_code AND r.base_date = s.base_date
+               LEFT JOIN scores_v2 v
+                 ON v.ts_code = s.ts_code AND v.base_date = s.base_date
                WHERE s.base_date=? AND r.horizon_d=? AND r.status='ok'
                  AND r.fwd_ret IS NOT NULL""",
             (base_date, horizon),
@@ -311,7 +344,7 @@ def _eval_one(db_path: Path, base_date: str, horizon: int) -> dict | None:
     buckets = pmetrics.signal_buckets(signals, rets)
     uni_mean = sum(rets) / len(rets)
     top = quint["groups"][-1]["mean_ret"] if quint.get("groups") else None
-    return {
+    out = {
         "base_date": base_date, "horizon_d": horizon, "n": len(rows),
         "rank_ic": ic["ic"], "rank_ic_p": ic["p"],
         "q5_q1": quint.get("top_minus_bottom"),
@@ -325,6 +358,17 @@ def _eval_one(db_path: Path, base_date: str, horizon: int) -> dict | None:
         "buy_minus_avoid": buckets["long_short_BUY_minus_AVOID"],
         "signal_monotone": buckets["monotone"],
     }
+    # RD-A v1-vs-v2 comparison (only when the v2 snapshot exists for the date)
+    v2 = [(r[3], r[2]) for r in rows if r[3] is not None]
+    if len(v2) >= 50:
+        b2 = pmetrics.signal_buckets([s for s, _ in v2], [x for _, x in v2])
+        out["signal_buckets_v2"] = {
+            k: {"n": v["n"], "mean_ret": v["mean_ret"], "hit_rate": v["hit_rate"]}
+            for k, v in b2["buckets"].items()
+        }
+        out["buy_minus_avoid_v2"] = b2["long_short_BUY_minus_AVOID"]
+        out["signal_monotone_v2"] = b2["monotone"]
+    return out
 
 
 def evaluate(
@@ -451,6 +495,17 @@ def latest_snapshot(db_path: Path | None = None) -> tuple[str | None, dict[str, 
                     "SELECT * FROM scores WHERE base_date=?", (base_date,)
                 )
             }
+            try:  # RD-A v2 columns (table may predate the v2 schema)
+                for row in c.execute(
+                    "SELECT * FROM scores_v2 WHERE base_date=?", (base_date,)
+                ):
+                    if row["ts_code"] in rows:
+                        rows[row["ts_code"]].update({
+                            "merit": row["merit"], "timing": row["timing"],
+                            "signal_v2": row["signal_v2"],
+                        })
+            except sqlite3.OperationalError:
+                pass
         return base_date, rows
     except sqlite3.OperationalError:
         return None, {}

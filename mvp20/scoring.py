@@ -197,6 +197,45 @@ SIGNAL_WATCH_THRESHOLD = -0.50
 # anything strictly below WATCH threshold => AVOID
 
 
+# ── RD-A dual-axis signal (PARALLEL v2 — headline stays v1 until the P&L loop
+# promotes it; see docs/audit/rda_dual_axis_design_2026-06-10.md) ────────────
+#
+# The single-axis base lets timing variance dominate: a high-merit company in
+# an expensive/overheated tape gets pushed to AVOID ("好公司但贵" failure mode,
+# redesign item RD-A). v2 decomposes the SAME six components into
+#   merit  M = fundamental + expectation_gap − risk_discount     (公司质量)
+#   timing T = valuation_rerating + capital_sentiment − priced_in (入场时机)
+# (so M + T == the core unweighted base, exactly) and reads the signal off a
+# 2-D matrix where strong merit with poor timing degrades to HOLD/WATCH — never
+# AVOID. Bands are provisional absolute cuts on the core scale; the promotion
+# decision (and any re-anchoring) comes from the P&L loop's v1-vs-v2 matured
+# comparison, NOT from hand-tuning.
+MERIT_BAND = 0.15
+TIMING_BAND = 0.15
+#: a deeply negative timing axis (crowding + rich valuation together) degrades
+#: even a strong-merit name from HOLD to WATCH (still never AVOID).
+TIMING_DEEP_NEGATIVE = -0.50
+
+
+def dual_axis_signal(merit: float, timing: float) -> str:
+    """BUY/HOLD/WATCH/AVOID from the (merit, timing) 2-D matrix."""
+
+    if merit > MERIT_BAND:
+        if timing > TIMING_BAND:
+            return "BUY"
+        if timing < TIMING_DEEP_NEGATIVE:
+            return "WATCH"
+        return "HOLD"          # 好公司但时机差 → 持有/等待, 不是回避
+    if merit >= -MERIT_BAND:
+        if timing < -TIMING_BAND:
+            return "WATCH"
+        return "HOLD"
+    # weak merit
+    if timing < -TIMING_BAND:
+        return "AVOID"
+    return "WATCH"             # 差公司好时机 → 最多观察, 不追
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1796,6 +1835,14 @@ def score_company(
         horizon_weights=horizon_weights,
     )
 
+    # RD-A v2 (parallel): merit/timing decomposition of the SAME six core
+    # components (M + T == core unweighted base). Computed on the CORE scale
+    # (pre-market-adapter; regime modulation is R-7's job, not v2's).
+    merit = fundamental + expectation_gap_score - risk_discount
+    timing = (valuation_rerating_score + capital_sentiment
+              - priced_in_discount)
+    signal_v2 = dual_axis_signal(merit, timing)
+
     return {
         "ts_code": ts_code,
         "industry_id": industry_id,
@@ -1814,6 +1861,9 @@ def score_company(
         "market_adapter": market_adapter,
         "top_paths": top,
         "trading_signal": signal,
+        "merit": merit,
+        "timing": timing,
+        "trading_signal_v2": signal_v2,
         "signals": signals,
         "role_components": role_components,
     }
@@ -1838,5 +1888,6 @@ __all__ = [
     "compute_final_score",
     "compute_node_score",
     "compute_path_score",
+    "dual_axis_signal",
     "score_company",
 ]
