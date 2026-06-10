@@ -1,0 +1,116 @@
+{
+  "audit": "capability_gap_architecture",
+  "role": "能力缺口架构师 — framework vs TRUE GOAL (per-stock 上涨概率+幅度)",
+  "date": "2026-06-10",
+  "scope_note": "Architecture-vs-goal only. Field-level artifacts (sentiment double-count, run_up staleness, etc.) already documented in docs/audit/a_share_score_fidelity_audit_2026-06-03.md + base_score_redesign_proposal.md and are NOT repeated.",
+
+  "capability_inventory": {
+    "what_pipeline_actually_produces": {
+      "surface": "GET /api/project-ult/score (mvp20/server.py:1092-1204) per single ts_code",
+      "outputs": [
+        "company_score = damped confidence-weighted MEAN of opinionated industry/financial nodes + event + capital - risk - valuation_pressure - priced_in (mvp20/scoring.py:362-477)",
+        "base_score = fundamental + expectation_gap + valuation_rerating + capital_sentiment - risk - priced_in (mvp20/scoring.py:538)",
+        "short/medium/long_total = static reweights of the SAME six components via SPEC28_DEFAULT_HORIZON_MIX (mvp20/scoring.py:89-108,540-554)",
+        "market_adjusted_final_score = base * exp(kappa*Σ w_i*f_i) multiplier + local scores - discounts (mvp20/market_adapter.py:115-174); empirically ≈ identity for A-shares (multiplier median 1.007, scoring.py:177-178 R-5 note)",
+        "trading_signal BUY/HOLD/WATCH/AVOID from ABSOLUTE thresholds 0.20/-0.15/-0.50 on market-adjusted base (scoring.py:194-196, applied 1793-1797)",
+        "mode = 7-state rule classifier (scoring.py:618-829) + mode_confidence (rule-gating average, scoring.py:832-848 — NOT a probability)",
+        "top_paths, signals pack, role_components",
+        "derive-layer L11.short/mid/long.score + L11.mode + L11.trade.signal snapshot dp_ids — audit_only, participates_in_score=false (mvp20/derive.py:1676-1729)"
+      ]
+    },
+    "probability_calibration": {
+      "present": false,
+      "evidence": "No P(up) anywhere in mvp20/. The only probability-shaped objects are industry_graphs priors.state_probabilities — validated for sum-to-1 by mvp20/graph.py:341-376 and consumed by NOTHING numeric (served raw to frontend via handle_industry_graph server.py:271-297). trading_signal buckets carry no win-rate semantics; mode_confidence is a rule-average."
+    },
+    "forward_return_supervision": {
+      "present": false,
+      "evidence": "Zero references to realized/forward returns in mvp20/*.py (grep). Production /api/backtest + /api/project-ult/backtests return an EMPTY FIXTURE {backtests: [], total: 0} (mvp20/adapters/audit_eval.py:44-48). The only supervision is the ISOLATED, manually-run pit_backtest/ harness (scripts/run_pit_backtest.py) whose outputs land in docs/audit/ markdown — no production loop reads them back."
+    },
+    "walk_forward_evaluation_loop": {
+      "present": false,
+      "evidence": "Every calibration constant is hand-tuned on a single current-day cross-section: SIGNAL_* thresholds re-anchored on 'the 116-stock base distribution' of one snapshot (scoring.py:174-196 R-5 comment), _INDUSTRY_TOTAL_SCALE K=2.0 'calibrated on the post-L0-wiring A-share distribution' (scoring.py:127-140). The code itself admits the gap: 'to be validated by the point-in-time backtest rather than hand-tuned' (scoring.py:190-193). pit_backtest exists but is one-shot research, not a loop."
+    },
+    "regime_layer": {
+      "present": "wired_but_dormant",
+      "evidence": "market_regime_multiplier score_target exists (scoring.py:1337, aggregator.py:339) fed by L7.env.market_trend et al. (config/data_point_roles.yaml:2480-2549) into market_adapter factor 'market_regime' with CN_A weights short 0.08 / mid 0.21 / long 0.39 (config/market_adapters.yaml). Empirically multiplier median ≈ 1.007 → identity (scoring.py:177-178). K regime-adaptivity is an explicit unwired TODO (scoring.py:135-139). No regime conditioning of thresholds, horizon mixes, or confidence."
+    },
+    "liquid_universe_gating": {
+      "present": false,
+      "evidence": "No turnover/size/ST/liquidity filter anywhere in scoring or the /score handler — every onboarded stock gets an equally-confident signal. peer_context builds valuation/industry pools only (mvp20/peer_context.py:98-166), no liquidity pool. All research alpha (REPORT.md/REPORT_PROB.md) exists ONLY in liquid-70; microcap artifact is the documented default failure mode — production has no defense."
+    },
+    "horizon_consistent_labeling": {
+      "present": false,
+      "evidence": "Horizons are produced by (a) keyword matching dp_id/node_name to fixed (short,med,long) weight vectors (aggregator._classify_horizon, mvp20/aggregator.py:297-315) and (b) static component reweights (scoring.py:89-108). No horizon was ever fit or validated against a matching forward-return window (5/10/20d). trading_signal is horizon-blind by construction: _trading_signal_from_mix(base, base, base) (scoring.py:1793-1797)."
+    },
+    "cross_sectional_semantics": {
+      "present": "partial",
+      "evidence": "R-3 peer_context cross-sectionalizes a few INPUTS (valuation percentile pools; analyst-rating re-centering aggregator.py:1090-1102), but the OUTPUT is per-stock absolute; no endpoint ranks the universe, no decile semantics, BUY% drifts with data-coverage changes (the R-5 comment documents base shifting ~0.16 from a governance fix alone, scoring.py:180-190)."
+    }
+  },
+
+  "trace_industry_graphs": {
+    "question": "do priors/shock_model/prediction_target feed NUMERIC scoring?",
+    "answer": "NO — LLM/display plumbing only.",
+    "details": [
+      "prediction_target (config/industry_graphs/AI_COMPUTE.yaml:25-27): 'r_i_h = market_beta*r_market + sector_beta*r_sector + alpha_i_h — 预测剥离大盘与行业贝塔后的 alpha'. This equation is YAML PROSE. Nothing in mvp20/ ever computes a beta, fetches an index return, or strips market/sector return. The numeric pipeline scores absolute bullishness — it does not even target the quantity the spec defines.",
+      "shock_model (AI_COMPUTE.yaml:36-52): Shock_eff with PricedIn_pre decay D_pre and post-reaction decay D_post — never implemented; production priced_in is the separate run_up field channel.",
+      "state_probabilities / valuation_mix / tail_risk mu_adjusted formula: structurally validated by mvp20/graph.py:335-438 (_validate_priors checks types and sum-to-1) and never evaluated.",
+      "edges with beta_positive/beta_negative/threshold/lag: validated by graph.py, ZERO references in aggregator.py — the causal graph never propagates anything numerically. aggregate_company_graph only walks the stock overlay's parent_node tree (mvp20/aggregator.py:2017-2148) and uses industry_overlay solely for value inheritance (aggregator.py:1988-2013).",
+      "Consumers of industry_graphs yaml: (1) graph.py validators, (2) server.py handle_industry_graph:271-297 raw passthrough to frontend, (3) overlays.py:603,701 records the path string base_industry_graph as LLM-planning context for Codex overlay fill. That is all."
+    ]
+  },
+
+  "trace_event_coefficient": {
+    "question": "how does the one VALIDATED enhancer enter the system?",
+    "answer": "Display-only. The validated coefficient reaches /market-events; base_score instead ingests the SAME payload through a different, UNVALIDATED encoding.",
+    "details": [
+      "forecast_coefficient (mvp20/event_coefficient.py:70-97, type-conditional _BASE_ABN + magnitude scaling, validated=True, h=1) is imported ONLY by handle_market_events (mvp20/server.py:650,669) with 90-day staleness filter and honest caveats metadata. Exemplary honesty contract.",
+      "score path: compute_company_score's `event` term comes from aggregated_nodes['company_event_score'] which the aggregator NEVER writes (grep: zero emit sites; scoring.py:1627-1629 comment 'not yet computed by A1; default to 0') → the §27.3 event channel is structurally 0 in production.",
+      "MEANWHILE L9.company.earnings_guidance DOES enter base_score via governance: data_point_roles.yaml:3068-3079 routes it to expectation_gap, and aggregator._realtime_field_signal maps it as tanh(mean(change_pct_min,max)/100) (mvp20/aggregator.py:1057-1066) — ignoring the validated type-conditional calibration, ignoring the h=1-day validity horizon (expectation_gap is horizon-agnostic, damped-mean, no ann_date decay beyond generic recency), ignoring the short-leg-survivorship caveat.",
+      "Net: TWO parallel encodings of the same event; the validated one cannot reach the score, the unvalidated one does. There is no registration path 'validated research coefficient → scoring channel'."
+    ]
+  },
+
+  "integration_blueprint": {
+    "principle": "Per REPORT_PROB.md §3/§6: P(up) ⊥ E[ret]; fusion into one number is empirically destructive (tail misalignment). Therefore the two-layer model attaches as PARALLEL OUTPUTS, never as terms inside base_score.",
+    "two_layer_model": {
+      "what": "mag_score = ew(sue, npq_yoy) → exp_excess(+20d)+q10–q90; prob_score = ew(-rvol_20,-ivol_60,-max5,-turnover_20,+ep_ttm) → p_beat_median. Spec in factor_research/model/final_model.json, product demo emit_score.py.",
+      "where": [
+        "New pure module mvp20/quant_score.py modeled on event_coefficient.py's honesty contract: returns {mag_score_pct, exp_excess_20d, q10_q90, p_beat_median, horizon_days, validated, caveats, regime} — pure function, no I/O, unit-testable.",
+        "Compute in the derive layer (precedent: L11.tech.*, L11.short/mid/long.score) writing new dp_ids L11.quant.mag / L11.quant.prob with participates_in_score=false (audit_only) — shadow mode first, exactly how L11.trade.signal is handled (derive.py:1682-1693).",
+        "Surface in /score envelope as a SEPARATE block (e.g. quant_forecast: {prob, magnitude}) next to — not inside — final_score; and optionally in /market-events-style UI with validated flags.",
+        "Inputs already collected: hfq bars (L11.tech pipeline), MV, turnover; SUE/npq_yoy from income-statement collector; calibration tables frozen from final_model.json walk-forward fit."
+      ],
+      "must_not": [
+        "Sum either layer into base_score / fundamental / capital_sentiment (proven destructive: REPORT_PROB decisive-negative fusion).",
+        "Emit absolute P(up) (uncalibratable, day base-rate 0.12–0.97); only market-relative p_beat_median.",
+        "Emit for illiquid names: gate on liquid-70 membership computed in build_peer_context (natural attachment — it already scans the universe); outside the gate emit validated:false / null."
+      ]
+    },
+    "event_coefficient_into_score": {
+      "minimal_change": "Make forecast_coefficient the single source of truth for the earnings_guidance signal: replace the ad-hoc tanh(change_pct/100) branch in aggregator._realtime_field_signal (aggregator.py:1057-1066) with a call to event_coefficient.forecast_coefficient, routed to a SHORT-horizon-only additive channel with explicit ann_date decay (e.g. → 0 after ~5 trading days), not the horizon-agnostic expectation_gap damped mean.",
+      "must_not": "Keep both encodings live (double count); let an h=1-validated alpha leak into medium/long totals."
+    },
+    "future_enhancers": {
+      "题材热度": "theme_multiplier score_target + market-adapter theme factor (CN_A short weight 0.25) ALREADY exist as empty sinks — fill via a validated theme-heat factor as multiplier nodes; no new axis needed. Validation per EVAL PROTOCOL before participates_in_score=true.",
+      "产业链传导": "industry_graphs edges are the right data structure but no executor exists; minimal path = OFFLINE precomputed 'supply-chain neighbor event exposure' artifact per stock (peer_context pattern: build offline, load <10ms, server.py:1131-1143) injected as an expectation_gap/new_catalyst node. Do NOT build runtime graph propagation in the request path.",
+      "预告快报时点": "extends the event_coefficient module family (forecast_v1 → express_v1) — same pure-function + validated/caveats contract, same short-horizon channel.",
+      "regime": "wire L7.env.market_trend regime to (i) confidence band, (ii) prob-layer de-rating in down_turbulent (REPORT_PROB §6 precondition ⑨), (iii) eventually K — but ONLY after pit_backtest validates each, never hand-tuned (scoring.py:190-193 already mandates this)."
+    },
+    "pnl_feedback_loop": {
+      "minimal_change": "Scores are already persisted per day (L11.* snapshot + runtime/history parquet). Add a scheduled job that T+5/10/20 later joins stored base_score/trading_signal/L11.quant.* with realized hfq returns (pit_backtest/metrics.py rank-IC machinery is import-reusable), writes monthly rank-IC / top-decile-excess / signal-bucket hit-rates to a runtime table, and serve it from the currently-empty /api/project-ult/backtests fixture (adapters/audit_eval.py:44-48). This single loop converts every future calibration debate from hand-tuning to measurement."
+    }
+  },
+
+  "gaps_ranked": [
+    {"id": "G1", "severity": "critical", "title": "No production P&L feedback loop — scores never meet realized returns", "evidence": "mvp20/adapters/audit_eval.py:44-48 (empty fixture); zero realized-return references in mvp20/*.py; pit_backtest/ is isolated+manual"},
+    {"id": "G2", "severity": "critical", "title": "No probability semantics on any output despite goal = 上涨概率+幅度", "evidence": "scoring.py:194-196 absolute score cuts; graph.py:341-376 priors validated-unused; no P(up)/E[ret] decomposition anywhere"},
+    {"id": "G3", "severity": "critical", "title": "Prediction-target mismatch: spec demands alpha after stripping market+sector beta; pipeline never computes betas or benchmark returns", "evidence": "config/industry_graphs/AI_COMPUTE.yaml:25-27 vs scoring.py/market_adapter.py (multiplicative exp(kappa·Σ), no subtraction of r_market/r_sector)"},
+    {"id": "G4", "severity": "high", "title": "Horizon labels unsupervised: keyword-classified mixes, never tied to forward windows; trading_signal horizon-blind", "evidence": "aggregator.py:297-315; scoring.py:89-108; scoring.py:1793-1797"},
+    {"id": "G5", "severity": "high", "title": "Validated event alpha is display-only while an unvalidated encoding of the same payload feeds the score", "evidence": "server.py:669 vs aggregator.py:1057-1066; data_point_roles.yaml:3068-3079; company_event_score never emitted (scoring.py:1627-1629)"},
+    {"id": "G6", "severity": "high", "title": "No liquid-universe gating: all research alpha is liquid-70-only, production signals every stock equally", "evidence": "peer_context.py:98-166 (no liquidity pool); no filter in handle_score / score_company"},
+    {"id": "G7", "severity": "medium", "title": "Regime layer wired but dormant (multiplier ≈ identity, K fixed TODO)", "evidence": "scoring.py:135-139,177-178; config/market_adapters.yaml CN_A market_regime weights; data_point_roles.yaml:2480-2549"},
+    {"id": "G8", "severity": "medium", "title": "Dead/decisionless channels: §27.3 event term structurally 0; confidence recorded but gates nothing (no abstain)", "evidence": "scoring.py:1627-1629,1739-1749 (R-2c); aggregator never emits company_event_score"},
+    {"id": "G9", "severity": "medium", "title": "No cross-sectional output semantics: per-stock absolute thresholds drift with coverage changes; no universe ranking endpoint", "evidence": "scoring.py:174-196 (threshold re-anchoring history); server routes (server.py:1332-1386) have no ranking surface"}
+  ]
+}
