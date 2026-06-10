@@ -42,6 +42,12 @@ OUT = "config/quant_score_params.json"
 
 MAG_CFG = json.load(open("factor_research/model/final_model.json"))
 PROB_FEATURES = ["ivol_60", "max5", "turnover_20", "ep_ttm"]
+#: v3: + t5a THS concept limit-up heat (sign carried by its frozen IC weight,
+#: which is NEGATIVE — hot themes -> lower P(beat median)). Verified by the
+#: enhancer workflow: incremental disc −2.5pp on TOP of the 4-feature
+#: composite after full controls (REPORT_FRAMEWORK_ENHANCERS.md §3.1).
+THEME_FEATURE = "cpt_heat5"
+THEME_NPZ = "factor_research/enhancers/theme_speculation/theme_factors.npz"
 LIQUID_FRAC = 0.70
 MAG_HORIZON = 20
 PROB_HORIZON = 10
@@ -56,6 +62,20 @@ def _git_sha() -> str | None:
             ["git", "rev-parse", "--short", "HEAD"], text=True).strip()
     except Exception:  # noqa: BLE001
         return None
+
+
+def _neutralized_theme(z, meta) -> "np.ndarray":
+    """t5a concept-heat [D,N,1], neutralized per date exactly like the panel
+    features (winsor->z->residualize[1,ln_mv,industry]->rank-z). Loaded from
+    the enhancer-workflow matrix (panel-aligned); dates beyond the 打板 data
+    end (2026-03-23) stay NaN."""
+
+    th = np.load(THEME_NPZ, allow_pickle=True)
+    t5a = th["t5a_cptheat5"].astype(np.float64)
+    assert t5a.shape == (len(meta["base_dates"]), len(meta["cols"])), \
+        "theme matrix not panel-aligned"
+    zin = {"feat": t5a[:, :, None], "ln_mv": z["ln_mv"], "industry": z["industry"]}
+    return H.neutralize(zin, None, cache=False)
 
 
 def main() -> None:
@@ -75,32 +95,43 @@ def main() -> None:
         raise RuntimeError("magnitude bins incomplete — panel too thin?")
     uni_mean = float(np.nanmean([s["mean"] for s in mag_stats]))
 
-    # ---- probability layer: rel target on fwd10 ----
+    # ---- probability layer v3: rel target on fwd10, 4 panel features +
+    # external t5a concept-heat (neutralized identically) ----
     fwd10 = z[f"fwd{PROB_HORIZON}"].astype(np.float64).copy()
     for d in range(fwd10.shape[0]):
         ok = np.isfinite(fwd10[d]) & mask[d]
         if ok.sum() > 50:
             fwd10[d] = fwd10[d] - np.median(fwd10[d][ok])
-    prob_cfg = {"name": "prob_layer_v2", "method": "ic_weighted",
-                "features": PROB_FEATURES, "params": {"min_cov": 0.5},
-                "min_train_dates": 12}
-    prob_scores = H.walk_forward(Z, fwd10, meta, prob_cfg)
-    train_idx_p = [d for d in range(prob_scores.shape[0])
-                   if np.isfinite(prob_scores[d]).any()]
+
+    fsel = [names.index(f) for f in PROB_FEATURES]
+    Z5 = np.concatenate([Z[:, :, fsel], _neutralized_theme(z, meta)], axis=2)
+    feat5 = PROB_FEATURES + [THEME_FEATURE]
+
+    # frozen per-feature IC weights = full-sample mean per-date rank-IC; the
+    # SAME frozen weights are then used for the bin fit below (a prior export
+    # mixed walk-forward scores into the bins while freezing full-sample
+    # weights — the parity skeptic flagged the inconsistency; now both sides
+    # of the frozen artifact use one weight set).
+    valid_d = np.array([d for d in range(Z5.shape[0]) if np.isfinite(fwd10[d]).any()])
+    w = H._ic_weights(Z5[valid_d], fwd10[valid_d], None)
+    prob_weights = {f: float(w[i]) for i, f in enumerate(feat5)}
+    if prob_weights[THEME_FEATURE] >= 0:
+        raise RuntimeError(
+            f"theme heat weight came out non-negative ({prob_weights[THEME_FEATURE]:.4f}) "
+            "— contradicts the verified negative signal; refusing to freeze")
+
+    cov5 = np.isfinite(Z5).mean(axis=2)
+    Xi = np.where(np.isfinite(Z5), Z5, 0.0)
+    prob_scores = Xi @ w
+    prob_scores[cov5 < 0.5] = np.nan
+    train_idx_p = [int(d) for d in valid_d]
     prob_stats, _ = fit_bins(prob_scores, fwd10, mask, train_idx_p)
     if any(s is None for s in prob_stats):
         raise RuntimeError("probability bins incomplete")
     base_rate = float(np.nanmean([s["p_up"] for s in prob_stats]))
 
-    # frozen per-feature IC weights = full-sample trailing weights (what the
-    # last walk-forward step would use). Recompute explicitly for transparency.
-    fsel = [names.index(f) for f in PROB_FEATURES]
-    w = H._ic_weights(Z[:, :, fsel][np.array(train_idx_p)],
-                      fwd10[np.array(train_idx_p)], None)
-    prob_weights = {f: float(w[i]) for i, f in enumerate(PROB_FEATURES)}
-
     params = {
-        "version": 1,
+        "version": 2,
         "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "git_sha": _git_sha(),
         "panel": {"base_dates": [meta["base_dates"][0], meta["base_dates"][-1]],
@@ -121,7 +152,7 @@ def main() -> None:
                     "note": "liquid-70 top-decile excess vs universe, walk-forward (REPORT.md §6)"},
         },
         "probability": {
-            "features": PROB_FEATURES,
+            "features": PROB_FEATURES + [THEME_FEATURE],
             "method": "ic_weighted_frozen",
             "weights": prob_weights,
             "horizon_days": PROB_HORIZON,
@@ -129,8 +160,15 @@ def main() -> None:
             "base_rate": base_rate,
             "top_bin_shrink": TOP_BIN_SHRINK,
             "bins": [{k: s[k] for k in ("n", "p_up", "mean")} for s in prob_stats],
+            "theme_feature": {
+                "name": THEME_FEATURE,
+                "definition": ("mean over stock's THS N-type concepts of "
+                               "(member limit-up closes past 5 trading days / concept size)"),
+                "verified": "incremental disc −2.5pp on top of the 4-feature composite (REPORT_FRAMEWORK_ENHANCERS §3.1)",
+                "membership_snapshot_caveat": "concept membership is a current snapshot (look-ahead in backfill, mitigated pre-2023-concepts check)",
+            },
             "oos": {"disc_top_bottom_pp": 5.5, "t": 2.0,
-                    "note": "honest fwd expectation 5-7pp after multiple-testing haircut (REPORT_PROB.md §5.1)"},
+                    "note": "honest fwd expectation 5-7pp (4-feature, REPORT_PROB.md §5.1) + theme −2.5pp incremental"},
         },
         "caveats": [
             "validated ONLY on the liquid top-70% by market cap; outside -> validated:false",

@@ -27,10 +27,12 @@ def _fake_params() -> dict:
             "uni_mean": 0.0245, "bins": mag_bins, "oos": {},
         },
         "probability": {
-            "features": ["ivol_60", "max5", "turnover_20", "ep_ttm"],
+            "features": ["ivol_60", "max5", "turnover_20", "ep_ttm", "cpt_heat5"],
             "method": "ic_weighted_frozen",
             "weights": {"ivol_60": -0.043, "max5": -0.044,
-                        "turnover_20": -0.039, "ep_ttm": 0.034},
+                        "turnover_20": -0.039, "ep_ttm": 0.034,
+                        "cpt_heat5": -0.029},
+            "theme_feature": {"name": "cpt_heat5"},
             "horizon_days": 10, "target": "P(beat median)",
             "base_rate": 0.4965, "top_bin_shrink": 0.5,
             "bins": prob_bins, "oos": {},
@@ -42,8 +44,10 @@ def _fake_params() -> dict:
 def _fake_cross_section(n=400, seed=7):
     rng = np.random.default_rng(seed)
     codes = [f"{i:06d}.SZ" for i in range(1, n + 1)]
-    feat_names = ["sue", "npq_yoy", "ivol_60", "max5", "turnover_20", "ep_ttm"]
+    feat_names = ["sue", "npq_yoy", "ivol_60", "max5", "turnover_20", "ep_ttm",
+                  "cpt_heat5"]
     feat = rng.normal(size=(n, len(feat_names)))
+    feat[:, 6] = np.abs(feat[:, 6])  # heat is non-negative
     lnmv = rng.normal(15.0, 1.2, size=n)
     industry = rng.integers(0, 8, size=n).astype(np.int32)
     return codes, feat, feat_names, lnmv, industry
@@ -193,3 +197,26 @@ def test_score_endpoint_carries_quant_block(tmp_path, monkeypatch):
     monkeypatch.setattr(qs, "ARTIFACT_DIR", tmp_path / "absent")
     block2 = server._quant_block(codes[0])
     assert block2["available"] is False
+
+
+def test_theme_block_present_and_overheat_decile():
+    params = _fake_params()
+    codes, feat, names, lnmv, ind = _fake_cross_section()
+    rows = qs.build_rows(codes, feat, names, lnmv, ind, params)
+    themed = [r for r in rows.values() if r.get("validated") and "theme" in r]
+    assert themed, "theme block missing despite finite heat column"
+    hot = [r for r in themed if r["theme"]["overheat"]]
+    frac = len(hot) / len(themed)
+    assert 0.05 < frac < 0.15  # ~top decile flagged
+    assert all(r["theme"]["heat_pct"] >= 90.0 for r in hot)
+
+
+def test_theme_block_absent_when_column_nan():
+    params = _fake_params()
+    codes, feat, names, lnmv, ind = _fake_cross_section()
+    feat = feat.copy()
+    feat[:, names.index("cpt_heat5")] = np.nan  # stale 打板 archive
+    rows = qs.build_rows(codes, feat, names, lnmv, ind, params)
+    valid = [r for r in rows.values() if r.get("validated")]
+    assert valid, "rows must still validate on the remaining 4 prob features"
+    assert all("theme" not in r for r in valid)

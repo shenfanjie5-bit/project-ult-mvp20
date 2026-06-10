@@ -261,6 +261,20 @@ def build_rows(codes: Sequence[str], feat: "np.ndarray", feat_names: Sequence[st
     mb = _bin_of(mag_score, eligible, k)
     pb = _bin_of(prob_score, eligible, k)
 
+    # 题材过热 display badge (verified NEGATIVE signal, avoid-gate semantics):
+    # raw concept-heat percentile within the eligible cross-section; top decile
+    # flagged overheat. Absent (e.g. 打板 archive stale -> NaN column) -> no
+    # theme block at all rather than a stale badge.
+    theme_name = (prob_p.get("theme_feature") or {}).get("name")
+    theme_pct = None
+    if theme_name and theme_name in name_idx:
+        raw_theme = feat[:, name_idx[theme_name]].astype(float)
+        okt = np.isfinite(raw_theme) & eligible
+        if okt.sum() > 30:
+            theme_pct = np.full(len(codes), np.nan)
+            r = np.argsort(np.argsort(raw_theme[okt]))
+            theme_pct[okt] = 100.0 * r / max(int(okt.sum()) - 1, 1)
+
     # magnitude percentile within the eligible cross-section
     pct = np.full(len(codes), np.nan)
     okm = np.isfinite(mag_score) & eligible
@@ -306,6 +320,11 @@ def build_rows(codes: Sequence[str], feat: "np.ndarray", feat_names: Sequence[st
                 "base_rate": round(base_rate, 3),
             },
         }
+        if theme_pct is not None and theme_pct[j] == theme_pct[j]:
+            rows[ts]["theme"] = {
+                "heat_pct": round(float(theme_pct[j]), 1),
+                "overheat": bool(theme_pct[j] >= 90.0),
+            }
     return rows
 
 
