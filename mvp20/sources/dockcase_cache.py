@@ -175,6 +175,16 @@ def read(endpoint: str, kwargs: dict[str, Any]):
         return None
     if df is None or len(df) == 0:
         return None
+    # Archive hygiene: some by-symbol files carry exact-duplicate rows (notably
+    # fina_indicator — ~33% of rows/file, each filing ingested 2×). Drop full-row
+    # duplicates on the CONSUMER path only (refresh_existing keeps its faithful
+    # never-dedup append). Only byte-identical rows are removed, so legitimate
+    # multi-report_type / multi-product / multi-analyst rows are all preserved.
+    before = len(df)
+    df = df.drop_duplicates(ignore_index=True)
+    if len(df) != before:
+        log.debug("[dockcase] dedup %s %s: %d→%d rows",
+                  endpoint, kwargs.get("ts_code"), before, len(df))
     return _apply_filters(df, endpoint, kwargs)
 
 
