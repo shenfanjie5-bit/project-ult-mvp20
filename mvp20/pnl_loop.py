@@ -427,3 +427,30 @@ def rolling_summary(db_path: Path | None = None) -> dict | None:
         return pstore.get_manifest("rolling_summary", db_path or DEFAULT_DB)
     except sqlite3.OperationalError:
         return None
+
+
+def latest_snapshot(db_path: Path | None = None) -> tuple[str | None, dict[str, dict]]:
+    """(base_date, {ts_code: score-row}) for the most recent snapshot, for the
+    cross-sectional ranking surface (G9). Request-path safe: returns
+    ``(None, {})`` on absence/lock instead of raising."""
+
+    db_path = db_path or DEFAULT_DB
+    if not Path(db_path).exists():
+        return None, {}
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as c:
+            c.execute("PRAGMA busy_timeout=500")
+            r = c.execute("SELECT MAX(base_date) FROM scores").fetchone()
+            if not r or not r[0]:
+                return None, {}
+            base_date = r[0]
+            c.row_factory = sqlite3.Row
+            rows = {
+                row["ts_code"]: dict(row)
+                for row in c.execute(
+                    "SELECT * FROM scores WHERE base_date=?", (base_date,)
+                )
+            }
+        return base_date, rows
+    except sqlite3.OperationalError:
+        return None, {}

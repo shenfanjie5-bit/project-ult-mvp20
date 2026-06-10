@@ -220,3 +220,53 @@ def test_theme_block_absent_when_column_nan():
     valid = [r for r in rows.values() if r.get("validated")]
     assert valid, "rows must still validate on the remaining 4 prob features"
     assert all("theme" not in r for r in valid)
+
+
+def test_ranking_handler_joins_snapshot_and_quant(tmp_path, monkeypatch):
+    from mvp20 import pnl_loop, server
+
+    # quant artifact
+    params = _fake_params()
+    codes, feat, names, lnmv, ind = _fake_cross_section(n=200)
+    art = qs.build_artifact("20260610", codes, feat, names, lnmv, ind, params)
+    qs.save_artifact(art, root=tmp_path)
+    monkeypatch.setattr(qs, "ARTIFACT_DIR", tmp_path)
+
+    # snapshot db (base_score monotone in index; top quarter BUY)
+    db = tmp_path / "pnl.sqlite"
+    monkeypatch.setattr(pnl_loop, "DEFAULT_DB", db)
+    from pit_backtest import store as pstore
+    rows = [{"ts_code": ts, "base_date": "20260610",
+             "base_score": i / 100.0, "trading_signal": "BUY" if i > 150 else "HOLD",
+             "short_total": 0, "medium_total": 0, "long_total": 0, "mode": "x"}
+            for i, ts in enumerate(codes)]
+    pstore.put_scores(rows, db)
+
+    status, env = server.handle_ranking(server.ServerConfig(), {})
+    assert status == 200
+    d = env["data"]
+    assert d["asof_snapshot"] == "20260610" and d["asof_quant"] == "20260610"
+    assert d["total"] == 200 and len(d["rows"]) == 50
+    # default sort: quant_mag desc — validated rows first, descending pct
+    top = d["rows"][0]
+    assert top["quant_validated"] and top["quant"]["mag_score_pct"] > 99
+    # base_score percentile present and consistent
+    assert d["rows"][0]["base_score_pct"] is not None
+    # sort by base_score: highest base first
+    status, env = server.handle_ranking(server.ServerConfig(), {"sort": ["base_score"]})
+    assert env["data"]["rows"][0]["base_score"] == max(r["base_score"] for r in rows)
+    # signal filter
+    status, env = server.handle_ranking(server.ServerConfig(), {"signal": ["BUY"]})
+    assert all(r["trading_signal"] == "BUY" for r in env["data"]["rows"])
+    # bad sort -> 400
+    status, _ = server.handle_ranking(server.ServerConfig(), {"sort": ["bogus"]})
+    assert status == 400
+
+
+def test_ranking_handler_empty_is_honest(tmp_path, monkeypatch):
+    from mvp20 import pnl_loop, server
+    monkeypatch.setattr(pnl_loop, "DEFAULT_DB", tmp_path / "none.sqlite")
+    monkeypatch.setattr(qs, "ARTIFACT_DIR", tmp_path / "void")
+    status, env = server.handle_ranking(server.ServerConfig(), {})
+    assert status == 200
+    assert env["data"]["rows"] == [] and env["data"]["total"] == 0

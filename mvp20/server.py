@@ -1271,6 +1271,108 @@ def _quant_block(ts_code: str) -> dict:
         return {"available": False, "reason": f"quant lookup failed: {exc}"}
 
 
+_RANKING_SORTS = ("quant_mag", "quant_prob", "base_score")
+
+
+def handle_ranking(_: ServerConfig, query: dict) -> HandlerResult:
+    """G9 cross-sectional ranking surface — all research evidence says the
+    information lives in the CROSS-SECTION, but the product only served
+    single-ts_code /score. Joins the latest nightly score snapshot
+    (runtime/backtest/pnl.sqlite) with the quant artifact and returns the
+    universe ranked by ``?sort=quant_mag|quant_prob|base_score``.
+
+    base_score gets a same-day cross-sectional percentile (its absolute level
+    re-anchors whenever coverage governance shifts — the percentile is the
+    stable consumption form). Honest-empty until the first snapshot exists.
+    """
+
+    sort = (query.get("sort") or ["quant_mag"])[0]
+    if sort not in _RANKING_SORTS:
+        return 400, _error_envelope(
+            "BAD_PARAM", f"sort must be one of {_RANKING_SORTS}", status=400)
+    try:
+        limit = max(1, min(200, int((query.get("limit") or ["50"])[0])))
+    except ValueError:
+        limit = 50
+    signal_filter = (query.get("signal") or [None])[0]
+
+    try:
+        from mvp20 import pnl_loop, quant_score
+    except Exception as exc:  # noqa: BLE001
+        return 500, _error_envelope(
+            "IMPORT_FAILED", f"ranking deps import failed: {exc}", status=500)
+
+    base_date, snap = pnl_loop.latest_snapshot()
+    art = None
+    try:
+        art = quant_score.load_artifact()
+    except Exception:  # noqa: BLE001
+        art = None
+    qrows = (art or {}).get("rows") or {}
+
+    if not snap and not qrows:
+        return 200, _ok_envelope({
+            "module": "mvp20-ranking", "rows": [], "total": 0,
+            "note": "no score snapshot or quant artifact yet — run "
+                    "scripts/run_pnl_loop.py / scripts/build_quant_scores.py",
+        })
+
+    # same-day cross-sectional percentile of base_score
+    base_pct: dict[str, float] = {}
+    scored = [(ts, r["base_score"]) for ts, r in snap.items()
+              if r.get("base_score") is not None]
+    if scored:
+        scored.sort(key=lambda x: x[1])
+        n = len(scored)
+        for i, (ts, _v) in enumerate(scored):
+            base_pct[ts] = round(100.0 * i / max(n - 1, 1), 1)
+
+    universe = set(snap) | set(qrows)
+    rows = []
+    for ts in universe:
+        s = snap.get(ts) or {}
+        q = qrows.get(ts) or {}
+        if signal_filter and s.get("trading_signal") != signal_filter:
+            continue
+        validated = bool(q.get("validated"))
+        rows.append({
+            "ts_code": ts,
+            "trading_signal": s.get("trading_signal"),
+            "base_score": s.get("base_score"),
+            "base_score_pct": base_pct.get(ts),
+            "quant": ({
+                "mag_score_pct": (q.get("mag") or {}).get("score_pct"),
+                "exp_excess": (q.get("mag") or {}).get("exp_excess"),
+                "p_beat_median": (q.get("prob") or {}).get("p_beat_median"),
+                "tilt_pp": (q.get("prob") or {}).get("tilt_pp"),
+                "theme": q.get("theme"),
+            } if validated else None),
+            "quant_validated": validated,
+        })
+
+    def _key(r):
+        q = r.get("quant") or {}
+        if sort == "quant_mag":
+            v = q.get("mag_score_pct")
+        elif sort == "quant_prob":
+            v = q.get("p_beat_median")
+        else:
+            v = r.get("base_score")
+        return -(v if isinstance(v, (int, float)) else float("-inf"))
+
+    rows.sort(key=_key)
+    return 200, _ok_envelope({
+        "module": "mvp20-ranking",
+        "asof_snapshot": base_date,
+        "asof_quant": (art or {}).get("asof"),
+        "sort": sort,
+        "rows": rows[:limit],
+        "total": len(rows),
+        "note": ("quant fields are liquid-70-gated (validated:false outside); "
+                 "base_score_pct is the same-day cross-sectional percentile"),
+    })
+
+
 def _read_industry_overlay(cfg: ServerConfig, industry_id: str | None) -> dict:
     if not industry_id:
         return {}
@@ -1449,6 +1551,8 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/project-ult/aggregate$"), handle_aggregate),
         (re.compile(r"^/api/project-ult/coverage$"), handle_coverage),
         (re.compile(r"^/api/project-ult/score$"), handle_score),
+        # G9 cross-sectional ranking (latest snapshot x quant artifact)
+        (re.compile(r"^/api/project-ult/ranking$"), handle_ranking),
         # Add-stock onboarding (P1): industries dropdown + job-status poll.
         # (POST /recognize + POST /onboard are dispatched via _post_routes.)
         (re.compile(r"^/api/project-ult/industries$"), handle_industries),
