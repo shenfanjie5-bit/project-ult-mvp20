@@ -97,7 +97,43 @@ def test_signal_evidence_abstain_floor():
     res = score_company(stock_overlay=overlay, aggregated_nodes={},
                         coverage_report={}, realtime_data={})
     ev = res["signal_evidence"]
-    assert ev["n_scored_paths"] == 0
+    assert ev["n_known_fields"] == 0 and ev["n_realtime_nodes"] == 0
     assert ev["abstain"] is True
     assert ev["floor"] == SIGNAL_EVIDENCE_FLOOR
     assert res["trading_signal"] in ("BUY", "HOLD", "WATCH", "AVOID")  # untouched
+
+
+def test_nan_axes_hold_not_avoid():
+    nan = float("nan")
+    assert dual_axis_signal(nan, -0.5) == "HOLD"
+    assert dual_axis_signal(0.5, nan) == "HOLD"
+    assert dual_axis_signal(nan, nan) == "HOLD"
+
+
+def test_market_risk_charges_timing_not_merit():
+    """Review fix: an L8.val/L8.cap (market-type) risk node must depress the
+    TIMING axis; an L8.fin (company-type) node must depress MERIT. Decomposition
+    M+T == core base must hold either way."""
+
+    from mvp20.scoring import score_company
+
+    overlay = {"ts_code": "000001.SZ", "industry_id": "TEST",
+               "company_layer": {"nodes": []}}
+
+    def risk_node(nid):
+        return {nid: {"score": -0.8, "score_target": "risk_discount",
+                      "confidence": 1.0, "participates_in_score": True,
+                      "direction": "negative"}}
+
+    mkt = score_company(stock_overlay=overlay,
+                        aggregated_nodes=risk_node("000001.SZ:L8.val.overvalued:rt"),
+                        coverage_report={}, realtime_data={})
+    com = score_company(stock_overlay=overlay,
+                        aggregated_nodes=risk_node("000001.SZ:L8.fin.cash_ar:rt"),
+                        coverage_report={}, realtime_data={})
+    # market-type: timing takes the hit, merit untouched relative to company-type
+    assert mkt["timing"] < com["timing"]
+    assert mkt["merit"] > com["merit"]
+    for res in (mkt, com):
+        assert res["merit"] + res["timing"] == pytest.approx(
+            res["core_final_score"]["base_score"], abs=1e-9)

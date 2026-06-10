@@ -1301,6 +1301,9 @@ def handle_ranking(_: ServerConfig, query: dict) -> HandlerResult:
     except ValueError:
         limit = 50
     signal_filter = (query.get("signal") or [None])[0]
+    if signal_filter and signal_filter not in ("BUY", "HOLD", "WATCH", "AVOID"):
+        return 400, _error_envelope(
+            "BAD_PARAM", "signal must be BUY|HOLD|WATCH|AVOID", status=400)
 
     try:
         from mvp20 import pnl_loop, quant_score
@@ -1367,7 +1370,10 @@ def handle_ranking(_: ServerConfig, query: dict) -> HandlerResult:
             v = q.get("p_beat_median")
         else:
             v = r.get("base_score")
-        return -(v if isinstance(v, (int, float)) else float("-inf"))
+        # NaN-safe: NaN != NaN -> treated as missing; ts_code tiebreak keeps
+        # pagination stable across processes (set iteration order varies).
+        ok = isinstance(v, (int, float)) and v == v
+        return (-(v if ok else float("-inf")), r["ts_code"])
 
     rows.sort(key=_key)
     return 200, _ok_envelope({

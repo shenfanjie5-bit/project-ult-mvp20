@@ -21,7 +21,7 @@ v2(新增):M = f + eg − r_fund        # 公司质量轴(基本面风险归 M)
 - `/score` 响应新增 `merit / timing / trading_signal_v2`(并列展示,headline 仍 v1)
 - **P&L 快照两个信号都存**(scores 表加 signal_v2 列),T+10/20 对账两套 hit-rate/BUY 桶收益
 - **晋升标准(预注册)**:≥20 个到期快照日后,v2 的 BUY 桶平均前向收益及 BUY−AVOID 价差在 ≥60% 日期上不劣于 v1,且"M>0,T<0"格的前向收益显著高于 v1 给它的 AVOID 桶 → headline 切 v2;否则 v2 留作展示轴
-- 风险项拆分:r 里基本面风险(债务/治理)归 M、市场风险(拥挤/估值压力)归 T——按 score_target 已有分桶映射,无需改节点
+- 风险项拆分(**实施修订 2026-06-10,经对抗评审**):score_target 桶级无法区分,实际按 **dp 前缀份额切分**——`L8.val.*`/`L8.cap.*`(overvalued/priced_in/outflow/short_increase 等市场型)按其在 risk rollup 分子中的份额计入 T,其余(L8.fin/op/gov 公司型)计入 M;damp 分母共用故份额分解精确,M+T≡core base 不破坏。晋升对比评的就是这个公式
 
 ## 改动面(预估)
 

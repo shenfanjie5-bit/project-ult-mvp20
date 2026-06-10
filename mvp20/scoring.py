@@ -216,15 +216,40 @@ TIMING_BAND = 0.15
 #: even a strong-merit name from HOLD to WATCH (still never AVOID).
 TIMING_DEEP_NEGATIVE = -0.50
 
-#: G8 — minimum scored paths for a signal to be shown WITHOUT the abstain
-#: marker. Provisional: A-share in-score median is ~118 paths; data-starved
-#: cross-market stocks (HK ~33 dp) fall under it. Display-layer contract only.
-SIGNAL_EVIDENCE_FLOOR = 20
+#: G8 — minimum evidence quanta (filled overlay fields + realtime nodes) for
+#: a signal to be shown WITHOUT the abstain marker. Provisional: A-share
+#: n_known typically 40-60; data-starved cross-market names (HK ~33 dp, most
+#: Unknown) fall well under. Display-layer contract only.
+SIGNAL_EVIDENCE_FLOOR = 15
+
+
+def _sum_nested_key(d: Any, key: str) -> int:
+    """Sum every int under ``key`` anywhere in a nested mapping (coverage
+    summaries nest per-parent blocks)."""
+
+    total = 0
+    if isinstance(d, Mapping):
+        for k, v in d.items():
+            if k == key and isinstance(v, (int, float)):
+                total += int(v)
+            else:
+                total += _sum_nested_key(v, key)
+    elif isinstance(d, (list, tuple)):
+        for v in d:
+            total += _sum_nested_key(v, key)
+    return total
 
 
 def dual_axis_signal(merit: float, timing: float) -> str:
-    """BUY/HOLD/WATCH/AVOID from the (merit, timing) 2-D matrix."""
+    """BUY/HOLD/WATCH/AVOID from the (merit, timing) 2-D matrix.
 
+    NaN on either axis -> HOLD (neutral abstention): a NaN merit must not be
+    classified as weak merit (review finding — it silently landed in AVOID,
+    contradicting the never-AVOID-on-strong-merit intent when the underlying
+    name might be strong)."""
+
+    if math.isnan(merit) or math.isnan(timing):
+        return "HOLD"
     if merit > MERIT_BAND:
         if timing > TIMING_BAND:
             return "BUY"
@@ -239,6 +264,36 @@ def dual_axis_signal(merit: float, timing: float) -> str:
     if timing < -TIMING_BAND:
         return "AVOID"
     return "WATCH"             # 差公司好时机 → 最多观察, 不追
+
+
+#: risk_discount nodes whose dp segment matches these prefixes are MARKET-type
+#: (valuation/positioning: overvalued, priced_in, outflow_cut, short_increase,
+#: crowdedness…) and are charged to the TIMING axis per the RD-A design;
+#: everything else in the bucket (L8.fin/op/gov/reg — debt, governance,
+#: operations) is company risk charged to MERIT.
+_MARKET_RISK_DP_MARKERS = ("L8.val.", "L8.cap.")
+
+
+def _risk_market_share(aggregated_nodes: Mapping[str, Any]) -> float:
+    """Fraction of the risk_discount rollup numerator carried by MARKET-type
+    nodes. Exact under the damped rollup: the damp denominator is common to
+    every risk node, so numerator shares partition the rolled total."""
+
+    mkt = 0.0
+    tot = 0.0
+    for node_id, value in aggregated_nodes.items():
+        if not isinstance(value, Mapping):
+            continue
+        if value.get("score_target") != "risk_discount":
+            continue
+        if not _role_participates(value):
+            continue
+        contrib = abs(_coerce_float(value.get("score"), 0.0)) * _coerce_float(
+            value.get("confidence"), 1.0)
+        tot += contrib
+        if any(m in str(node_id) for m in _MARKET_RISK_DP_MARKERS):
+            mkt += contrib
+    return (mkt / tot) if tot > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -1843,9 +1898,15 @@ def score_company(
     # RD-A v2 (parallel): merit/timing decomposition of the SAME six core
     # components (M + T == core unweighted base). Computed on the CORE scale
     # (pre-market-adapter; regime modulation is R-7's job, not v2's).
-    merit = fundamental + expectation_gap_score - risk_discount
+    # risk attribution per the registered design: market-type risk
+    # (valuation/positioning) charges TIMING, company risk charges MERIT —
+    # share-based split is exact w.r.t. the damped rollup (common denominator).
+    _mkt_risk_share = _risk_market_share(aggregated_nodes or {})
+    risk_market = risk_discount * _mkt_risk_share
+    risk_company = risk_discount - risk_market
+    merit = fundamental + expectation_gap_score - risk_company
     timing = (valuation_rerating_score + capital_sentiment
-              - priced_in_discount)
+              - priced_in_discount - risk_market)
     signal_v2 = dual_axis_signal(merit, timing)
 
     # G8 — evidence/abstain marker. R-2c correctly stopped multiplying
@@ -1857,9 +1918,16 @@ def score_company(
     # "证据不足" instead of a confident label. Floor is provisional (well below
     # the A-share in-score median ~118 paths); the P&L loop can later test
     # whether low-evidence signals underperform and justify hard enforcement.
-    n_evidence = len(path_infos)
+    # Evidence basis (review fix): tree paths over-count (parents/root
+    # re-count one datum along the ancestor chain) and miss neutral-Known
+    # fields. Count FILLED overlay fields (coverage n_known, summed across
+    # parents) + realtime synthetic nodes — actual data quanta.
+    n_known = _sum_nested_key(coverage_report or {}, "n_known")
+    n_rt = sum(1 for nid in (aggregated_nodes or {}) if str(nid).endswith(":rt"))
+    n_evidence = n_known + n_rt
     signal_evidence = {
-        "n_scored_paths": n_evidence,
+        "n_known_fields": n_known,
+        "n_realtime_nodes": n_rt,
         "abstain": n_evidence < SIGNAL_EVIDENCE_FLOOR,
         "floor": SIGNAL_EVIDENCE_FLOOR,
     }

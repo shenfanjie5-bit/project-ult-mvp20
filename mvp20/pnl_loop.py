@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS scores_v2 (
     merit REAL,
     timing REAL,
     signal_v2 TEXT,
+    scored_at INTEGER,
     PRIMARY KEY (ts_code, base_date)
 );
 """
@@ -127,17 +128,20 @@ def production_score_fn(cfg) -> Callable[[str], dict | None]:
 
 
 def _put_scores_v2(rows: list[dict], db_path: Path) -> None:
+    now = int(time.time())
     payload = [
         (r["ts_code"], r["base_date"], r.get("merit"), r.get("timing"),
-         r.get("signal_v2"))
+         r.get("signal_v2"), now)
         for r in rows if r.get("signal_v2") is not None
     ]
     if not payload:
         return
     with sqlite3.connect(str(db_path), isolation_level=None) as c:
+        c.execute("PRAGMA busy_timeout=2000")
         c.executemany(
             "INSERT OR REPLACE INTO scores_v2"
-            " (ts_code, base_date, merit, timing, signal_v2) VALUES (?,?,?,?,?)",
+            " (ts_code, base_date, merit, timing, signal_v2, scored_at)"
+            " VALUES (?,?,?,?,?,?)",
             payload,
         )
 
@@ -193,11 +197,14 @@ def snapshot_scores(
         row["base_date"] = asof
         rows.append(row)
         if len(rows) >= 200:  # flush in batches so a crash resumes cheaply
-            pstore.put_scores(rows, db_path)
+            # v2 BEFORE v1: resume completeness is keyed on the v1 scores
+            # table, so a crash between the writes re-scores this batch and
+            # rewrites both tables — scores_v2 can never silently lag.
             _put_scores_v2(rows, db_path)
+            pstore.put_scores(rows, db_path)
             rows = []
-    pstore.put_scores(rows, db_path)
     _put_scores_v2(rows, db_path)
+    pstore.put_scores(rows, db_path)
     scored = len(todo) - failed
     # auditability: record the wall-clock of the snapshot so a mid-session or
     # back-dated run can always be detected after the fact.
@@ -359,15 +366,22 @@ def _eval_one(db_path: Path, base_date: str, horizon: int) -> dict | None:
         "signal_monotone": buckets["monotone"],
     }
     # RD-A v1-vs-v2 comparison (only when the v2 snapshot exists for the date)
-    v2 = [(r[3], r[2]) for r in rows if r[3] is not None]
-    if len(v2) >= 50:
-        b2 = pmetrics.signal_buckets([s for s, _ in v2], [x for _, x in v2])
+    v2_rows = [r for r in rows if r[3] is not None]
+    if len(v2_rows) >= 50:
+        b2 = pmetrics.signal_buckets([r[3] for r in v2_rows],
+                                     [r[2] for r in v2_rows])
         out["signal_buckets_v2"] = {
             k: {"n": v["n"], "mean_ret": v["mean_ret"], "hit_rate": v["hit_rate"]}
             for k, v in b2["buckets"].items()
         }
         out["buy_minus_avoid_v2"] = b2["long_short_BUY_minus_AVOID"]
         out["signal_monotone_v2"] = b2["monotone"]
+        # paired comparison (review fix): v1 restricted to the SAME v2-covered
+        # subset, so partial v2 coverage can't bias the promotion decision.
+        b1p = pmetrics.signal_buckets([r[1] or "NONE" for r in v2_rows],
+                                      [r[2] for r in v2_rows])
+        out["buy_minus_avoid_v1_on_v2_universe"] = b1p["long_short_BUY_minus_AVOID"]
+        out["n_v2_universe"] = len(v2_rows)
     return out
 
 
