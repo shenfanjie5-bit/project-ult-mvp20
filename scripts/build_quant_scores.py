@@ -41,11 +41,52 @@ log = logging.getLogger("build_quant")
 LOOKBACK_SESSIONS = 320  # > 252 (mom_12_1 warmup inside price_features)
 
 THEME_BASE = "/Volumes/dockcase2tb/database_all/股票数据/打板专题数据"
-#: 打板 archive freshness gate: if its latest trade_date lags asof by more
-#: calendar days than this, the theme feature is honestly NaN (prob layer
-#: degrades to the 4-feature composite via neutral imputation) instead of
-#: serving months-old heat as current.
+#: local incremental supplement for the 打板 archive (master archive is never
+#: written): tushare limit_list_d U-rows for dates after the archive end,
+#: refreshed best-effort on each builder run.
+THEME_SUPPLEMENT = "runtime/theme_data/limit_up_supplement.csv"
+#: 打板 data freshness gate: if the merged (archive+supplement) latest
+#: trade_date lags asof by more calendar days than this, the theme feature is
+#: honestly NaN (prob layer degrades to the 4-feature composite via neutral
+#: imputation) instead of serving months-old heat as current.
 THEME_MAX_STALE_DAYS = 10
+
+
+def _refresh_theme_supplement(asof: str) -> None:
+    """Best-effort: append missing limit_list_d days (after archive+supplement
+    max) up to ``asof``. Silent no-op offline / without token."""
+
+    import time as _t
+    try:
+        from pit_backtest import calendar as pcal
+        from pit_backtest import collector
+        pro = collector.get_pro()
+        have_max = "20260323"  # archive end (static master)
+        sup = None
+        if os.path.exists(THEME_SUPPLEMENT):
+            sup = pd.read_csv(THEME_SUPPLEMENT, dtype={"trade_date": str},
+                              low_memory=False)
+            if len(sup):
+                have_max = max(have_max, str(sup["trade_date"].max()))
+        sessions = pcal.open_sessions(pro, asof, lookback_days=60)
+        todo = [d for d in sessions if d > have_max]
+        if not todo:
+            return
+        frames = [] if sup is None else [sup]
+        for d in todo:
+            df = pro.limit_list_d(trade_date=d, limit_type="U")
+            if df is not None and len(df):
+                frames.append(df)
+            _t.sleep(0.15)
+        if frames:
+            out = pd.concat(frames, ignore_index=True)
+            out = out.drop_duplicates(subset=["trade_date", "ts_code"])
+            os.makedirs(os.path.dirname(THEME_SUPPLEMENT), exist_ok=True)
+            out.to_csv(THEME_SUPPLEMENT, index=False)
+            log.info("theme supplement refreshed: +%d days -> max %s",
+                     len(todo), out["trade_date"].max())
+    except Exception as e:  # noqa: BLE001 — theme refresh must never block the build
+        log.warning("theme supplement refresh skipped: %s", e)
 
 
 def _theme_heat(codes: list[str], asof: str) -> tuple[np.ndarray, str | None]:
@@ -62,6 +103,15 @@ def _theme_heat(codes: list[str], asof: str) -> tuple[np.ndarray, str | None]:
                           dtype={"trade_date": str}, low_memory=False)
     except Exception as e:  # noqa: BLE001
         return nan, f"theme data unreadable: {e}"
+    if os.path.exists(THEME_SUPPLEMENT):
+        try:
+            sup = pd.read_csv(THEME_SUPPLEMENT,
+                              usecols=["trade_date", "ts_code", "limit"],
+                              dtype={"trade_date": str}, low_memory=False)
+            lim = pd.concat([lim, sup], ignore_index=True)
+            lim = lim.drop_duplicates(subset=["trade_date", "ts_code"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("theme supplement unreadable (archive only): %s", e)
     last = str(lim["trade_date"].max())
     try:
         lag = (_dt.datetime.strptime(asof, "%Y%m%d")
@@ -193,6 +243,7 @@ def main() -> int:
         (1.0 / pe_last[ts]) if (pe_last.get(ts) not in (None, 0)) else np.nan
         for ts in cols
     ])
+    _refresh_theme_supplement(asof)
     theme, theme_note = _theme_heat(cols, asof)
     if theme_note:
         log.warning("theme feature: %s", theme_note)
