@@ -1,0 +1,18 @@
+{
+  "name": "earnings_surprise_regime_aware",
+  "_doc": "RECOMMENDED forward-return ranking score. The ONLY signal that survives the investable-universe restriction (drop smallest ~30%) without collapsing to a microcap artifact. Economically = PEAD / post-earnings-announcement drift. Best at +20d. Regime-aware decision layer (see _regime_gate) downweights in down/panic regimes where the long bucket goes negative.",
+  "method": "ew_signed",
+  "features": ["sue", "npq_yoy"],
+  "params": { "min_cov": 0.5 },
+  "min_train_dates": 12,
+  "horizon_primary": 20,
+  "_regime_gate": {
+    "doc": "Decision-layer multiplier on EXPOSURE (not a sign flip; scaling never changes within-date ranking). Realized OOS top-decile excess by regime at +10d: up_calm +0.0057, up_turbulent +0.0064, down_calm -0.0036, down_turbulent -0.0015.",
+    "up_calm": 1.0, "up_turbulent": 1.0, "down_calm": 0.3, "down_turbulent": 0.0
+  },
+  "_oos_performance_liquid_top70": {
+    "h10": { "top_excess_vs_universe": 0.0040, "t": 1.8, "vs_real_market": 0.0044 },
+    "h20": { "top_excess_vs_universe": 0.0083, "t": 2.9, "vs_real_market": 0.0101 }
+  },
+  "_upgrade_path": "Add forecast/express (业绩预告/快报) earlier-timing surprise (prior T2-7): official-report SUE is partly pre-priced by earlier announcements; earlier-timing surprise should strengthen the signal. Highest-ROI next feature."
+}

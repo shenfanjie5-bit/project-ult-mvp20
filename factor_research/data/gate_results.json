@@ -1,0 +1,413 @@
+{
+  "meta": {
+    "note": "regime-as-gate avoidance study. BAD regime = trend60>0 AND vol20>expanding_median (high-vol risk-on, where model's reversal+low-vol tilts invert). Gate = skip BUY / top-decile in BAD regime (AVOIDANCE, not reversal). Proxy factor L=z(STREV)-z(RVOL) (corr +0.5/-0.5 with real short_total). Gate definition is economically motivated, NOT tuned on test data. Caveat: 3 real dates (tiny n), overlapping proxy windows."
+  },
+  "real_dates": {
+    "20260116": {
+      "regime": "up/lovol",
+      "is_bad_regime": false,
+      "trend60": 0.204,
+      "vol20": 0.1346,
+      "vol_median": 0.189,
+      "n_buy": 231,
+      "used_topdecile": false,
+      "h10": {
+        "buy_cohort_mean_ret": 0.0369,
+        "buy_cohort_hitrate": 0.624,
+        "buy_cohort_n": 229,
+        "ic_base_score": 0.1133
+      },
+      "h20": {
+        "buy_cohort_mean_ret": 0.0524,
+        "buy_cohort_hitrate": 0.638,
+        "buy_cohort_n": 229,
+        "ic_base_score": 0.0812
+      }
+    },
+    "20260309": {
+      "regime": "up/hivol",
+      "is_bad_regime": true,
+      "trend60": 0.2498,
+      "vol20": 0.21,
+      "vol_median": 0.1823,
+      "n_buy": 232,
+      "used_topdecile": false,
+      "h10": {
+        "buy_cohort_mean_ret": -0.0497,
+        "buy_cohort_hitrate": 0.117,
+        "buy_cohort_n": 230,
+        "ic_base_score": 0.2377
+      },
+      "h20": {
+        "buy_cohort_mean_ret": -0.0119,
+        "buy_cohort_hitrate": 0.352,
+        "buy_cohort_n": 230,
+        "ic_base_score": 0.0958
+      }
+    },
+    "20260421": {
+      "regime": "up/hivol",
+      "is_bad_regime": true,
+      "trend60": 0.4358,
+      "vol20": 1.3885,
+      "vol_median": 0.1825,
+      "n_buy": 230,
+      "used_topdecile": false,
+      "h10": {
+        "buy_cohort_mean_ret": 0.0073,
+        "buy_cohort_hitrate": 0.507,
+        "buy_cohort_n": 219,
+        "ic_base_score": -0.237
+      },
+      "h20": {
+        "buy_cohort_mean_ret": -0.0162,
+        "buy_cohort_hitrate": 0.347,
+        "buy_cohort_n": 219,
+        "ic_base_score": -0.1969
+      }
+    }
+  },
+  "proxy_gate_study": {
+    "h10": {
+      "n_total_windows": 73,
+      "n_bad_windows": 25,
+      "frac_gated": 0.342,
+      "ungated": {
+        "n_windows": 72,
+        "mean_ret": 0.00668,
+        "std_ret": 0.03616,
+        "median_ret": 0.00617,
+        "worst_ret": -0.07311,
+        "best_ret": 0.12519,
+        "hitrate": 0.5102,
+        "pct_positive": 0.583
+      },
+      "gated": {
+        "n_windows": 73,
+        "mean_ret": 0.00399,
+        "std_ret": 0.032,
+        "median_ret": 0.0,
+        "worst_ret": -0.07311,
+        "best_ret": 0.12519,
+        "hitrate": 0.5091,
+        "pct_positive": 0.384
+      },
+      "delta_gated_minus_ungated": -0.00269,
+      "worst5_windows_ungated": [
+        {
+          "date": "20241226",
+          "regime": "up/lovol",
+          "is_bad": false,
+          "ung_ret": -0.07311,
+          "gate_ret": -0.07311
+        },
+        {
+          "date": "20230802",
+          "regime": "up/lovol",
+          "is_bad": false,
+          "ung_ret": -0.05674,
+          "gate_ret": -0.05674
+        },
+        {
+          "date": "20250331",
+          "regime": "up/lovol",
+          "is_bad": false,
+          "ung_ret": -0.05473,
+          "gate_ret": -0.05473
+        },
+        {
+          "date": "20240618",
+          "regime": "dn/lovol",
+          "is_bad": false,
+          "ung_ret": -0.04925,
+          "gate_ret": -0.04925
+        },
+        {
+          "date": "20260305",
+          "regime": "up/hivol",
+          "is_bad": true,
+          "ung_ret": -0.04686,
+          "gate_ret": 0.0
+        }
+      ],
+      "per_year": {
+        "2023": {
+          "n_windows": 18,
+          "n_bad": 5,
+          "ungated": {
+            "n_windows": 18,
+            "mean_ret": -0.00126,
+            "std_ret": 0.02611,
+            "median_ret": 0.00238,
+            "worst_ret": -0.05674,
+            "best_ret": 0.04271,
+            "hitrate": 0.4498,
+            "pct_positive": 0.5
+          },
+          "gated": {
+            "n_windows": 18,
+            "mean_ret": -0.00019,
+            "std_ret": 0.02508,
+            "median_ret": 0.0,
+            "worst_ret": -0.05674,
+            "best_ret": 0.04271,
+            "hitrate": 0.4456,
+            "pct_positive": 0.389
+          }
+        },
+        "2024": {
+          "n_windows": 24,
+          "n_bad": 8,
+          "ungated": {
+            "n_windows": 24,
+            "mean_ret": 0.00803,
+            "std_ret": 0.04946,
+            "median_ret": -0.00555,
+            "worst_ret": -0.07311,
+            "best_ret": 0.12519,
+            "hitrate": 0.4945,
+            "pct_positive": 0.458
+          },
+          "gated": {
+            "n_windows": 24,
+            "mean_ret": 0.00281,
+            "std_ret": 0.04509,
+            "median_ret": 0.0,
+            "worst_ret": -0.07311,
+            "best_ret": 0.12519,
+            "hitrate": 0.4656,
+            "pct_positive": 0.25
+          }
+        },
+        "2025": {
+          "n_windows": 24,
+          "n_bad": 7,
+          "ungated": {
+            "n_windows": 24,
+            "mean_ret": 0.01413,
+            "std_ret": 0.02676,
+            "median_ret": 0.0165,
+            "worst_ret": -0.05473,
+            "best_ret": 0.05012,
+            "hitrate": 0.5977,
+            "pct_positive": 0.75
+          },
+          "gated": {
+            "n_windows": 24,
+            "mean_ret": 0.00854,
+            "std_ret": 0.02379,
+            "median_ret": 0.00167,
+            "worst_ret": -0.05473,
+            "best_ret": 0.04738,
+            "hitrate": 0.5884,
+            "pct_positive": 0.542
+          }
+        },
+        "2026": {
+          "n_windows": 7,
+          "n_bad": 5,
+          "ungated": {
+            "n_windows": 6,
+            "mean_ret": -0.00467,
+            "std_ret": 0.0212,
+            "median_ret": 0.00434,
+            "worst_ret": -0.04686,
+            "best_ret": 0.0155,
+            "hitrate": 0.4037,
+            "pct_positive": 0.667
+          },
+          "gated": {
+            "n_windows": 7,
+            "mean_ret": 0.00316,
+            "std_ret": 0.00553,
+            "median_ret": 0.0,
+            "worst_ret": 0.0,
+            "best_ret": 0.0155,
+            "hitrate": 0.5952,
+            "pct_positive": 0.286
+          }
+        }
+      }
+    },
+    "h20": {
+      "n_total_windows": 73,
+      "n_bad_windows": 25,
+      "frac_gated": 0.342,
+      "ungated": {
+        "n_windows": 72,
+        "mean_ret": 0.01301,
+        "std_ret": 0.05323,
+        "median_ret": 0.01196,
+        "worst_ret": -0.09361,
+        "best_ret": 0.1959,
+        "hitrate": 0.5182,
+        "pct_positive": 0.597
+      },
+      "gated": {
+        "n_windows": 73,
+        "mean_ret": 0.00924,
+        "std_ret": 0.04707,
+        "median_ret": 0.0,
+        "worst_ret": -0.09361,
+        "best_ret": 0.1959,
+        "hitrate": 0.5267,
+        "pct_positive": 0.397
+      },
+      "delta_gated_minus_ungated": -0.00377,
+      "worst5_windows_ungated": [
+        {
+          "date": "20231228",
+          "regime": "dn/hivol",
+          "is_bad": false,
+          "ung_ret": -0.09361,
+          "gate_ret": -0.09361
+        },
+        {
+          "date": "20241212",
+          "regime": "up/hivol",
+          "is_bad": true,
+          "ung_ret": -0.07974,
+          "gate_ret": 0.0
+        },
+        {
+          "date": "20240603",
+          "regime": "up/lovol",
+          "is_bad": false,
+          "ung_ret": -0.06331,
+          "gate_ret": -0.06331
+        },
+        {
+          "date": "20240618",
+          "regime": "dn/lovol",
+          "is_bad": false,
+          "ung_ret": -0.06205,
+          "gate_ret": -0.06205
+        },
+        {
+          "date": "20240112",
+          "regime": "dn/hivol",
+          "is_bad": false,
+          "ung_ret": -0.06127,
+          "gate_ret": -0.06127
+        }
+      ],
+      "per_year": {
+        "2023": {
+          "n_windows": 18,
+          "n_bad": 5,
+          "ungated": {
+            "n_windows": 18,
+            "mean_ret": -0.00512,
+            "std_ret": 0.03546,
+            "median_ret": -0.00807,
+            "worst_ret": -0.09361,
+            "best_ret": 0.06339,
+            "hitrate": 0.4294,
+            "pct_positive": 0.444
+          },
+          "gated": {
+            "n_windows": 18,
+            "mean_ret": -0.00693,
+            "std_ret": 0.03091,
+            "median_ret": 0.0,
+            "worst_ret": -0.09361,
+            "best_ret": 0.03587,
+            "hitrate": 0.4137,
+            "pct_positive": 0.333
+          }
+        },
+        "2024": {
+          "n_windows": 24,
+          "n_bad": 8,
+          "ungated": {
+            "n_windows": 24,
+            "mean_ret": 0.01687,
+            "std_ret": 0.07286,
+            "median_ret": 0.00622,
+            "worst_ret": -0.07974,
+            "best_ret": 0.1959,
+            "hitrate": 0.5125,
+            "pct_positive": 0.542
+          },
+          "gated": {
+            "n_windows": 24,
+            "mean_ret": 0.0122,
+            "std_ret": 0.06444,
+            "median_ret": 0.0,
+            "worst_ret": -0.06331,
+            "best_ret": 0.1959,
+            "hitrate": 0.5127,
+            "pct_positive": 0.333
+          }
+        },
+        "2025": {
+          "n_windows": 24,
+          "n_bad": 7,
+          "ungated": {
+            "n_windows": 24,
+            "mean_ret": 0.02847,
+            "std_ret": 0.03849,
+            "median_ret": 0.03402,
+            "worst_ret": -0.05096,
+            "best_ret": 0.12987,
+            "hitrate": 0.631,
+            "pct_positive": 0.792
+          },
+          "gated": {
+            "n_windows": 24,
+            "mean_ret": 0.02006,
+            "std_ret": 0.03899,
+            "median_ret": 0.0105,
+            "worst_ret": -0.05096,
+            "best_ret": 0.12987,
+            "hitrate": 0.6249,
+            "pct_positive": 0.542
+          }
+        },
+        "2026": {
+          "n_windows": 7,
+          "n_bad": 5,
+          "ungated": {
+            "n_windows": 6,
+            "mean_ret": -0.00988,
+            "std_ret": 0.02324,
+            "median_ret": -0.00985,
+            "worst_ret": -0.04134,
+            "best_ret": 0.02319,
+            "hitrate": 0.3558,
+            "pct_positive": 0.5
+          },
+          "gated": {
+            "n_windows": 7,
+            "mean_ret": 0.00362,
+            "std_ret": 0.00802,
+            "median_ret": 0.0,
+            "worst_ret": 0.0,
+            "best_ret": 0.02319,
+            "hitrate": 0.5392,
+            "pct_positive": 0.286
+          }
+        }
+      }
+    },
+    "bad_window_fraction": 0.342
+  },
+  "ic_gate_analysis": {
+    "h10": {
+      "all_mean_ic": 0.0579,
+      "good_mean_ic": 0.0818,
+      "bad_mean_ic": 0.0102,
+      "n_all": 72,
+      "n_good": 48,
+      "n_bad": 24
+    },
+    "h20": {
+      "all_mean_ic": 0.054,
+      "good_mean_ic": 0.0676,
+      "bad_mean_ic": 0.0267,
+      "n_all": 72,
+      "n_good": 48,
+      "n_bad": 24
+    }
+  }
+}
