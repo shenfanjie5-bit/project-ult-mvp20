@@ -84,3 +84,20 @@ def test_snapshot_persists_v2_and_eval_compares(tmp_path):
     # v1's BUY beats its AVOID (score-linked alpha); v2 inverted -> opposite
     assert m["buy_minus_avoid"] > 0
     assert m["buy_minus_avoid_v2"] < 0
+
+
+def test_signal_evidence_abstain_floor():
+    """G8: a signal off a thin evidence base carries abstain=True; the signal
+    string itself is untouched (display-layer contract)."""
+
+    from mvp20.scoring import SIGNAL_EVIDENCE_FLOOR, score_company
+
+    overlay = {"ts_code": "000001.SZ", "industry_id": "TEST",
+               "company_layer": {"nodes": []}}
+    res = score_company(stock_overlay=overlay, aggregated_nodes={},
+                        coverage_report={}, realtime_data={})
+    ev = res["signal_evidence"]
+    assert ev["n_scored_paths"] == 0
+    assert ev["abstain"] is True
+    assert ev["floor"] == SIGNAL_EVIDENCE_FLOOR
+    assert res["trading_signal"] in ("BUY", "HOLD", "WATCH", "AVOID")  # untouched

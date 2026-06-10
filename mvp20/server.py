@@ -1253,6 +1253,7 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
         "merit": result.get("merit"),
         "timing": result.get("timing"),
         "trading_signal_v2": result.get("trading_signal_v2"),
+        "signal_evidence": result.get("signal_evidence"),
         "company_score": result.get("company_score") or {},
         "final_score": final_score,
         "top_paths": top_paths,

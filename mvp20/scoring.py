@@ -216,6 +216,11 @@ TIMING_BAND = 0.15
 #: even a strong-merit name from HOLD to WATCH (still never AVOID).
 TIMING_DEEP_NEGATIVE = -0.50
 
+#: G8 — minimum scored paths for a signal to be shown WITHOUT the abstain
+#: marker. Provisional: A-share in-score median is ~118 paths; data-starved
+#: cross-market stocks (HK ~33 dp) fall under it. Display-layer contract only.
+SIGNAL_EVIDENCE_FLOOR = 20
+
 
 def dual_axis_signal(merit: float, timing: float) -> str:
     """BUY/HOLD/WATCH/AVOID from the (merit, timing) 2-D matrix."""
@@ -1843,6 +1848,22 @@ def score_company(
               - priced_in_discount)
     signal_v2 = dual_axis_signal(merit, timing)
 
+    # G8 — evidence/abstain marker. R-2c correctly stopped multiplying
+    # confidence into the score, but nothing replaced its decision role: a
+    # signal computed off a handful of scored paths prints exactly like one
+    # backed by a hundred (the HK/US starvation mode: missing data masquerading
+    # as confident neutrality). Parallel-info pattern: the signal STRINGS stay
+    # untouched; ``signal_evidence.abstain`` tells the consumer to render
+    # "证据不足" instead of a confident label. Floor is provisional (well below
+    # the A-share in-score median ~118 paths); the P&L loop can later test
+    # whether low-evidence signals underperform and justify hard enforcement.
+    n_evidence = len(path_infos)
+    signal_evidence = {
+        "n_scored_paths": n_evidence,
+        "abstain": n_evidence < SIGNAL_EVIDENCE_FLOOR,
+        "floor": SIGNAL_EVIDENCE_FLOOR,
+    }
+
     return {
         "ts_code": ts_code,
         "industry_id": industry_id,
@@ -1864,6 +1885,7 @@ def score_company(
         "merit": merit,
         "timing": timing,
         "trading_signal_v2": signal_v2,
+        "signal_evidence": signal_evidence,
         "signals": signals,
         "role_components": role_components,
     }
@@ -1888,6 +1910,7 @@ __all__ = [
     "compute_final_score",
     "compute_node_score",
     "compute_path_score",
+    "SIGNAL_EVIDENCE_FLOOR",
     "dual_axis_signal",
     "score_company",
 ]
