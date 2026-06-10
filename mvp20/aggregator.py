@@ -912,25 +912,33 @@ def _freshness_weight(
     return 1.0 - (lag_trading_days - _RUN_UP_FRESH_TRADING_DAYS) / span
 
 
-# M-3 fix — announcement-AGE gate for guidance_change. C-3 above measures ROW
-# lag (collection staleness); this measures CONTENT age: a freshly re-collected
-# row can still carry a forecast pair announced 20 months ago, and a company
-# that simply stopped issuing forecasts would otherwise feed its last pair into
-# ``expectation_gap`` at full magnitude forever (``_GUIDANCE_DIRECTION_FLOOR``
-# guarantees the magnitude never decays on its own). The payload's ``ann_date``
-# is the disclosure date; weight is 1.0 up to ``_GUIDANCE_FRESH_CALENDAR_DAYS``
-# (the same 90-day window ``server.handle_market_events`` already applies to
-# the SAME forecast source on the display path), ramping linearly to 0.0 at
-# ``_GUIDANCE_STALE_CALENDAR_DAYS``. Anchor = the snapshot's freshest
-# ``updated_at`` when parseable (consistent with C-3), falling back to today
-# for live scoring. Fail-open: missing/unparseable ``ann_date`` → 1.0 (never
-# invent staleness we can't measure).
-_ANN_AGE_GATED_DP_IDS: frozenset[str] = frozenset({"L5.fcst.guidance_change"})
-_GUIDANCE_FRESH_CALENDAR_DAYS = 90.0
-_GUIDANCE_STALE_CALENDAR_DAYS = 270.0
+# M-3 / G5 fix — announcement-AGE gates. C-3 above measures ROW lag
+# (collection staleness); these measure CONTENT age via the payload's
+# ``ann_date`` (disclosure date). Two windows, one per field:
+#   * ``L5.fcst.guidance_change`` (M-3): a freshly re-collected row can still
+#     carry a forecast pair announced 20 months ago, and a company that simply
+#     stopped issuing forecasts would otherwise feed its last pair into
+#     ``expectation_gap`` at full magnitude forever (the direction floor
+#     guarantees the magnitude never decays on its own). 90d full → 270d zero
+#     (same 90-day window ``server.handle_market_events`` applies to this
+#     source on the display path).
+#   * ``L9.company.earnings_guidance`` (G5): the validated forecast event
+#     alpha is an EVENT-WINDOW phenomenon (t+1 entry, ~+30bp hedged; see
+#     event_coefficient.py / event_impact_FINAL). 2d full → 7 calendar days
+#     (~5 trading days) zero, so the coefficient never lingers as a stale
+#     cross-sectional tilt — the enhancer-research wave proved fresh-forecast
+#     surprise carries NO 2-4wk ranking power.
+# Anchor = the snapshot's freshest ``updated_at`` when parseable (consistent
+# with C-3), falling back to today for live scoring. Fail-open: missing /
+# unparseable ``ann_date`` → 1.0 (never invent staleness we can't measure).
+_ANN_AGE_GATES: dict[str, tuple[float, float]] = {
+    "L5.fcst.guidance_change": (90.0, 270.0),
+    "L9.company.earnings_guidance": (2.0, 7.0),
+}
 
 
-def _ann_age_weight(value: Any, ref_updated_at: Any) -> float:
+def _ann_age_weight(value: Any, ref_updated_at: Any,
+                    fresh_days: float = 90.0, stale_days: float = 270.0) -> float:
     """[0,1] multiplier from the payload ``ann_date`` age in calendar days."""
 
     import datetime as _dt
@@ -951,13 +959,11 @@ def _ann_age_weight(value: Any, ref_updated_at: Any) -> float:
         else _dt.date.today()
     )
     age = (ref_d - ann_d).days
-    if age <= _GUIDANCE_FRESH_CALENDAR_DAYS:
+    if age <= fresh_days:
         return 1.0
-    if age >= _GUIDANCE_STALE_CALENDAR_DAYS:
+    if age >= stale_days:
         return 0.0
-    return 1.0 - (age - _GUIDANCE_FRESH_CALENDAR_DAYS) / (
-        _GUIDANCE_STALE_CALENDAR_DAYS - _GUIDANCE_FRESH_CALENDAR_DAYS
-    )
+    return 1.0 - (age - fresh_days) / (stale_days - fresh_days)
 
 
 # ─── F6-tag: business-model archetype gross-margin re-center ──────────────────
@@ -1103,15 +1109,21 @@ def _realtime_field_signal(dp_id: str, value: Mapping[str, Any], score_target: s
     # funding_score. active_inflow above is the clean directional funding signal.
 
     if dp_id == "L9.company.earnings_guidance":
-        # expectation_gap. change_pct_{min,max} are percentage points (预增 →
-        # large positive). De-saturate with tanh(avg/100) so a strong forecast
-        # (+100%) lands at ~0.76 instead of pinning at 1.0. Either bound
-        # missing → None.
-        cp_min = _num(value.get("change_pct_min"))
-        cp_max = _num(value.get("change_pct_max"))
-        if cp_min is None or cp_max is None:
+        # expectation_gap — G5: single source of truth. The score path used to
+        # apply its own unvalidated tanh(midpoint/100) here while the DISPLAY
+        # path served the event-study-validated ``forecast_coefficient`` for
+        # the SAME payload (capability audit G5: the validated encoding was
+        # display-only, the unvalidated one fed the score). Now both consume
+        # ``event_coefficient.forecast_coefficient`` — type-keyed, calibrated
+        # to the validated quintile curve, honesty contract attached. Payloads
+        # with no clear directional type (不确定 / missing) are SKIPPED, not
+        # shown as 0. The 2→7d ann_date event-window decay is applied by the
+        # ``_ANN_AGE_GATES`` consumer gate (the alpha is t+1 event-window only).
+        from mvp20.event_coefficient import forecast_coefficient
+        fc = forecast_coefficient(value)
+        if fc is None:
             return None
-        return _clip(math.tanh(((cp_min + cp_max) / 2.0) / 100.0), -1.0, 1.0)
+        return _clip(float(fc["coefficient"]), -1.0, 1.0)
 
     if dp_id == "L5.fcst.guidance_change":
         # expectation_gap. Direction word sets the sign; current_range_pct
@@ -1676,15 +1688,15 @@ def synthesize_realtime_nodes(
         if dp_id in _FRESHNESS_GATED_DP_IDS:
             signal *= _freshness_weight(entry.get("updated_at"), ref_updated_at)
 
-        # M-3 announcement-age gate: a guidance_change pair announced months
-        # ago must not keep feeding expectation_gap at full magnitude (the
-        # direction floor would otherwise hold it ≥0.1 forever). Scoped to
-        # ``_ANN_AGE_GATED_DP_IDS``; same 90d-fresh window as the server
-        # event-stream filter on the identical forecast source.
-        if dp_id in _ANN_AGE_GATED_DP_IDS:
-            _w = _ann_age_weight(entry.get("value"), ref_updated_at)
+        # M-3 / G5 announcement-age gates: stale disclosure content must not
+        # keep feeding the score at full magnitude (guidance_change: 90→270d;
+        # earnings_guidance event coefficient: 2→7d event window). Fully
+        # stale → no node at all (like Inactive).
+        if dp_id in _ANN_AGE_GATES:
+            _fresh, _stale = _ANN_AGE_GATES[dp_id]
+            _w = _ann_age_weight(entry.get("value"), ref_updated_at, _fresh, _stale)
             if _w <= 0.0:
-                continue  # fully stale → no node at all (like Inactive)
+                continue
             signal *= _w
 
         confidence = entry.get("confidence")

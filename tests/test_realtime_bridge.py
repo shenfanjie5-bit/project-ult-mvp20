@@ -508,29 +508,36 @@ def test_field_analyst_revision_signed_and_clipped():
 # 2. L9.company.earnings_guidance → expectation_gap (additive, signed)
 
 
-def test_field_earnings_guidance_avg_over_100():
-    # De-saturated: tanh(avg/100), so +60 → tanh(0.6)≈0.537 (not 0.6, not 1.0).
+def test_field_earnings_guidance_uses_validated_coefficient():
+    # G5: the score path consumes event_coefficient.forecast_coefficient —
+    # the SAME validated encoding the display path serves — instead of its
+    # own unvalidated tanh(midpoint/100). Type-keyed: 预增 +, 预减 −.
+    from mvp20.event_coefficient import forecast_coefficient
+
+    pos_payload = {"type": "预增", "change_pct_min": 40.0, "change_pct_max": 80.0}
     sig = _realtime_signal(
-        "L9.company.earnings_guidance",
-        {"change_pct_min": 40.0, "change_pct_max": 80.0},
-        "expectation_gap",
+        "L9.company.earnings_guidance", pos_payload, "expectation_gap"
     )
-    assert sig == pytest.approx(math.tanh(((40.0 + 80.0) / 2.0) / 100.0))  # tanh(0.6)
+    assert sig == pytest.approx(forecast_coefficient(pos_payload)["coefficient"])
+    assert sig > 0
+
+    neg_payload = {"type": "预减", "change_pct_min": -50.0, "change_pct_max": -30.0}
     neg = _realtime_signal(
-        "L9.company.earnings_guidance",
-        {"change_pct_min": -50.0, "change_pct_max": -30.0},
-        "expectation_gap",
+        "L9.company.earnings_guidance", neg_payload, "expectation_gap"
     )
-    assert neg == pytest.approx(math.tanh(-0.4))
+    assert neg == pytest.approx(forecast_coefficient(neg_payload)["coefficient"])
     assert neg < 0
-    # Either bound missing/None → None.
+
+    # no clear directional type (不确定 / missing) → SKIPPED, never shown as 0
     assert _realtime_signal(
         "L9.company.earnings_guidance",
-        {"change_pct_min": 10.0, "change_pct_max": None},
+        {"type": "不确定", "change_pct_min": 10.0, "change_pct_max": 20.0},
         "expectation_gap",
     ) is None
     assert _realtime_signal(
-        "L9.company.earnings_guidance", {"change_pct_max": 10.0}, "expectation_gap"
+        "L9.company.earnings_guidance",
+        {"change_pct_min": 40.0, "change_pct_max": 80.0},  # no type at all
+        "expectation_gap",
     ) is None
 
 
@@ -1513,14 +1520,25 @@ def test_e2e_earnings_guidance_beat_beats_miss():
     beat = _base_score_for(
         "L9.company.earnings_guidance",
         "expectation_gap",
-        {"change_pct_min": 50.0, "change_pct_max": 70.0},  # 预增 ~ +60
+        {"type": "预增", "change_pct_min": 50.0, "change_pct_max": 70.0,
+         "ann_date": "20231113"},  # fresh, within the 2d event window
     )
     miss = _base_score_for(
         "L9.company.earnings_guidance",
         "expectation_gap",
-        {"change_pct_min": -50.0, "change_pct_max": -30.0},  # 预减 ~ -40
+        {"type": "预减", "change_pct_min": -50.0, "change_pct_max": -30.0,
+         "ann_date": "20231113"},
     )
     assert beat > miss
+    # G5 event-window decay: the same 预增 announced ~3 weeks before the
+    # snapshot anchor contributes NOTHING (alpha is t+1 event-window only)
+    stale_beat = _base_score_for(
+        "L9.company.earnings_guidance",
+        "expectation_gap",
+        {"type": "预增", "change_pct_min": 50.0, "change_pct_max": 70.0,
+         "ann_date": "20231020"},
+    )
+    assert stale_beat == pytest.approx(0.0, abs=1e-9)
 
 
 def test_e2e_guidance_change_up_beats_down():
@@ -1613,7 +1631,8 @@ def test_e2e_run_up_lowers_score_decline_neutral():
 # ---------------------------------------------------------------------------
 
 # BYD-like strong forecast: avg change_pct ≈ +102%, current_range_pct ≈ +102%.
-_BYD_EARNINGS_GUIDANCE = {"change_pct_min": 86.0, "change_pct_max": 118.0}
+_BYD_EARNINGS_GUIDANCE = {"type": "预增", "change_pct_min": 86.0,
+                          "change_pct_max": 118.0, "ann_date": "20231113"}
 _BYD_GUIDANCE_CHANGE = {"change_direction": "upgraded", "current_range_pct": 102.0}
 
 
@@ -1640,11 +1659,15 @@ def _guidance_entry(value: dict, *, source: str = "tushare:forecast",
 
 
 def test_guidance_desaturation_not_pinned():
-    # LEVEL: avg = (86+118)/2 = 102 → tanh(1.02) ≈ 0.77, strictly < 1.0.
+    # LEVEL (G5): the validated forecast coefficient — 预增 with +102% growth
+    # → tanh-bounded ≈ 0.97, strictly < 1.0 (never a pinned 1.0 node).
+    from mvp20.event_coefficient import forecast_coefficient
+
     lvl = _realtime_signal(
         "L9.company.earnings_guidance", _BYD_EARNINGS_GUIDANCE, "expectation_gap"
     )
-    assert lvl == pytest.approx(math.tanh(1.02))
+    assert lvl == pytest.approx(
+        forecast_coefficient(_BYD_EARNINGS_GUIDANCE)["coefficient"])
     assert lvl < 1.0
     # REVISION: current_range_pct = 102 → tanh(1.02) ≈ 0.77, strictly < 1.0.
     rev = _realtime_signal(
