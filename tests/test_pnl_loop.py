@@ -231,3 +231,82 @@ def test_server_handler_empty_db_is_honest(tmp_path, monkeypatch):
     assert status == 200
     assert env["data"]["backtests"] == [] and env["data"]["total"] == 0
     assert env["data"]["rolling_summary"] is None
+
+
+def test_fill_returns_price_source_failure_is_retried(db):
+    """HIGH-severity review finding: an empty/near-empty closes map (EOD not
+    settled, API hiccup) must SKIP the pair this run and retry next run — not
+    permanently poison it with missing_close rows."""
+
+    uni = _mk_universe(80)
+    pnl_loop.snapshot_scores(SESSIONS[0], uni, _score_fn_factory(uni), db_path=db)
+    good = _closes_fn_factory(uni)
+
+    calls = {"n": 0}
+
+    def flaky(date):
+        calls["n"] += 1
+        return {}  # total price-source failure
+
+    r1 = pnl_loop.fill_returns(SESSIONS, flaky, db_path=db, horizons=(5,))
+    assert r1["filled"] == 0
+    assert r1["pairs_skipped_price_source"] == 1
+    assert pstore.read_returns(db) == []          # nothing poisoned
+
+    # partial failure (below sanity floor) also skips
+    def partial(date):
+        c = good(date)
+        return dict(list(c.items())[:3])
+
+    r2 = pnl_loop.fill_returns(SESSIONS, partial, db_path=db, horizons=(5,))
+    assert r2["filled"] == 0 and r2["pairs_skipped_price_source"] == 1
+
+    # next run with a healthy source fills the same pair
+    r3 = pnl_loop.fill_returns(SESSIONS, good, db_path=db, horizons=(5,))
+    assert r3["filled"] == 80 and r3["status"] == "ok"
+
+
+def test_fill_returns_all_missing_pair_is_retried(db, monkeypatch):
+    """A pair written entirely missing_close (sane map size but none of OUR
+    stocks in it) must not enter the done-set."""
+
+    uni = _mk_universe(60)
+    pnl_loop.snapshot_scores(SESSIONS[0], uni, _score_fn_factory(uni), db_path=db)
+    good = _closes_fn_factory(uni)
+    monkeypatch.setattr(pnl_loop, "MIN_CLOSES_SANITY", 50)
+
+    def wrong_universe(date):
+        return {f"9{i:05d}.BJ": 1.0 for i in range(60)}  # sane size, zero overlap
+
+    r1 = pnl_loop.fill_returns(SESSIONS, wrong_universe, db_path=db, horizons=(5,))
+    assert r1["filled"] == 60  # rows written, all missing_close
+    assert all(x["status"] == "missing_close" for x in pstore.read_returns(db))
+    r2 = pnl_loop.fill_returns(SESSIONS, good, db_path=db, horizons=(5,))
+    assert r2["status"] == "ok" and r2["pairs_new"] == 1  # retried, now ok
+    ok_rows = [x for x in pstore.read_returns(db) if x["status"] == "ok"]
+    assert len(ok_rows) == 60
+
+
+def test_evaluate_incremental_skips_existing(db):
+    uni = _mk_universe(120)
+    pnl_loop.snapshot_scores(SESSIONS[0], uni, _score_fn_factory(uni), db_path=db)
+    pnl_loop.fill_returns(SESSIONS, _closes_fn_factory(uni), db_path=db, horizons=(5,))
+    out1 = pnl_loop.evaluate(db_path=db, horizons=(5,))
+    assert out1["eval_written"] == 1
+    out2 = pnl_loop.evaluate(db_path=db, horizons=(5,))
+    assert out2["eval_written"] == 0          # incremental skip
+    out3 = pnl_loop.evaluate(db_path=db, horizons=(5,), full_recompute=True)
+    assert out3["eval_written"] == 1          # explicit recompute
+
+
+def test_snapshot_universe_churn_scores_new_names(db):
+    uni = _mk_universe(50)
+    pnl_loop.snapshot_scores(SESSIONS[0], uni, _score_fn_factory(uni), db_path=db)
+    grown = uni + ["999999.SZ"]
+
+    def fn(ts):
+        return {"ts_code": ts, "base_score": 0.0, "trading_signal": "HOLD",
+                "short_total": 0, "medium_total": 0, "long_total": 0, "mode": "x"}
+
+    r = pnl_loop.snapshot_scores(SESSIONS[0], grown, fn, db_path=db)
+    assert r["status"] == "ok" and r["scored"] == 1 and r["skipped"] == 50

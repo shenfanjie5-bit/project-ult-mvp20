@@ -35,8 +35,17 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from pit_backtest import metrics as pmetrics
 from pit_backtest import store as pstore
 
-DEFAULT_DB = Path("runtime/backtest/pnl.sqlite")
+# Anchor on the repo root (same convention as server.py) — CWD-relative paths
+# would silently degrade the quant/backtest surfaces if the server or cron is
+# ever launched from elsewhere.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DB = REPO_ROOT / "runtime" / "backtest" / "pnl.sqlite"
 HORIZONS = (5, 10, 20)
+
+#: a cross-section close map smaller than this is treated as a price-source
+#: failure (EOD not settled / API hiccup) — the pair is SKIPPED this run and
+#: retried next run, instead of permanently writing missing_close rows.
+MIN_CLOSES_SANITY = 500
 
 #: trailing matured dates per horizon used for the rolling summary + de-rate.
 DERATE_WINDOW = 12
@@ -127,12 +136,8 @@ def snapshot_scores(
     """
 
     _init(db_path)
-    already = pstore.scored_base_dates(db_path).get(asof, 0)
-    if resume and already >= len(universe):
-        return {"asof": asof, "scored": 0, "skipped": already, "status": "complete"}
-
     done: set[str] = set()
-    if resume and already:
+    if resume:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as c:
             done = {
                 r[0]
@@ -140,6 +145,11 @@ def snapshot_scores(
                     "SELECT ts_code FROM scores WHERE base_date=?", (asof,)
                 )
             }
+        # set-based (not count-based) completeness: intra-date universe churn
+        # (overlays added between runs) must still get the new names scored.
+        if not (set(universe) - done):
+            return {"asof": asof, "scored": 0, "skipped": len(done),
+                    "status": "complete"}
 
     rows: list[dict] = []
     failed = 0
@@ -158,6 +168,14 @@ def snapshot_scores(
             rows = []
     pstore.put_scores(rows, db_path)
     scored = len(todo) - failed
+    # auditability: record the wall-clock of the snapshot so a mid-session or
+    # back-dated run can always be detected after the fact.
+    pstore.set_manifest(
+        f"snapshot_meta:{asof}",
+        {"wall_time": time.strftime("%Y-%m-%d %H:%M:%S"), "scored": scored,
+         "failed": failed, "resumed_from": len(done)},
+        db_path,
+    )
     return {"asof": asof, "scored": scored, "failed": failed,
             "skipped": len(done), "status": "ok"}
 
@@ -205,10 +223,16 @@ def fill_returns(
     snap_dates = list(pstore.scored_base_dates(db_path))
     pairs = matured_pairs(snap_dates, sessions, horizons)
 
+    # a pair counts as done ONLY if it produced at least one usable row —
+    # a pair written entirely missing_close (price source down that night)
+    # is retried on the next run instead of being poisoned forever.
     with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as c:
         have = {
             (r[0], r[1])
-            for r in c.execute("SELECT DISTINCT base_date, end_date FROM returns")
+            for r in c.execute(
+                "SELECT DISTINCT base_date, end_date FROM returns"
+                " WHERE status='ok'"
+            )
         }
     todo = [(b, e, h) for (b, e, h) in pairs if (b, e) not in have]
     if not todo:
@@ -222,6 +246,7 @@ def fill_returns(
         return closes_cache[d]
 
     filled = 0
+    skipped_pairs = 0
     for b, e, h in todo:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as c:
             codes = [
@@ -231,6 +256,15 @@ def fill_returns(
                 )
             ]
         cb, ce = closes(b), closes(e)
+        # sanity floor: a near-empty cross-section means the PRICE SOURCE
+        # failed (EOD not settled / API hiccup), not that stocks are suspended.
+        # Skip the pair this run — it stays out of `have` and retries next run.
+        # Relative to the snapshot size so small test/partial universes behave
+        # (production: 1853 codes -> floor 500).
+        floor = min(MIN_CLOSES_SANITY, max(10, len(codes) // 2))
+        if len(cb) < floor or len(ce) < floor:
+            skipped_pairs += 1
+            continue
         rows = []
         for ts in codes:
             p0, p1 = cb.get(ts), ce.get(ts)
@@ -246,7 +280,8 @@ def fill_returns(
                 "status": "ok" if ok else "missing_close",
             })
         filled += pstore.put_returns(rows, db_path)
-    return {"filled": filled, "pairs_new": len(todo),
+    return {"filled": filled, "pairs_new": len(todo) - skipped_pairs,
+            "pairs_skipped_price_source": skipped_pairs,
             "pairs_done": len(pairs), "status": "ok"}
 
 
@@ -297,19 +332,31 @@ def evaluate(
     horizons: Sequence[int] = HORIZONS,
     *,
     derate_window: int = DERATE_WINDOW,
+    full_recompute: bool = False,
 ) -> dict:
-    """(Re)compute per-(date,horizon) metrics for every matured snapshot and
-    the rolling summary + de-rate flags. Idempotent."""
+    """Compute per-(date,horizon) metrics for newly matured snapshots and
+    refresh the rolling summary + de-rate flags. Idempotent; incremental
+    unless ``full_recompute``."""
 
     _init(db_path)
     with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as c:
         matured = c.execute(
             "SELECT DISTINCT base_date, horizon_d FROM returns WHERE status='ok'"
         ).fetchall()
+        existing = set() if full_recompute else {
+            (r[0], int(r[1]))
+            for r in c.execute("SELECT base_date, horizon_d FROM eval_metrics")
+        }
 
     now = int(time.time())
     written = 0
     for base_date, h in sorted(matured):
+        # incremental: per-(date,horizon) metrics are immutable once the pair's
+        # returns are written, so skip already-evaluated pairs (the permutation
+        # test in signal_buckets is expensive; recomputing a year of history
+        # nightly would creep the cron window). --full-recompute overrides.
+        if (base_date, int(h)) in existing:
+            continue
         m = _eval_one(db_path, base_date, int(h))
         if m is None:
             continue
@@ -368,10 +415,15 @@ def read_eval(db_path: Path | None = None, horizon: int | None = None) -> list[d
         args = (int(horizon),)
     try:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as c:
+            c.execute("PRAGMA busy_timeout=500")  # ride out the nightly write lock
             return [json.loads(r[0]) for r in c.execute(q, args)]
     except sqlite3.OperationalError:
         return []
 
 
 def rolling_summary(db_path: Path | None = None) -> dict | None:
-    return pstore.get_manifest("rolling_summary", db_path or DEFAULT_DB)
+    # request path: never 500 because the nightly writer holds the lock
+    try:
+        return pstore.get_manifest("rolling_summary", db_path or DEFAULT_DB)
+    except sqlite3.OperationalError:
+        return None

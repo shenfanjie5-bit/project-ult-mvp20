@@ -135,3 +135,61 @@ def test_server_quant_block_best_effort(monkeypatch, tmp_path):
     # non-A-share short-circuits
     block_us = server._quant_block("AAPL")
     assert block_us["available"] is False and "A-share" in block_us["reason"]
+
+
+def test_golden_parity_with_research_stack():
+    """Golden pin: the production neutralization+binning must stay bit-equal to
+    the audited research stack (factor_research harness/caliblib) on a shared
+    synthetic fixture. The parity skeptic verified this on the real panel; this
+    test keeps it true forever. Skips if the research modules can't import."""
+
+    pytest.importorskip("factor_research.model.harness")
+    import numpy as np
+    from factor_research.model import harness as H
+    from factor_research.model.caliblib import score_bins
+
+    rng = np.random.default_rng(20260610)
+    n, f = 600, 6
+    feat = rng.normal(size=(1, n, f)).astype(np.float64)
+    feat[0, rng.integers(0, n, 40), rng.integers(0, f, 40)] = np.nan
+    lnmv = rng.normal(15.0, 1.0, size=(1, n))
+    industry = rng.integers(0, 6, size=n).astype(np.int32)
+
+    z = {"feat": feat, "ln_mv": lnmv, "industry": industry}
+    Z_research = H.neutralize(z, None, cache=False)[0]
+    Z_prod = qs.neutralize_cross_section(feat[0], lnmv[0], industry)
+    both = np.isfinite(Z_research) & np.isfinite(Z_prod)
+    assert np.isnan(Z_research).sum() == np.isnan(Z_prod).sum()
+    assert np.allclose(Z_research[both], Z_prod[both], atol=1e-9)
+
+    # binning parity on a composite score
+    score = np.where(np.isfinite(Z_prod).mean(1) >= 0.5,
+                     np.nan_to_num(Z_prod, nan=0.0) @ np.array([1, 1, -1, -1, -1, 1.0]),
+                     np.nan)
+    ok_mv = np.isfinite(lnmv[0])
+    thr = np.percentile(lnmv[0][ok_mv], 30)
+    mask = ok_mv & (lnmv[0] >= thr)
+    b_research = score_bins(score, mask, 10)
+    b_prod = qs._bin_of(score, mask, 10)
+    assert (b_research == b_prod).all()
+
+
+def test_score_endpoint_carries_quant_block(tmp_path, monkeypatch):
+    """/score envelope must carry the quant block when an artifact exists, and
+    still return 200 when the artifact is absent."""
+
+    params = _fake_params()
+    codes, feat, names, lnmv, ind = _fake_cross_section()
+    art = qs.build_artifact("20260610", codes, feat, names, lnmv, ind, params)
+    qs.save_artifact(art, root=tmp_path)
+    monkeypatch.setattr(qs, "ARTIFACT_DIR", tmp_path)
+
+    from mvp20 import server
+
+    block = server._quant_block(codes[0])
+    assert block["available"] is True
+    assert "mag" in block or block.get("validated") is False
+    # absent artifact -> degrade, never raise
+    monkeypatch.setattr(qs, "ARTIFACT_DIR", tmp_path / "absent")
+    block2 = server._quant_block(codes[0])
+    assert block2["available"] is False

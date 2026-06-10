@@ -54,13 +54,20 @@ def _load_matrices(codes: list[str]) -> tuple:
 
     di = _datalib._file_index(_datalib.DAILY)
     bi = _datalib._file_index(_datalib.DBASIC)
-    rets, tos, mvs = {}, {}, {}
+    rets, tos, mvs, pe_series = {}, {}, {}, {}
     for ts in codes:
-        if ts not in di:
+        src_d = di.get(ts)
+        if src_d is None:
+            continue
+        path_d, fname = (src_d if isinstance(src_d, tuple) else (src_d, str(src_d)))
+        # same universe filter as the research calibration (_datalib): ST/PT/退
+        # names are OUTSIDE the calibration universe — ±5% limit regime and
+        # delisting risk were never in the bins, so they must not get
+        # validated:true rows.
+        if any(t in str(fname).upper() for t in ("ST", "PT", "退")):
             continue
         try:
-            x = pd.read_csv(di[ts][0] if isinstance(di[ts], tuple) else di[ts],
-                            usecols=["trade_date", "pct_chg"],
+            x = pd.read_csv(path_d, usecols=["trade_date", "pct_chg"],
                             dtype={"trade_date": str})
         except Exception:  # noqa: BLE001
             continue
@@ -78,15 +85,26 @@ def _load_matrices(codes: list[str]) -> tuple:
                 b = b.set_index("trade_date").tail(LOOKBACK_SESSIONS)
                 tos[ts] = b["turnover_rate"].astype(float)
                 mvs[ts] = b["total_mv"].astype(float)
-                rets[ts].attrs["pe_ttm_last"] = (
-                    float(b["pe_ttm"].dropna().iloc[-1]) if b["pe_ttm"].notna().any() else None
-                )
+                pe_series[ts] = b["pe_ttm"].astype(float)
             except Exception:  # noqa: BLE001
                 pass
     R = pd.DataFrame(rets).sort_index()
     TO = pd.DataFrame(tos).reindex(index=R.index, columns=R.columns)
     MV = pd.DataFrame(mvs).reindex(index=R.index, columns=R.columns)
-    pe_last = {ts: rets[ts].attrs.get("pe_ttm_last") for ts in R.columns}
+    # ep_ttm mirrors research panel.value_features: the daily_basic row AT (or
+    # last before) the as-of date — NaN if pe_ttm is NaN on that row (loss-
+    # makers stay excluded). NOT last-non-null (that would resurrect a stale
+    # positive PE for names that turned loss-making — feature drift).
+    asof = R.index[-1] if len(R.index) else None
+    pe_last: dict[str, float | None] = {}
+    for ts in R.columns:
+        s = pe_series.get(ts)
+        if s is None or asof is None:
+            pe_last[ts] = None
+            continue
+        s2 = s[s.index <= asof]
+        v = s2.iloc[-1] if len(s2) else None
+        pe_last[ts] = float(v) if v is not None and v == v else None
     return (R.values, TO.values, MV.values, list(R.index), list(R.columns), pe_last)
 
 

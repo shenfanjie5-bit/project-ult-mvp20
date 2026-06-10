@@ -35,7 +35,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-snapshot", action="store_true")
     ap.add_argument("--eval-only", action="store_true")
-    ap.add_argument("--asof", default=None, help="override snapshot date (testing)")
+    ap.add_argument("--full-recompute", action="store_true",
+                    help="recompute all eval metrics, not just new pairs")
+    ap.add_argument("--asof", default=None, help="must equal today (guard only)")
     a = ap.parse_args()
 
     from mvp20 import pnl_loop
@@ -45,18 +47,43 @@ def main() -> int:
     t0 = time.time()
 
     if a.eval_only:
-        out["evaluate"] = pnl_loop.evaluate()
+        out["evaluate"] = pnl_loop.evaluate(full_recompute=a.full_recompute)
         print(json.dumps(out, ensure_ascii=False, indent=1))
         return 0
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
     from pit_backtest import calendar as pcal
     from pit_backtest import collector, prices
 
     pro = collector.get_pro()
-    today = a.asof or pcal._ashare_today()
+    real_today = pcal._ashare_today()
+    # No back-dating: a snapshot scores LIVE hot.sqlite state, so labelling it
+    # with a past session would fabricate look-ahead "alpha" the moment
+    # fill_returns matures it. --asof exists only for forward-compatible
+    # testing and must equal the real Asia/Shanghai date.
+    if a.asof and a.asof != real_today:
+        print(f"ERROR: --asof {a.asof} != today {real_today}; back-dated "
+              f"snapshots are dishonest by construction (scores use live state)",
+              file=sys.stderr)
+        return 2
+    today = real_today
     sessions = pcal.open_sessions(pro, today, lookback_days=600)
 
-    if not a.no_snapshot:
+    # After-close gate: before 15:30 Asia/Shanghai on an open session, today's
+    # close does not exist yet — (a) a snapshot now would be mid-session state
+    # mislabelled as the day's reading; (b) today must not count as a matured
+    # return endpoint. Snapshot is skipped and today is dropped from the
+    # session list used for maturation.
+    now_cn = datetime.now(ZoneInfo("Asia/Shanghai"))
+    market_closed = (now_cn.hour, now_cn.minute) >= (15, 30)
+    if sessions and sessions[-1] == today and not market_closed:
+        log.info("before 15:30 CST on open session %s — snapshot deferred, "
+                 "today excluded from maturation", today)
+        out["snapshot"] = {"asof": today, "status": "market_open", "scored": 0}
+        sessions = sessions[:-1]
+    elif not a.no_snapshot:
         if sessions and sessions[-1] == today:
             cfg = ServerConfig()
             universe = pnl_loop.list_universe(cfg.stock_overlays_dir)
@@ -75,7 +102,7 @@ def main() -> int:
     out["fill_returns"] = pnl_loop.fill_returns(
         sessions, lambda d: prices.cross_section_hfq_close(pro, d)
     )
-    out["evaluate"] = pnl_loop.evaluate()
+    out["evaluate"] = pnl_loop.evaluate(full_recompute=a.full_recompute)
     out["elapsed_s"] = round(time.time() - t0, 1)
     print(json.dumps(out, ensure_ascii=False, indent=1))
     return 0

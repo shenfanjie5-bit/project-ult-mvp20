@@ -40,8 +40,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-PARAMS_PATH = Path("config/quant_score_params.json")
-ARTIFACT_DIR = Path("runtime/quant_score")
+# Anchor on the repo root (same convention as server.py) — CWD-relative paths
+# would make the quant block silently degrade to available:false when the
+# server/cron is launched from a different working directory.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PARAMS_PATH = REPO_ROOT / "config" / "quant_score_params.json"
+ARTIFACT_DIR = REPO_ROOT / "runtime" / "quant_score"
 STALE_AFTER_DAYS = 10
 MIN_FEATURE_COV = 0.5
 
@@ -114,7 +118,9 @@ def lookup(ts_code: str, market: str = "A_share", root: Path | None = None,
     if row is None:
         return {"available": False, "asof": art.get("asof"),
                 "reason": "ts_code not in scored cross-section"}
-    out = dict(row)
+    # deep copy: the artifact dict is mtime-cached and shared across requests;
+    # a consumer mutating the response in place must never poison the cache.
+    out = json.loads(json.dumps(row))
     out["available"] = True
     out["asof"] = art.get("asof")
     out["params_built_at"] = art.get("params_built_at")
@@ -122,7 +128,7 @@ def lookup(ts_code: str, market: str = "A_share", root: Path | None = None,
     if out["stale"]:
         out["validated"] = False
         out["reason"] = f"artifact asof {art.get('asof')} older than {STALE_AFTER_DAYS}d"
-    out["caveats"] = art.get("caveats") or []
+    out["caveats"] = list(art.get("caveats") or [])
     return out
 
 
