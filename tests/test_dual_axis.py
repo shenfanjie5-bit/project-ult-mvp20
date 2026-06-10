@@ -137,3 +137,24 @@ def test_market_risk_charges_timing_not_merit():
     for res in (mkt, com):
         assert res["merit"] + res["timing"] == pytest.approx(
             res["core_final_score"]["base_score"], abs=1e-9)
+
+
+def test_scores_v2_schema_migration(tmp_path):
+    """An existing pnl.sqlite with the pre-scored_at scores_v2 table must be
+    migrated by _init (CREATE IF NOT EXISTS alone won't add columns)."""
+
+    import sqlite3
+    from mvp20 import pnl_loop
+
+    db = tmp_path / "pnl.sqlite"
+    with sqlite3.connect(str(db)) as c:
+        c.execute("CREATE TABLE scores_v2 (ts_code TEXT, base_date TEXT,"
+                  " merit REAL, timing REAL, signal_v2 TEXT,"
+                  " PRIMARY KEY (ts_code, base_date))")
+    pnl_loop._init(db)
+    pnl_loop._put_scores_v2(
+        [{"ts_code": "000001.SZ", "base_date": "20260610",
+          "merit": 0.1, "timing": 0.2, "signal_v2": "HOLD"}], db)
+    with sqlite3.connect(str(db)) as c:
+        row = c.execute("SELECT signal_v2, scored_at FROM scores_v2").fetchone()
+    assert row[0] == "HOLD" and row[1] is not None

@@ -77,6 +77,11 @@ def _init(db_path: Path) -> None:
     pstore.init(db_path)
     with sqlite3.connect(str(db_path)) as c:
         c.executescript(_EVAL_SCHEMA)
+        # migration: scores_v2 predating the scored_at audit column —
+        # CREATE TABLE IF NOT EXISTS won't add columns to an existing table.
+        cols = {r[1] for r in c.execute("PRAGMA table_info(scores_v2)")}
+        if "scored_at" not in cols:
+            c.execute("ALTER TABLE scores_v2 ADD COLUMN scored_at INTEGER")
 
 
 # ---------------------------------------------------------------------------
