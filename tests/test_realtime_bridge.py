@@ -2433,3 +2433,79 @@ def test_e2e_ps_expensive_lowers_score():
     )
     assert expensive < cheap
     assert expensive < 0  # expensive P/S drags valuation_rerating negative
+
+
+# ── M-3: announcement-age gate for guidance_change ──────────────────────────
+# A freshly collected row can carry a forecast pair announced many months ago;
+# without the gate the direction floor (0.1) feeds it into expectation_gap
+# forever. Anchor = snapshot's freshest updated_at (1_700_000_000 → 2023-11-14
+# in these tests).
+
+
+def test_ann_age_weight_unit():
+    from mvp20.aggregator import _ann_age_weight
+
+    ref = 1_700_000_000  # 2023-11-14
+    assert _ann_age_weight({"ann_date": "20231001"}, ref) == 1.0          # 44d fresh
+    assert _ann_age_weight({"ann_date": "20231114"}, ref) == 1.0          # same day
+    w_mid = _ann_age_weight({"ann_date": "20230301"}, ref)                # ~258d
+    assert 0.0 < w_mid < 0.2
+    assert _ann_age_weight({"ann_date": "20220101"}, ref) == 0.0          # ~2y dead
+    # fail-open: missing / garbage ann_date, non-dict payload
+    assert _ann_age_weight({}, ref) == 1.0
+    assert _ann_age_weight({"ann_date": "n/a"}, ref) == 1.0
+    assert _ann_age_weight({"ann_date": "20231301"}, ref) == 1.0          # bad month
+    assert _ann_age_weight(None, ref) == 1.0
+    # no anchor → today fallback: an ancient ann_date still zeroes
+    assert _ann_age_weight({"ann_date": "20220101"}, None) == 0.0
+
+
+def test_e2e_guidance_stale_ann_date_contributes_nothing():
+    fresh_up = _base_score_for(
+        "L5.fcst.guidance_change",
+        "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0,
+         "ann_date": "20231020"},
+    )
+    stale_up = _base_score_for(
+        "L5.fcst.guidance_change",
+        "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0,
+         "ann_date": "20220115"},  # ~22 months before the snapshot anchor
+    )
+    neutral = _base_score_for(
+        "L5.fcst.guidance_change",
+        "expectation_gap",
+        {"change_direction": "unchanged", "current_range_pct": 0.0,
+         "ann_date": "20231020"},
+    )
+    assert fresh_up > stale_up
+    # fully-stale upgraded == zero contribution == a fresh "unchanged"
+    assert stale_up == pytest.approx(neutral, abs=1e-9)
+
+
+def test_e2e_guidance_partial_decay_monotone():
+    def at(ann):
+        return _base_score_for(
+            "L5.fcst.guidance_change",
+            "expectation_gap",
+            {"change_direction": "upgraded", "current_range_pct": 50.0,
+             "ann_date": ann},
+        )
+
+    fresh, mid, dead = at("20231020"), at("20230401"), at("20220601")
+    assert fresh > mid > dead
+
+
+def test_e2e_guidance_without_ann_date_unchanged_behaviour():
+    # fail-open: legacy payloads without ann_date keep their full magnitude
+    with_date = _base_score_for(
+        "L5.fcst.guidance_change", "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0,
+         "ann_date": "20231110"},
+    )
+    without_date = _base_score_for(
+        "L5.fcst.guidance_change", "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0},
+    )
+    assert with_date == pytest.approx(without_date, abs=1e-9)

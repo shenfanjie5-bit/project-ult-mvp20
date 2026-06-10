@@ -912,6 +912,54 @@ def _freshness_weight(
     return 1.0 - (lag_trading_days - _RUN_UP_FRESH_TRADING_DAYS) / span
 
 
+# M-3 fix — announcement-AGE gate for guidance_change. C-3 above measures ROW
+# lag (collection staleness); this measures CONTENT age: a freshly re-collected
+# row can still carry a forecast pair announced 20 months ago, and a company
+# that simply stopped issuing forecasts would otherwise feed its last pair into
+# ``expectation_gap`` at full magnitude forever (``_GUIDANCE_DIRECTION_FLOOR``
+# guarantees the magnitude never decays on its own). The payload's ``ann_date``
+# is the disclosure date; weight is 1.0 up to ``_GUIDANCE_FRESH_CALENDAR_DAYS``
+# (the same 90-day window ``server.handle_market_events`` already applies to
+# the SAME forecast source on the display path), ramping linearly to 0.0 at
+# ``_GUIDANCE_STALE_CALENDAR_DAYS``. Anchor = the snapshot's freshest
+# ``updated_at`` when parseable (consistent with C-3), falling back to today
+# for live scoring. Fail-open: missing/unparseable ``ann_date`` → 1.0 (never
+# invent staleness we can't measure).
+_ANN_AGE_GATED_DP_IDS: frozenset[str] = frozenset({"L5.fcst.guidance_change"})
+_GUIDANCE_FRESH_CALENDAR_DAYS = 90.0
+_GUIDANCE_STALE_CALENDAR_DAYS = 270.0
+
+
+def _ann_age_weight(value: Any, ref_updated_at: Any) -> float:
+    """[0,1] multiplier from the payload ``ann_date`` age in calendar days."""
+
+    import datetime as _dt
+
+    if not isinstance(value, dict):
+        return 1.0
+    ann = value.get("ann_date")
+    if not isinstance(ann, str) or len(ann) != 8 or not ann.isdigit():
+        return 1.0
+    try:
+        ann_d = _dt.date(int(ann[:4]), int(ann[4:6]), int(ann[6:8]))
+    except ValueError:
+        return 1.0
+    ref_ts = _num(ref_updated_at)
+    ref_d = (
+        _dt.datetime.fromtimestamp(ref_ts).date()
+        if ref_ts is not None and ref_ts > 0
+        else _dt.date.today()
+    )
+    age = (ref_d - ann_d).days
+    if age <= _GUIDANCE_FRESH_CALENDAR_DAYS:
+        return 1.0
+    if age >= _GUIDANCE_STALE_CALENDAR_DAYS:
+        return 0.0
+    return 1.0 - (age - _GUIDANCE_FRESH_CALENDAR_DAYS) / (
+        _GUIDANCE_STALE_CALENDAR_DAYS - _GUIDANCE_FRESH_CALENDAR_DAYS
+    )
+
+
 # ─── F6-tag: business-model archetype gross-margin re-center ──────────────────
 # The coarse theme tag (AI_COMPUTE, …) mixes 7%-margin EMS / 代工 with 80%-margin
 # software (see the _GROSS_MARGIN_MEDIAN comment above), so universe-centering
@@ -1627,6 +1675,17 @@ def synthesize_realtime_nodes(
         # ``_FRESHNESS_GATED_DP_IDS`` so no other field's behaviour changes.
         if dp_id in _FRESHNESS_GATED_DP_IDS:
             signal *= _freshness_weight(entry.get("updated_at"), ref_updated_at)
+
+        # M-3 announcement-age gate: a guidance_change pair announced months
+        # ago must not keep feeding expectation_gap at full magnitude (the
+        # direction floor would otherwise hold it ≥0.1 forever). Scoped to
+        # ``_ANN_AGE_GATED_DP_IDS``; same 90d-fresh window as the server
+        # event-stream filter on the identical forecast source.
+        if dp_id in _ANN_AGE_GATED_DP_IDS:
+            _w = _ann_age_weight(entry.get("value"), ref_updated_at)
+            if _w <= 0.0:
+                continue  # fully stale → no node at all (like Inactive)
+            signal *= _w
 
         confidence = entry.get("confidence")
         try:
