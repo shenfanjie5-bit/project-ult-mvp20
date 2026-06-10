@@ -1252,7 +1252,23 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
         "final_score": final_score,
         "top_paths": top_paths,
         "signals": result.get("signals") or {},
+        # 涨幅预测分数 (validated two-layer quant model) — PARALLEL shadow
+        # output, never fused into base_score (tail-anti-alignment, see
+        # factor_research/model/REPORT_PROB.md §5.4). Best-effort: absent
+        # artifact -> honest available:false block.
+        "quant": _quant_block(ts_code),
     })
+
+
+def _quant_block(ts_code: str) -> dict:
+    try:
+        from mvp20.peer_context import market_of
+        if market_of(ts_code) != "A":
+            return {"available": False, "reason": "A-share only (model unvalidated elsewhere)"}
+        from mvp20.quant_score import lookup
+        return lookup(ts_code)
+    except Exception as exc:  # noqa: BLE001 — shadow output must never break /score
+        return {"available": False, "reason": f"quant lookup failed: {exc}"}
 
 
 def _read_industry_overlay(cfg: ServerConfig, industry_id: str | None) -> dict:
