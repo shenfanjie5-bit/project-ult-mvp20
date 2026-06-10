@@ -358,6 +358,21 @@ def handle_alerts_stub(_: ServerConfig, _q: dict) -> HandlerResult:
     })
 
 
+def handle_orchestrator_runs_stub(_: ServerConfig, _q: dict) -> HandlerResult:
+    """Stub for /api/project-ult/orchestrator/runs — orchestrator runs are
+    produced by upstream main-core; mvp20 is a manifest shell. Return an empty
+    envelope so the UI (EvidenceConsole / AuditReplay) shows a clean empty-state
+    instead of a 404 '加载失败'."""
+
+    return 200, _ok_envelope({
+        "module": "mvp20-bff",
+        "fixture": True,
+        "note": "orchestrator runs are upstream-planned (main-core); mvp20 is a manifest shell",
+        "runs": [],
+        "total": 0,
+    })
+
+
 def handle_history(cfg: ServerConfig, query: dict) -> HandlerResult:
     """Time-series replay for one (ts_code, dp_id) from Parquet history."""
 
@@ -563,15 +578,19 @@ def handle_technicals(cfg: ServerConfig, query: dict) -> HandlerResult:
 def handle_market_events(cfg: ServerConfig, query: dict) -> HandlerResult:
     """Cross-stock real-time event stream from SQLite.
 
-    Combines two sources:
+    Combines three sources:
       * ``MARKET:CN/L9.media.report.top_headlines`` — CLS telegraph rollup
         (market-level; ``time`` field is ISO string).
       * Per-stock ``L9.event.intraday_news.top_headlines`` — EastMoney news
         per A-share (``publish_time`` ``YYYY-MM-DD HH:MM:SS`` string).
+      * Per-stock ``L9.company.earnings_guidance`` — 业绩预告 forecast events,
+        each carrying a VALIDATED signed ``coefficient`` (expected size-adjusted
+        abnormal return; see ``mvp20.event_coefficient``). News rows carry
+        ``coefficient: null`` + ``coefficient_meta.validated: false`` because
+        Track B (free-text news) is forward-only and not yet validated.
 
-    Returns headlines sorted by timestamp desc, deduped by title, limited to
-    ``?limit=N`` (default 12, max 50). Backs the MarketOverview "实时事件流"
-    timeline so it shows today's real news instead of a fixture.
+    Returns events sorted by timestamp desc, deduped, limited to ``?limit=N``
+    (default 12, max 50). Backs the MarketOverview "实时事件流" timeline.
     """
 
     import sqlite3
@@ -605,6 +624,7 @@ def handle_market_events(cfg: ServerConfig, query: dict) -> HandlerResult:
                AND (
                     (ts_code = 'MARKET:CN' AND dp_id = 'L9.media.report')
                  OR dp_id = 'L9.event.intraday_news'
+                 OR dp_id = 'L9.company.earnings_guidance'
                )
             """
         ).fetchall()
@@ -620,12 +640,20 @@ def handle_market_events(cfg: ServerConfig, query: dict) -> HandlerResult:
         # 17:05:00"), or short date — return epoch seconds, None on failure.
         if not s or not isinstance(s, str):
             return None
-        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y%m%d"):
             try:
                 return int(datetime.strptime(s[:19], fmt).timestamp())
             except ValueError:
                 continue
         return None
+
+    from mvp20.event_coefficient import forecast_coefficient, news_coefficient_meta
+
+    # realtime_current keeps only each stock's LATEST forecast (UPSERT); for a
+    # stock that no longer issues 业绩预告 that snapshot can be years old. Only
+    # surface forecast events whose ann_date is genuinely recent.
+    forecast_max_age = 90 * 86400
+    now_epoch = int(datetime.now().timestamp())
 
     collected: list[dict] = []
     for ts_code, dp_id, val_json, _upd in rows:
@@ -635,6 +663,34 @@ def handle_market_events(cfg: ServerConfig, query: dict) -> HandlerResult:
             continue
         if not isinstance(payload, dict):
             continue
+
+        # Structured forecast event → VALIDATED signed coefficient.
+        if dp_id == "L9.company.earnings_guidance":
+            coef = forecast_coefficient(payload)
+            if coef is None:  # no clear direction (不确定/缺失) — skip, never show 0
+                continue
+            epoch = _parse_ts(payload.get("ann_date"))
+            if epoch is None or now_epoch - epoch > forecast_max_age:
+                continue
+            typ = str(payload.get("type") or "").strip()
+            collected.append({
+                "ts_code": ts_code,
+                "dp_id": dp_id,
+                "title": f"业绩预告 · {typ}",
+                "timestamp_epoch": epoch,
+                "timestamp_iso": datetime.fromtimestamp(epoch).isoformat(
+                    timespec="seconds",
+                ),
+                "url": None,
+                "source": "tushare:forecast",
+                "coefficient": coef["coefficient"],
+                "coefficient_meta": {k: v for k, v in coef.items()
+                                     if k != "coefficient"},
+            })
+            continue
+
+        # Free-text news / CLS rollup → headlines. No validated coefficient yet
+        # (Track B is forward-only) → coefficient null + validated:false.
         headlines = payload.get("top_headlines") or []
         if not isinstance(headlines, list):
             continue
@@ -658,15 +714,20 @@ def handle_market_events(cfg: ServerConfig, query: dict) -> HandlerResult:
                 ),
                 "url": h.get("url"),
                 "source": h.get("source"),
+                "coefficient": None,
+                "coefficient_meta": news_coefficient_meta(),
             })
 
-    # Dedupe by title — different stocks can echo the same headline.
-    seen_titles: set[str] = set()
+    # Dedupe: news by title (stocks echo the same headline); forecast events by
+    # (ts_code, dp_id) so per-stock guidance isn't collapsed by a shared title.
+    seen: set = set()
     deduped: list[dict] = []
     for ev in sorted(collected, key=lambda e: e["timestamp_epoch"], reverse=True):
-        if ev["title"] in seen_titles:
+        key = ((ev["ts_code"], ev["dp_id"])
+               if ev["dp_id"] == "L9.company.earnings_guidance" else ev["title"])
+        if key in seen:
             continue
-        seen_titles.add(ev["title"])
+        seen.add(key)
         deduped.append(ev)
         if len(deduped) >= limit:
             break
@@ -1305,6 +1366,7 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         # mvp20 own BFF stubs — frontend-api not vendored; FrontEnd/ uses these
         (re.compile(r"^/api/admin/.*$"), handle_admin_stub),
         (re.compile(r"^/api/alerts/.*$"), handle_alerts_stub),
+        (re.compile(r"^/api/project-ult/orchestrator/runs/?.*$"), handle_orchestrator_runs_stub),
         # Phase-1 data-layer: merged stock overlay (YAML static + SQLite hot)
         (re.compile(r"^/api/project-ult/stock-overlay$"), handle_stock_overlay),
         # Cross-stock real-time event stream (MarketOverview "实时事件流")
@@ -1536,6 +1598,9 @@ def make_handler_class(cfg: ServerConfig) -> type[_Handler]:
 def serve_forever(cfg: ServerConfig) -> None:
     handler_cls = make_handler_class(cfg)
     httpd = ThreadingHTTPServer((cfg.host, cfg.port), handler_cls)
+    # Daemonize request threads so finished/long-lived SSE threads don't pile up
+    # in ThreadingMixIn._threads (a slow leak that degrades a long-running server).
+    httpd.daemon_threads = True
     print(f"mvp20 HTTP server listening on http://{cfg.host}:{cfg.port}/api/*")
     print(f"  CORS origin allowed: {cfg.cors_origin}")
     print(f"  Universe:    {cfg.universe_path}")
