@@ -373,6 +373,57 @@ def handle_orchestrator_runs_stub(_: ServerConfig, _q: dict) -> HandlerResult:
     })
 
 
+def handle_pnl_backtests(_: ServerConfig, query: dict) -> HandlerResult:
+    """Serve the production P&L feedback loop (G1): per-date score-vs-realized
+    forward-return metrics + rolling summary with de-rate flags.
+
+    Data is produced nightly by ``scripts/run_pnl_loop.py`` into
+    ``runtime/backtest/pnl.sqlite``. Empty (but honest) envelope until the
+    first snapshots mature — never a fixture pretending to be data.
+
+    Query params: ``horizon`` (5|10|20, optional filter), ``limit`` (default
+    60 most recent per-date rows).
+    """
+
+    try:
+        from mvp20 import pnl_loop
+    except Exception as exc:  # noqa: BLE001
+        return 500, _error_envelope(
+            "IMPORT_FAILED", f"pnl_loop import failed: {exc}", status=500
+        )
+
+    horizon_raw = (query.get("horizon") or [None])[0]
+    horizon = None
+    if horizon_raw:
+        try:
+            horizon = int(horizon_raw)
+        except ValueError:
+            return 400, _error_envelope(
+                "BAD_PARAM", f"horizon must be an int, got {horizon_raw!r}", status=400
+            )
+    try:
+        limit = max(1, min(500, int((query.get("limit") or ["60"])[0])))
+    except ValueError:
+        limit = 60
+
+    rows = pnl_loop.read_eval(horizon=horizon)
+    rows.sort(key=lambda m: (m.get("base_date") or "", m.get("horizon_d") or 0),
+              reverse=True)
+    summary = pnl_loop.rolling_summary()
+    return 200, _ok_envelope({
+        "module": "mvp20-pnl-loop",
+        "source": str(pnl_loop.DEFAULT_DB),
+        "backtests": rows[:limit],
+        "total": len(rows),
+        "rolling_summary": summary,
+        "note": (
+            "per-date metrics join the nightly production score snapshot with"
+            " realized T+h hfq returns (h=5/10/20 trading days); empty until"
+            " the first snapshots mature"
+        ),
+    })
+
+
 def handle_history(cfg: ServerConfig, query: dict) -> HandlerResult:
     """Time-series replay for one (ts_code, dp_id) from Parquet history."""
 
@@ -1361,8 +1412,11 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         # audit-eval
         (re.compile(r"^/api/project-ult/audit/[^/]+$"), audit_eval_adapter.handle_audit),
         (re.compile(r"^/api/audit/.*$"), audit_eval_adapter.handle_audit),
-        (re.compile(r"^/api/project-ult/backtests/?.*$"), audit_eval_adapter.handle_backtest),
-        (re.compile(r"^/api/backtest/.*$"), audit_eval_adapter.handle_backtest),
+        # backtests — real data from the production P&L feedback loop
+        # (mvp20.pnl_loop + scripts/run_pnl_loop.py); replaces the empty
+        # audit-eval fixture that capability audit G1 flagged.
+        (re.compile(r"^/api/project-ult/backtests/?.*$"), handle_pnl_backtests),
+        (re.compile(r"^/api/backtest/.*$"), handle_pnl_backtests),
         # mvp20 own BFF stubs — frontend-api not vendored; FrontEnd/ uses these
         (re.compile(r"^/api/admin/.*$"), handle_admin_stub),
         (re.compile(r"^/api/alerts/.*$"), handle_alerts_stub),

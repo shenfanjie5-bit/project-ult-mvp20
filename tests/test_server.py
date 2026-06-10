@@ -204,8 +204,9 @@ _ADAPTER_ROUTES = [
     ("/api/world-state/latest", "main_core"),
     ("/api/project-ult/audit/audit-x", "audit_eval"),
     ("/api/audit/replay/foo", "audit_eval"),
-    ("/api/project-ult/backtests", "audit_eval"),
-    ("/api/backtest/list", "audit_eval"),
+    # NOTE: /api/backtest* routes moved off the audit_eval fixture to the real
+    # P&L feedback loop handler (handle_pnl_backtests) — covered below by
+    # test_backtest_routes_serve_pnl_loop, not by the fixture-shape test.
 ]
 
 
@@ -234,6 +235,25 @@ def test_adapter_routes_return_200(running_server, path: str, adapter_module: st
     assert data.get("fixture") is True, f"{path} fixture flag missing: {data}"
     assert data.get("wire_depth") == "skeleton", f"{path} wire_depth wrong: {data}"
     assert data.get("module"), f"{path} missing module label: {data}"
+
+
+@pytest.mark.parametrize("path", [
+    "/api/project-ult/backtests",
+    "/api/backtest/list",
+])
+def test_backtest_routes_serve_pnl_loop(running_server, path: str) -> None:
+    """Backtest routes serve the production P&L feedback loop (G1), not the
+    audit-eval fixture: real envelope shape, honest-empty when no snapshots
+    have matured yet (CI has no pnl.sqlite)."""
+
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, path)
+    assert status == 200, f"{path} expected 200, got {status}; body={body}"
+    data = body.get("data") or {}
+    assert data.get("module") == "mvp20-pnl-loop", data
+    assert "backtests" in data and isinstance(data["backtests"], list), data
+    assert "rolling_summary" in data, data
+    assert data.get("fixture") is not True, "must NOT be a fixture"
 
 
 def test_adapter_import_fallback_returns_503(running_server, monkeypatch) -> None:
