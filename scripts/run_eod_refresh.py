@@ -52,11 +52,44 @@ def _run(label: str, args: list[str], timeout_s: int) -> dict:
                 "elapsed_s": round(time.time() - t0, 1)}
 
 
+def _run_derive_inprocess() -> dict:
+    """derive in-process with a GLOBAL socket timeout.
+
+    The tushare client issues HTTP reads with NO timeout; one wedged
+    connection hangs the whole nightly chain forever (observed: 93% of
+    samples blocked in sock_recv). With the default timeout set, a hung call
+    raises inside the per-stock fetch helper (which already catches and
+    returns {}), so the loop skips that stock and continues.
+    """
+
+    import socket
+
+    t0 = time.time()
+    socket.setdefaulttimeout(60)
+    try:
+        from mvp20.sources import load_dotenv
+        load_dotenv()
+        from mvp20.derive import derive_all
+        stats = derive_all(Path("runtime/hot.sqlite"))
+        log.info("derive: %.0fs %s", time.time() - t0, stats)
+        return {"step": "derive", "ok": True, "rc": 0,
+                "elapsed_s": round(time.time() - t0, 1), "stats": stats}
+    except Exception as exc:  # noqa: BLE001
+        log.error("derive failed: %s", exc)
+        return {"step": "derive", "ok": False, "rc": 1,
+                "elapsed_s": round(time.time() - t0, 1), "error": str(exc)}
+
+
 def main() -> int:
     t0 = time.time()
     results = [
-        # derive pulls per-stock history from tushare; generous timeout (2.5h)
-        _run("derive", [PY, "-m", "mvp20.cli", "derive"], 9000),
+        # step 0: FULL tushare collect (financials/forecast/express/etc. —
+        # the slow per-stock fetch_batch the minute-level launchd collector
+        # intentionally skips). One cycle then exit. Generous 3h budget.
+        _run("collect-full",
+             [PY, "scripts/collector.py", "--source", "tushare",
+              "--max-cycles", "1"], 10800),
+        _run_derive_inprocess(),
         _run("compile-overlays",
              [PY, "-m", "mvp20.cli", "compile-overlays",
               "--db", "runtime/hot.sqlite"], 1800),

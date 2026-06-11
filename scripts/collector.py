@@ -373,6 +373,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # One wedged HTTP read must not hang a collection cycle forever (the same
+    # no-timeout tushare-client failure observed in the derive chain): with a
+    # global default timeout a stuck call raises inside the per-source fetcher
+    # (which catches per-endpoint) and the cycle moves on.
+    import socket
+    socket.setdefaulttimeout(60)
+
     # Production dev-gate: refuse fabricated mock sources unless explicitly
     # allowed. This stops mock rows from ever being written to a production
     # hot.sqlite. The read-side mock guard (derive/aggregator) is the second
