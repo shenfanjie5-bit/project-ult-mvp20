@@ -1263,7 +1263,41 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
         # factor_research/model/REPORT_PROB.md §5.4). Best-effort: absent
         # artifact -> honest available:false block.
         "quant": _quant_block(ts_code),
+        # data-freshness of the realtime rows this score consumed (mock rows
+        # excluded). The score panel must show its own "Xh 未更新" like the
+        # technicals panel does — silent staleness is how a 113h-old picture
+        # gets read as current.
+        "freshness": _score_freshness(realtime_data),
     })
+
+
+def _score_freshness(realtime_data: dict | None) -> dict:
+    """{newest_age_seconds, median_age_seconds, stale} over non-mock rows."""
+
+    import time as _time
+
+    now = _time.time()
+    ages: list[float] = []
+    for entry in (realtime_data or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("source") or "").startswith("mock:"):
+            continue
+        ts = entry.get("updated_at")
+        if isinstance(ts, (int, float)) and ts > 0:
+            ages.append(max(0.0, now - float(ts)))
+    if not ages:
+        return {"newest_age_seconds": None, "median_age_seconds": None,
+                "stale": True, "n_rows": 0}
+    ages.sort()
+    median = ages[len(ages) // 2]
+    return {
+        "newest_age_seconds": round(ages[0]),
+        "median_age_seconds": round(median),
+        # trading data older than ~26h (one session + settle margin) is stale
+        "stale": median > 26 * 3600,
+        "n_rows": len(ages),
+    }
 
 
 def _quant_block(ts_code: str) -> dict:

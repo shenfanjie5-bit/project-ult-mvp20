@@ -270,3 +270,26 @@ def test_ranking_handler_empty_is_honest(tmp_path, monkeypatch):
     status, env = server.handle_ranking(server.ServerConfig(), {})
     assert status == 200
     assert env["data"]["rows"] == [] and env["data"]["total"] == 0
+
+
+def test_score_freshness_block():
+    """/score must carry its own data-age (mock rows excluded) — the
+    'every panel wears its age' contract."""
+
+    import time as _t
+    from mvp20.server import _score_freshness
+
+    now = _t.time()
+    rt = {
+        "L5.a": {"updated_at": now - 3600, "source": "tushare:x"},      # 1h
+        "L5.b": {"updated_at": now - 400000, "source": "derived:y"},    # ~111h
+        "L5.c": {"updated_at": now - 50, "source": "mock:futu"},        # excluded
+        "L5.d": {"updated_at": None, "source": "tushare:x"},            # ignored
+    }
+    f = _score_freshness(rt)
+    assert f["n_rows"] == 2
+    assert abs(f["newest_age_seconds"] - 3600) < 5
+    assert f["stale"] is True  # median of [1h, 111h] -> 111h > 26h
+    assert _score_freshness({}) == {
+        "newest_age_seconds": None, "median_age_seconds": None,
+        "stale": True, "n_rows": 0}
