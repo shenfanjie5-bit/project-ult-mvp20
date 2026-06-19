@@ -233,7 +233,7 @@ def render_md(ts_code: str, rows: list[dict]) -> str:
     out.append("")
 
     # Full detail table
-    out.append("## All 250 dp_ids")
+    out.append("## All spec dp_ids")
     out.append("")
     out.append(
         "| dp_id | bucket | in_score | participates | score_target | "
@@ -275,7 +275,7 @@ def main() -> int:
         print(f"wrote {args.out_md}")
     if args.only == "summary":
         # print only through the "By layer" section
-        head = md.split("## All 250 dp_ids")[0]
+        head = md.split("## All spec dp_ids")[0]
         print(head)
     else:
         print(md)

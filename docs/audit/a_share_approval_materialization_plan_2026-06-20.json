@@ -1,0 +1,848 @@
+{
+  "generated_at": "2026-06-20T00:26:54+08:00",
+  "inputs": {
+    "target_scope_readiness_path": "docs/audit/a_share_approval_target_scope_readiness_2026-06-20.json",
+    "review_manifest_path": "docs/audit/a_share_review_staging_manifest_2026-06-19.json",
+    "runtime_db_path": "runtime/hot.sqlite",
+    "universe_path": "config/mvp20.universe.yaml"
+  },
+  "summary": {
+    "approval_packet_count": 25,
+    "a_share_universe_count": 1641,
+    "fundamental_packet_count": 19,
+    "direct_structured_formula_packet_count": 7,
+    "direct_structured_formula_plan_ready_count": 7,
+    "direct_structured_formula_min_target_count": 868,
+    "direct_structured_formula_max_target_count": 1639,
+    "grain_join_policy_required_count": 1,
+    "text_evidence_full_match_export_required_count": 3,
+    "market_or_event_scope_policy_required_count": 14,
+    "unsupported_materialization_policy_count": 0,
+    "runtime_materialization_plan_ready_count": 7,
+    "runtime_write_allowed_count": 0,
+    "production_write_allowed_count": 0,
+    "materialization_class_counts": {
+      "direct_structured_per_stock_formula": 7,
+      "market_or_event_scope_policy_required": 14,
+      "structured_formula_grain_join_review_required": 1,
+      "text_evidence_subset_requires_full_match_export": 3
+    },
+    "required_next_step_counts": {
+      "approve_formula_materialization_plan": 7,
+      "approve_grain_join_materialization_policy": 1,
+      "approve_market_or_event_target_scope_policy": 14,
+      "export_full_text_match_target_scope": 3
+    },
+    "score_mutation": "none; materialization planning audit is read-only and does not alter realtime_current"
+  },
+  "rows": [
+    {
+      "dp_id": "L0.compete.price_war",
+      "score_target": "fundamental_score",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.industry.compete_risk",
+        "L9.media.report"
+      ],
+      "review_payload_score": -0.25,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.compete.share_concentration",
+      "score_target": "fundamental_score",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.industry.compete_risk",
+        "L9.media.report"
+      ],
+      "review_payload_score": 0.22,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.cost.cac",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_policy_pilot",
+      "materialization_class": "direct_structured_per_stock_formula",
+      "required_next_step": "approve_formula_materialization_plan",
+      "source_dependencies": [
+        "L5.is.sga_rd"
+      ],
+      "formula": "score = clamp((0.18 - sga_rd_ratio_revenue) / 0.30, -1, 1)",
+      "review_payload_score": 0.022717,
+      "a_share_universe_count": 1641,
+      "target_ts_code_count": 1639,
+      "bridge_ready_count": 1639,
+      "score_stats": {
+        "count": 1639,
+        "min": -1.0,
+        "max": 0.594241,
+        "avg": -0.013269
+      },
+      "sample_materialized_rows": [
+        {
+          "ts_code": "000001.SZ",
+          "score": -0.298791,
+          "bridge_signal": -0.298791,
+          "components": {
+            "sga_rd_ratio_revenue": 0.269637
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "score": 0.159248,
+          "bridge_signal": 0.159248,
+          "components": {
+            "sga_rd_ratio_revenue": 0.132226
+          }
+        },
+        {
+          "ts_code": "000012.SZ",
+          "score": 0.207695,
+          "bridge_signal": 0.207695,
+          "components": {
+            "sga_rd_ratio_revenue": 0.117692
+          }
+        },
+        {
+          "ts_code": "000021.SZ",
+          "score": 0.333313,
+          "bridge_signal": 0.333313,
+          "components": {
+            "sga_rd_ratio_revenue": 0.080006
+          }
+        },
+        {
+          "ts_code": "000027.SZ",
+          "score": 0.481935,
+          "bridge_signal": 0.481935,
+          "components": {
+            "sga_rd_ratio_revenue": 0.03542
+          }
+        }
+      ],
+      "missing_input_count": 2,
+      "missing_input_reason_counts": {
+        "L5.is.sga_rd.sga_rd_ratio_revenue": 2
+      },
+      "runtime_materialization_plan_ready": true,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.cost.labor",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_policy_pilot",
+      "materialization_class": "direct_structured_per_stock_formula",
+      "required_next_step": "approve_formula_materialization_plan",
+      "source_dependencies": [
+        "L4.cost.labor"
+      ],
+      "formula": "score = clamp(((20 - labor_cost_pct) / 40) - (labor_cost_yoy_pct / 30), -1, 1)",
+      "review_payload_score": 0.080821,
+      "a_share_universe_count": 1641,
+      "target_ts_code_count": 1289,
+      "bridge_ready_count": 1289,
+      "score_stats": {
+        "count": 1289,
+        "min": -1.0,
+        "max": 1.0,
+        "avg": 0.006829
+      },
+      "sample_materialized_rows": [
+        {
+          "ts_code": "000001.SZ",
+          "score": -0.046446,
+          "bridge_signal": -0.046446,
+          "components": {
+            "labor_cost_pct": 23.0037,
+            "labor_cost_yoy_pct": -0.8594
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "score": 0.283852,
+          "bridge_signal": 0.283852,
+          "components": {
+            "labor_cost_pct": 11.4854,
+            "labor_cost_yoy_pct": -2.1296
+          }
+        },
+        {
+          "ts_code": "000012.SZ",
+          "score": 0.005056,
+          "bridge_signal": 0.005056,
+          "components": {
+            "labor_cost_pct": 19.4951,
+            "labor_cost_yoy_pct": 0.227
+          }
+        },
+        {
+          "ts_code": "000021.SZ",
+          "score": -0.176628,
+          "bridge_signal": -0.176628,
+          "components": {
+            "labor_cost_pct": 24.4155,
+            "labor_cost_yoy_pct": 1.9872
+          }
+        },
+        {
+          "ts_code": "000027.SZ",
+          "score": 0.321945,
+          "bridge_signal": 0.321945,
+          "components": {
+            "labor_cost_pct": 6.931,
+            "labor_cost_yoy_pct": 0.1434
+          }
+        }
+      ],
+      "missing_input_count": 352,
+      "missing_input_reason_counts": {
+        "L4.cost.labor.labor_cost_pct": 4,
+        "L4.cost.labor.labor_cost_yoy_pct": 352
+      },
+      "runtime_materialization_plan_ready": true,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.demand.terminal",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_policy_pilot",
+      "materialization_class": "direct_structured_per_stock_formula",
+      "required_next_step": "approve_formula_materialization_plan",
+      "source_dependencies": [
+        "L5.is.revenue_growth"
+      ],
+      "formula": "score = clamp(tanh(revenue_yoy_pct / 35), -1, 1)",
+      "review_payload_score": 0.204771,
+      "a_share_universe_count": 1641,
+      "target_ts_code_count": 1607,
+      "bridge_ready_count": 1607,
+      "score_stats": {
+        "count": 1607,
+        "min": -0.990625,
+        "max": 1.0,
+        "avg": 0.277304
+      },
+      "sample_materialized_rows": [
+        {
+          "ts_code": "000001.SZ",
+          "score": 0.132125,
+          "bridge_signal": 0.132125,
+          "components": {
+            "revenue_yoy_pct": 4.651577
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "score": 0.510479,
+          "bridge_signal": 0.510479,
+          "components": {
+            "revenue_yoy_pct": 19.718192
+          }
+        },
+        {
+          "ts_code": "000012.SZ",
+          "score": -0.073028,
+          "bridge_signal": -0.073028,
+          "components": {
+            "revenue_yoy_pct": -2.560544
+          }
+        },
+        {
+          "ts_code": "000021.SZ",
+          "score": 0.295852,
+          "bridge_signal": 0.295852,
+          "components": {
+            "revenue_yoy_pct": 10.673867
+          }
+        },
+        {
+          "ts_code": "000027.SZ",
+          "score": 0.049478,
+          "bridge_signal": 0.049478,
+          "components": {
+            "revenue_yoy_pct": 1.733128
+          }
+        }
+      ],
+      "missing_input_count": 34,
+      "missing_input_reason_counts": {
+        "L5.is.revenue_growth.yoy_pct": 34
+      },
+      "runtime_materialization_plan_ready": true,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.demand.user_count",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_text_policy_pilot",
+      "materialization_class": "text_evidence_subset_requires_full_match_export",
+      "required_next_step": "export_full_text_match_target_scope",
+      "source_dependencies": [
+        "L5.is.revenue",
+        "L9.disclosure.qa_recent"
+      ],
+      "review_payload_score": 0.245,
+      "text_match_count": 25,
+      "evidence_example_ts_code_count": 4,
+      "evidence_example_ts_codes": [
+        "000338.SZ",
+        "000425.SZ",
+        "000725.SZ",
+        "002409.SZ"
+      ],
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.policy.access_license",
+      "score_target": "fundamental_score",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.industry.policy_change",
+        "L9.media.report"
+      ],
+      "review_payload_score": -0.2,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.policy.regulation",
+      "score_target": "fundamental_score",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.industry.policy_change",
+        "L9.media.report"
+      ],
+      "review_payload_score": -0.12,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.policy.subsidy",
+      "score_target": "fundamental_score",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.industry.policy_change",
+        "L9.media.report"
+      ],
+      "review_payload_score": -0.1,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.policy.tax_trade",
+      "score_target": "fundamental_score",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.industry.policy_change",
+        "L9.macro.fx"
+      ],
+      "review_payload_score": -0.18,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.price.contract_spot",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_policy_pilot",
+      "materialization_class": "structured_formula_grain_join_review_required",
+      "required_next_step": "approve_grain_join_materialization_policy",
+      "source_dependencies": [
+        "L0.cost.raw_material",
+        "L5.is.gross_margin"
+      ],
+      "review_payload_score": -0.063964,
+      "grain_join_policy": {
+        "a_share_universe_count": 1641,
+        "raw_material_industry_count": 7,
+        "known_gross_margin_a_share_count": 1546,
+        "join_ready_a_share_count": 1007,
+        "missing_raw_material_a_share_count": 539,
+        "missing_gross_margin_a_share_count": 95
+      },
+      "target_ts_code_count": 1007,
+      "missing_raw_material_a_share_count": 539,
+      "missing_gross_margin_a_share_count": 95,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.price.discount",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_text_policy_pilot",
+      "materialization_class": "text_evidence_subset_requires_full_match_export",
+      "required_next_step": "export_full_text_match_target_scope",
+      "source_dependencies": [
+        "L5.is.gross_margin",
+        "L9.disclosure.qa_recent"
+      ],
+      "review_payload_score": -0.196519,
+      "text_match_count": 1,
+      "evidence_example_ts_code_count": 1,
+      "evidence_example_ts_codes": [
+        "300760.SZ"
+      ],
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.price.pricing_power",
+      "score_target": "fundamental_score",
+      "source_kind": "local_single_dependency_policy_pilot",
+      "materialization_class": "direct_structured_per_stock_formula",
+      "required_next_step": "approve_formula_materialization_plan",
+      "source_dependencies": [
+        "L5.is.gross_margin"
+      ],
+      "formula": "score = clamp((gross_margin - 0.20) / 0.30, -1, 1)",
+      "review_payload_score": -0.076791,
+      "a_share_universe_count": 1641,
+      "target_ts_code_count": 1546,
+      "bridge_ready_count": 1546,
+      "score_stats": {
+        "count": 1546,
+        "min": -1.0,
+        "max": 1.0,
+        "avg": 0.253149
+      },
+      "sample_materialized_rows": [
+        {
+          "ts_code": "000009.SZ",
+          "score": 0.166725,
+          "bridge_signal": 0.166725,
+          "components": {
+            "gross_margin": 0.250018
+          }
+        },
+        {
+          "ts_code": "000012.SZ",
+          "score": -0.299305,
+          "bridge_signal": -0.299305,
+          "components": {
+            "gross_margin": 0.110208
+          }
+        },
+        {
+          "ts_code": "000021.SZ",
+          "score": -0.097794,
+          "bridge_signal": -0.097794,
+          "components": {
+            "gross_margin": 0.170662
+          }
+        },
+        {
+          "ts_code": "000027.SZ",
+          "score": 0.24621,
+          "bridge_signal": 0.24621,
+          "components": {
+            "gross_margin": 0.273863
+          }
+        },
+        {
+          "ts_code": "000028.SZ",
+          "score": -0.334696,
+          "bridge_signal": -0.334696,
+          "components": {
+            "gross_margin": 0.099591
+          }
+        }
+      ],
+      "missing_input_count": 95,
+      "missing_input_reason_counts": {
+        "L5.is.gross_margin.scalar": 95
+      },
+      "runtime_materialization_plan_ready": true,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.supply.capacity",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_policy_pilot",
+      "materialization_class": "direct_structured_per_stock_formula",
+      "required_next_step": "approve_formula_materialization_plan",
+      "source_dependencies": [
+        "L5.cf.capex",
+        "L5.bs.goodwill_ppe"
+      ],
+      "formula": "score = clamp((capex / fix_assets_ppe - 0.02) / 0.08, -1, 1)",
+      "review_payload_score": 0.063117,
+      "a_share_universe_count": 1641,
+      "target_ts_code_count": 868,
+      "bridge_ready_count": 868,
+      "score_stats": {
+        "count": 868,
+        "min": -0.519216,
+        "max": 1.0,
+        "avg": 0.387605
+      },
+      "sample_materialized_rows": [
+        {
+          "ts_code": "000001.SZ",
+          "score": -0.052372,
+          "bridge_signal": -0.052372,
+          "components": {
+            "capex_to_ppe": 0.01581
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "score": 0.354365,
+          "bridge_signal": 0.354365,
+          "components": {
+            "capex_to_ppe": 0.048349
+          }
+        },
+        {
+          "ts_code": "000012.SZ",
+          "score": -0.112643,
+          "bridge_signal": -0.112643,
+          "components": {
+            "capex_to_ppe": 0.010989
+          }
+        },
+        {
+          "ts_code": "000021.SZ",
+          "score": 0.501031,
+          "bridge_signal": 0.501031,
+          "components": {
+            "capex_to_ppe": 0.060082
+          }
+        },
+        {
+          "ts_code": "000028.SZ",
+          "score": 0.199393,
+          "bridge_signal": 0.199393,
+          "components": {
+            "capex_to_ppe": 0.035951
+          }
+        }
+      ],
+      "missing_input_count": 773,
+      "missing_input_reason_counts": {
+        "L5.bs.goodwill_ppe.fix_assets_ppe": 773,
+        "L5.cf.capex.scalar": 1
+      },
+      "runtime_materialization_plan_ready": true,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.supply.chain_eff",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_policy_pilot",
+      "materialization_class": "direct_structured_per_stock_formula",
+      "required_next_step": "approve_formula_materialization_plan",
+      "source_dependencies": [
+        "L4.eff.cycle"
+      ],
+      "formula": "score = clamp((90 - ccc_days) / 180, -1, 1)",
+      "review_payload_score": 0.011778,
+      "a_share_universe_count": 1641,
+      "target_ts_code_count": 1517,
+      "bridge_ready_count": 1517,
+      "score_stats": {
+        "count": 1517,
+        "min": -1.0,
+        "max": 1.0,
+        "avg": 0.035936
+      },
+      "sample_materialized_rows": [
+        {
+          "ts_code": "000009.SZ",
+          "score": -0.754389,
+          "bridge_signal": -0.754389,
+          "components": {
+            "ccc_days": 225.79
+          }
+        },
+        {
+          "ts_code": "000012.SZ",
+          "score": 0.777944,
+          "bridge_signal": 0.777944,
+          "components": {
+            "ccc_days": -50.03
+          }
+        },
+        {
+          "ts_code": "000021.SZ",
+          "score": 0.149556,
+          "bridge_signal": 0.149556,
+          "components": {
+            "ccc_days": 63.08
+          }
+        },
+        {
+          "ts_code": "000027.SZ",
+          "score": -0.114722,
+          "bridge_signal": -0.114722,
+          "components": {
+            "ccc_days": 110.65
+          }
+        },
+        {
+          "ts_code": "000028.SZ",
+          "score": 0.204833,
+          "bridge_signal": 0.204833,
+          "components": {
+            "ccc_days": 53.13
+          }
+        }
+      ],
+      "missing_input_count": 124,
+      "missing_input_reason_counts": {
+        "L4.eff.cycle.ccc_days": 124
+      },
+      "runtime_materialization_plan_ready": true,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.supply.channel_service",
+      "score_target": "fundamental_score",
+      "source_kind": "local_structured_text_policy_pilot",
+      "materialization_class": "text_evidence_subset_requires_full_match_export",
+      "required_next_step": "export_full_text_match_target_scope",
+      "source_dependencies": [
+        "L5.is.sga_rd",
+        "L9.disclosure.qa_recent"
+      ],
+      "review_payload_score": 0.124543,
+      "text_match_count": 1,
+      "evidence_example_ts_code_count": 1,
+      "evidence_example_ts_codes": [
+        "000338.SZ"
+      ],
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.supply.inventory",
+      "score_target": "fundamental_score",
+      "source_kind": "local_single_dependency_policy_pilot",
+      "materialization_class": "direct_structured_per_stock_formula",
+      "required_next_step": "approve_formula_materialization_plan",
+      "source_dependencies": [
+        "L5.bs.inventory"
+      ],
+      "formula": "score = clamp((0.20 - inventory_to_assets) / 0.40, -1, 1)",
+      "review_payload_score": 0.144172,
+      "a_share_universe_count": 1641,
+      "target_ts_code_count": 1529,
+      "bridge_ready_count": 1529,
+      "score_stats": {
+        "count": 1529,
+        "min": -1.0,
+        "max": 0.5,
+        "avg": 0.199427
+      },
+      "sample_materialized_rows": [
+        {
+          "ts_code": "000009.SZ",
+          "score": -0.113915,
+          "bridge_signal": -0.113915,
+          "components": {
+            "inventory_to_assets": 0.245566
+          }
+        },
+        {
+          "ts_code": "000012.SZ",
+          "score": 0.298305,
+          "bridge_signal": 0.298305,
+          "components": {
+            "inventory_to_assets": 0.080678
+          }
+        },
+        {
+          "ts_code": "000021.SZ",
+          "score": 0.248125,
+          "bridge_signal": 0.248125,
+          "components": {
+            "inventory_to_assets": 0.10075
+          }
+        },
+        {
+          "ts_code": "000027.SZ",
+          "score": 0.4818,
+          "bridge_signal": 0.4818,
+          "components": {
+            "inventory_to_assets": 0.00728
+          }
+        },
+        {
+          "ts_code": "000028.SZ",
+          "score": 0.068759,
+          "bridge_signal": 0.068759,
+          "components": {
+            "inventory_to_assets": 0.172496
+          }
+        }
+      ],
+      "missing_input_count": 112,
+      "missing_input_reason_counts": {
+        "L5.bs.inventory.inventory_to_assets": 112
+      },
+      "runtime_materialization_plan_ready": true,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.tech.ai_automation",
+      "score_target": "fundamental_score",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.media.report",
+        "L9.industry.compete_risk"
+      ],
+      "review_payload_score": 0.28,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.tech.breakthrough",
+      "score_target": "fundamental_score",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.media.report",
+        "L9.industry.compete_risk"
+      ],
+      "review_payload_score": 0.24,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L6.priced.realization_risk",
+      "score_target": "priced_in_discount",
+      "source_kind": "manual_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L6.priced.run_up",
+        "L6.priced.news_age",
+        "L5.surprise.preprice",
+        "L8.val.priced_in"
+      ],
+      "review_payload_score": null,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L7.reflex.tag",
+      "score_target": "reflexivity_multiplier",
+      "source_kind": "manual_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L7.flow.active_inflow",
+        "L7.mood.fomo",
+        "L7.mood.media_social",
+        "L6.priced.run_up"
+      ],
+      "review_payload_score": null,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L8.shock.black_swan",
+      "score_target": "risk_discount",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.media.report",
+        "L9.macro.geo"
+      ],
+      "review_payload_score": 0.55,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L8.shock.supply_break",
+      "score_target": "risk_discount",
+      "source_kind": "event_text_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L9.media.report",
+        "L9.industry.compete_risk"
+      ],
+      "review_payload_score": 0.45,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L8.val.slope_risk_off",
+      "score_target": "risk_discount",
+      "source_kind": "manual_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L6.path.second_derivative",
+        "L8.val.overvalued",
+        "L7.env.risk_appetite",
+        "L9.macro.rates",
+        "L6.state.expansion_compression"
+      ],
+      "review_payload_score": null,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L6.mult.dcf",
+      "score_target": "valuation_rerating",
+      "source_kind": "manual_policy_pilot",
+      "materialization_class": "market_or_event_scope_policy_required",
+      "required_next_step": "approve_market_or_event_target_scope_policy",
+      "source_dependencies": [
+        "L5.cf.fcf",
+        "L5.is.revenue_growth",
+        "L6.sens.rates",
+        "L6.sens.growth_margin",
+        "L6.sens.cashflow",
+        "L6.mult.mcap_fcf"
+      ],
+      "review_payload_score": -0.677314,
+      "runtime_materialization_plan_ready": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false
+    }
+  ]
+}

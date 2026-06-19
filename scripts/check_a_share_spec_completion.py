@@ -2,11 +2,14 @@
 """A-share spec-field completion audit.
 
 This report answers a narrower question than the global spec-drift checker:
-for the checked-in A-share universe, which of the 250 spec dp_ids are already
-handled by the hot SQLite layer and/or compiled stock overlays?
+for the checked-in A-share universe, which of the canonical spec dp_ids are
+already handled by the hot SQLite layer and/or compiled stock overlays.
+It is a handled/completion audit; use ``audit_a_share_score_trace.py`` when
+you need proof that valid information becomes a numeric signal and reaches
+``final_score``.
 
 Inputs:
-1. config/data_point_roles.yaml — the 250 canonical spec dp_ids.
+1. config/data_point_roles.yaml — the canonical spec dp_ids.
 2. runtime/hot.sqlite realtime_current — hard data / derived emits.
 3. runtime/hot.sqlite company_node_instance — compiled overlay authoring state.
 4. docs/data_sources/coverage_audit.md — optional labels for human-readable

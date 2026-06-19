@@ -1,0 +1,457 @@
+{
+  "generated_at": "2026-06-19T22:47:14+08:00",
+  "elapsed_s": 0.676,
+  "inputs": {
+    "acquisition_path": "docs/audit/a_share_unknown_local_formula_acquisition_candidates_2026-06-19.json",
+    "runtime_db_path": "runtime/hot.sqlite",
+    "price_index_context_paths": [
+      "/Volumes/dockcase2tb/database_all/宏观经济/国内宏观/价格指数/居民消费价格指数（CPI）/all.csv",
+      "/Volumes/dockcase2tb/database_all/宏观经济/国内宏观/价格指数/工业生产者出厂价格指数（PPI）/all.csv"
+    ]
+  },
+  "summary": {
+    "local_formula_review_packet_count": 2,
+    "rows_with_candidate_numerator_count": 2,
+    "rows_with_direct_denominator_count": 0,
+    "rows_with_denominator_candidate_count": 1,
+    "rows_with_candidate_formula_shape_count": 1,
+    "rows_with_formula_policy_draft_candidate_count": 1,
+    "formula_policy_review_template_count": 1,
+    "formula_policy_review_template_contract_valid_count": 1,
+    "formula_policy_review_template_contract_invalid_count": 0,
+    "formula_policy_review_template_blank_pending_count": 1,
+    "rows_with_price_index_context_candidate_count": 1,
+    "rows_with_candidate_price_context_shape_count": 1,
+    "price_context_review_template_count": 1,
+    "price_context_review_template_contract_valid_count": 1,
+    "price_context_review_template_contract_invalid_count": 0,
+    "price_context_review_template_blank_pending_count": 1,
+    "rows_with_quantity_or_price_index_count": 0,
+    "rows_with_formula_policy_count": 0,
+    "formula_inputs_ready_count": 0,
+    "formula_probe_available_count": 0,
+    "bridge_probe_ready_count": 0,
+    "selected_value_json_count": 0,
+    "known_draft_sufficient_count": 0,
+    "approval_ready_count": 0,
+    "local_formula_review_contract_valid_count": 2,
+    "local_formula_review_contract_invalid_count": 0,
+    "runtime_write_allowed_count": 0,
+    "production_write_allowed_count": 0,
+    "score_mutation": "none; this audit is read-only and does not alter realtime_current"
+  },
+  "rows": [
+    {
+      "local_formula_review_packet_id": "local_formula:L0.cost.rent",
+      "dp_id": "L0.cost.rent",
+      "score_target": "fundamental_score",
+      "data_status": "Unknown",
+      "formula_candidate_status": "proxy_available_denominator_policy_missing",
+      "source_review_packet_status": "review_candidate_ready",
+      "candidate_columns": [
+        "use_right_asset_dep"
+      ],
+      "empty_candidate_columns": [
+        "fa_fnc_leases"
+      ],
+      "formula_input_groups": [
+        {
+          "name": "lease_proxy_numerator",
+          "status": "review_candidate",
+          "evidence": "use_right_asset_dep non-empty sample rows=6",
+          "blockers": [
+            "proxy semantics require review because use-right asset depreciation is not rent expense"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "direct_lease_payment",
+          "status": "missing",
+          "evidence": "fa_fnc_leases non-empty sample rows=0",
+          "blockers": [
+            "direct lease payment/rent expense is empty or absent in sampled files"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "denominator",
+          "status": "missing",
+          "evidence": "runtime dependencies ready=True; dependency count=2",
+          "blockers": [
+            "current ready runtime dependencies are context only and do not define a reviewed rent-burden denominator"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "formula_policy",
+          "status": "missing",
+          "evidence": "no reviewed cap/floor or denominator policy in source-review packet",
+          "blockers": [
+            "reviewed conservative proxy policy is required before Known scoring"
+          ],
+          "ready_for_formula": false
+        }
+      ],
+      "formula_input_group_count": 4,
+      "formula_input_group_ready_count": 0,
+      "candidate_numerator_available": true,
+      "denominator_available": false,
+      "denominator_candidate_available": true,
+      "runtime_denominator_candidate": {
+        "candidate_dp_id": "L5.is.revenue",
+        "candidate_use": "revenue denominator for lease-burden proxy review",
+        "candidate_available": true,
+        "review_required": true,
+        "runtime_summary": {
+          "dp_id": "L5.is.revenue",
+          "runtime_db_path": "runtime/hot.sqlite",
+          "available": true,
+          "known_count": 1755,
+          "scalar_count": 1755,
+          "ts_code_count": 1755,
+          "sample_values": [
+            {
+              "ts_code": "000001.SZ",
+              "data_status": "Known",
+              "scalar": 35277000000.0,
+              "source": "tushare:income"
+            },
+            {
+              "ts_code": "000009.SZ",
+              "data_status": "Known",
+              "scalar": 5822809313.66,
+              "source": "tushare:income"
+            },
+            {
+              "ts_code": "000012.SZ",
+              "data_status": "Known",
+              "scalar": 2990246615.0,
+              "source": "tushare:income"
+            }
+          ],
+          "row_count": 1755,
+          "min_scalar": 0.0,
+          "max_scalar": 3848510949000.0
+        }
+      },
+      "candidate_formula_shape": {
+        "formula_family": "lease_burden_proxy_review",
+        "candidate_formula": "use_right_asset_dep / L5.is.revenue",
+        "numerator_column": "use_right_asset_dep",
+        "denominator_dp_id": "L5.is.revenue",
+        "required_policy": [
+          "confirm use_right_asset_dep is an acceptable lease-burden proxy",
+          "define cap/floor and sign direction before Known scoring",
+          "reject automatic runtime writes until reviewer policy is recorded"
+        ]
+      },
+      "formula_policy_draft_candidate_available": true,
+      "formula_policy_draft_candidate": {
+        "policy_draft_id": "formula_policy_draft:L0.cost.rent:lease_burden_proxy",
+        "policy_family": "lease_burden_proxy_review",
+        "candidate_formula": "use_right_asset_dep / L5.is.revenue",
+        "candidate_formula_ready": false,
+        "review_required": true,
+        "direct_runtime_write_allowed": false,
+        "input_semantics": {
+          "numerator": "use_right_asset_dep from cashflow is use-right asset depreciation; it is a lease-burden proxy, not direct rent expense.",
+          "denominator": "L5.is.revenue is a runtime revenue denominator candidate; it must be accepted as a burden denominator before scoring."
+        },
+        "score_direction": "higher lease-burden ratio is worse for cost score",
+        "normalization_requirements": [
+          "confirm proxy acceptance before any Known draft",
+          "define lower bound, upper cap, and clipping rule",
+          "define whether neutral score is used when ratio is unavailable",
+          "bridge the reviewed value_json.score to fundamental_score before staging"
+        ],
+        "blockers_before_ready": [
+          "proxy_semantics_review",
+          "denominator_policy_review",
+          "cap_floor_review"
+        ]
+      },
+      "formula_policy_review_template": {
+        "template_status": "review_fill_required",
+        "packet_id": "local_formula:L0.cost.rent",
+        "dp_id": "L0.cost.rent",
+        "review_scope": "local_formula_policy",
+        "policy_draft_id": "formula_policy_draft:L0.cost.rent:lease_burden_proxy",
+        "policy_family": "lease_burden_proxy_review",
+        "candidate_formula": "use_right_asset_dep / L5.is.revenue",
+        "reviewer": "",
+        "reviewed_at": "",
+        "proxy_semantics_accepted": false,
+        "denominator_policy_accepted": false,
+        "cap_floor_accepted": false,
+        "score_direction_accepted": false,
+        "normalization_accepted": false,
+        "formula_probe_allowed": false,
+        "known_draft_allowed": false,
+        "production_write_allowed": false
+      },
+      "formula_policy_review_template_contract_valid": true,
+      "formula_policy_review_template_validation_errors": [],
+      "price_index_context_candidate_available": false,
+      "price_index_context_candidate": null,
+      "candidate_price_context_shape": null,
+      "price_context_review_template": null,
+      "price_context_review_template_contract_valid": false,
+      "price_context_review_template_validation_errors": [],
+      "quantity_or_price_index_available": false,
+      "formula_policy_available": false,
+      "formula_inputs_ready": false,
+      "formula_probe_available": false,
+      "formula_probe_payload": null,
+      "bridge_validation": {},
+      "bridge_probe_ready": false,
+      "selected_value_json": null,
+      "missing_before_known": [
+        "denominator_review",
+        "formula_policy_review"
+      ],
+      "known_draft_sufficient": false,
+      "approval_ready": false,
+      "review_status": "review_required",
+      "safe_to_upsert_without_review": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "local_formula_review_contract_valid": true,
+      "local_formula_review_validation_errors": []
+    },
+    {
+      "local_formula_review_packet_id": "local_formula:L0.price.product_asp",
+      "dp_id": "L0.price.product_asp",
+      "score_target": "fundamental_score",
+      "data_status": "Unknown",
+      "formula_candidate_status": "revenue_mix_available_quantity_missing",
+      "source_review_packet_status": "supporting_candidate_needs_quantity_source",
+      "candidate_columns": [
+        "bz_item",
+        "bz_sales",
+        "bz_profit",
+        "bz_cost"
+      ],
+      "empty_candidate_columns": [],
+      "formula_input_groups": [
+        {
+          "name": "product_revenue_numerator",
+          "status": "supporting_candidate",
+          "evidence": "bz_sales non-empty sample rows=36",
+          "blockers": [
+            "revenue numerator is available but cannot form ASP without volume or price index"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "product_mapping",
+          "status": "review_required",
+          "evidence": "bz_item samples product_like=13, geography_like=2, industry_like=5",
+          "blockers": [
+            "bz_item rows mix product, geography, industry, and other segment labels"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "quantity_or_price_index",
+          "status": "missing",
+          "evidence": "unit/shipment/product quantity non-empty sample rows=0",
+          "blockers": [
+            "no unit volume, shipment volume, product quantity, or governed price index column is present"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "formula_policy",
+          "status": "missing",
+          "evidence": "runtime dependencies ready=True; dependency count=2",
+          "blockers": [
+            "reviewed ASP formula and bounds are required before Known scoring"
+          ],
+          "ready_for_formula": false
+        }
+      ],
+      "formula_input_group_count": 4,
+      "formula_input_group_ready_count": 0,
+      "candidate_numerator_available": true,
+      "denominator_available": false,
+      "denominator_candidate_available": false,
+      "runtime_denominator_candidate": null,
+      "candidate_formula_shape": null,
+      "formula_policy_draft_candidate_available": false,
+      "formula_policy_draft_candidate": null,
+      "formula_policy_review_template": null,
+      "formula_policy_review_template_contract_valid": false,
+      "formula_policy_review_template_validation_errors": [],
+      "price_index_context_candidate_available": true,
+      "price_index_context_candidate": {
+        "candidate_use": "broad macro price-index context for product ASP review",
+        "candidate_available": true,
+        "review_required": true,
+        "direct_formula_input": false,
+        "reason_not_direct_formula_input": "CPI/PPI files are broad macro price indexes; product ASP still needs product-level volume/shipment data or a governed product-to-index mapping.",
+        "files_checked": 2,
+        "files_available": 2,
+        "file_summaries": [
+          {
+            "path": "/Volumes/dockcase2tb/database_all/宏观经济/国内宏观/价格指数/居民消费价格指数（CPI）/all.csv",
+            "exists": true,
+            "available": true,
+            "columns": [
+              "month",
+              "nt_val",
+              "nt_yoy",
+              "nt_mom",
+              "nt_accu",
+              "town_val",
+              "town_yoy",
+              "town_mom",
+              "town_accu",
+              "cnt_val",
+              "cnt_yoy",
+              "cnt_mom",
+              "cnt_accu"
+            ],
+            "recognized_price_index_columns": [
+              "nt_val",
+              "nt_yoy",
+              "nt_mom"
+            ],
+            "sample_rows": [
+              {
+                "month": "202512",
+                "nt_val": "100.8",
+                "nt_yoy": "0.8"
+              },
+              {
+                "month": "202511",
+                "nt_val": "100.7",
+                "nt_yoy": "0.7"
+              },
+              {
+                "month": "202510",
+                "nt_val": "100.2",
+                "nt_yoy": "0.2"
+              }
+            ]
+          },
+          {
+            "path": "/Volumes/dockcase2tb/database_all/宏观经济/国内宏观/价格指数/工业生产者出厂价格指数（PPI）/all.csv",
+            "exists": true,
+            "available": true,
+            "columns": [
+              "month",
+              "ppi_yoy",
+              "ppi_mp_yoy",
+              "ppi_mp_qm_yoy",
+              "ppi_mp_rm_yoy",
+              "ppi_mp_p_yoy",
+              "ppi_cg_yoy",
+              "ppi_cg_f_yoy",
+              "ppi_cg_c_yoy",
+              "ppi_cg_adu_yoy",
+              "ppi_cg_dcg_yoy",
+              "ppi_mom",
+              "ppi_mp_mom",
+              "ppi_mp_qm_mom",
+              "ppi_mp_rm_mom",
+              "ppi_mp_p_mom",
+              "ppi_cg_mom",
+              "ppi_cg_f_mom",
+              "ppi_cg_c_mom",
+              "ppi_cg_adu_mom",
+              "ppi_cg_dcg_mom",
+              "ppi_accu",
+              "ppi_mp_accu",
+              "ppi_mp_qm_accu",
+              "ppi_mp_rm_accu",
+              "ppi_mp_p_accu",
+              "ppi_cg_accu",
+              "ppi_cg_f_accu",
+              "ppi_cg_c_accu",
+              "ppi_cg_adu_accu",
+              "ppi_cg_dcg_accu"
+            ],
+            "recognized_price_index_columns": [
+              "ppi_yoy",
+              "ppi_mom",
+              "ppi_accu"
+            ],
+            "sample_rows": [
+              {
+                "month": "202512",
+                "ppi_yoy": "-1.9",
+                "ppi_mom": "0.2",
+                "ppi_accu": "-2.6"
+              },
+              {
+                "month": "202511",
+                "ppi_yoy": "-2.2",
+                "ppi_mom": "0.1",
+                "ppi_accu": "-2.7"
+              },
+              {
+                "month": "202510",
+                "ppi_yoy": "-2.1",
+                "ppi_mom": "0.1",
+                "ppi_accu": "-2.7"
+              }
+            ]
+          }
+        ]
+      },
+      "candidate_price_context_shape": {
+        "context_family": "product_asp_macro_price_index_review",
+        "candidate_context": "bz_sales / product mix + macro CPI/PPI context",
+        "direct_formula_ready": false,
+        "required_policy": [
+          "confirm product-level unit volume, shipment volume, or product quantity source",
+          "or define a governed mapping from product/segment labels to a price index",
+          "keep quantity_or_price_index unavailable until the mapping is reviewed",
+          "reject automatic runtime writes until reviewer policy is recorded"
+        ]
+      },
+      "price_context_review_template": {
+        "template_status": "review_fill_required",
+        "packet_id": "local_formula:L0.price.product_asp",
+        "dp_id": "L0.price.product_asp",
+        "review_scope": "product_asp_price_context",
+        "context_family": "product_asp_macro_price_index_review",
+        "candidate_context": "bz_sales / product mix + macro CPI/PPI context",
+        "reviewer": "",
+        "reviewed_at": "",
+        "product_quantity_source_accepted": false,
+        "price_index_mapping_accepted": false,
+        "scope_alignment_accepted": false,
+        "formula_policy_accepted": false,
+        "quantity_or_price_index_ready": false,
+        "formula_probe_allowed": false,
+        "known_draft_allowed": false,
+        "production_write_allowed": false
+      },
+      "price_context_review_template_contract_valid": true,
+      "price_context_review_template_validation_errors": [],
+      "quantity_or_price_index_available": false,
+      "formula_policy_available": false,
+      "formula_inputs_ready": false,
+      "formula_probe_available": false,
+      "formula_probe_payload": null,
+      "bridge_validation": {},
+      "bridge_probe_ready": false,
+      "selected_value_json": null,
+      "missing_before_known": [
+        "quantity_or_price_index",
+        "formula_policy"
+      ],
+      "known_draft_sufficient": false,
+      "approval_ready": false,
+      "review_status": "review_required",
+      "safe_to_upsert_without_review": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "local_formula_review_contract_valid": true,
+      "local_formula_review_validation_errors": []
+    }
+  ]
+}

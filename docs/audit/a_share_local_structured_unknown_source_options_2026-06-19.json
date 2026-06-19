@@ -1,0 +1,355 @@
+{
+  "generated_at": "2026-06-19T10:51:52+08:00",
+  "elapsed_s": 0.002,
+  "local_structured_path": "docs/audit/a_share_local_structured_policy_drafts_2026-06-19.json",
+  "candidate_path": "docs/audit/a_share_gap_candidate_evidence_2026-06-19.json",
+  "summary": {
+    "unknown_local_structured_count": 4,
+    "existing_runtime_dependency_ready_count": 4,
+    "direct_existing_structured_source_ready_count": 0,
+    "overlay_candidate_hint_count": 4,
+    "candidate_requires_new_mapping_count": 4,
+    "candidate_requires_review_policy_count": 0,
+    "partial_known_unlock_candidate_count": 0,
+    "auto_known_candidate_count": 0,
+    "review_required_count": 4,
+    "safe_to_upsert_without_review_count": 0,
+    "production_write_allowed_count": 0,
+    "resolution_status_counts": {
+      "requires_market_share_or_tam_source": 1,
+      "requires_new_field_mapping_or_text_extraction": 1,
+      "requires_volume_mix_or_price_index": 1,
+      "requires_volume_or_usage_source": 1
+    },
+    "score_mutation": "none; this audit is read-only and does not alter realtime_current"
+  },
+  "rows": [
+    {
+      "dp_id": "L0.cost.rent",
+      "score_target": "fundamental_score",
+      "draft_status": "unknown_policy_required",
+      "blocked_reason": "ppe_capex_cannot_identify_rent_or_lease_burden",
+      "required_policy": "rent-cost drafts require lease/rent expense or reviewed asset-light policy, not only PPE/capex/goodwill proxies",
+      "candidate_status": "ready_for_local_llm_candidate",
+      "source_dependencies": [
+        "L5.bs.goodwill_ppe",
+        "L5.cf.capex"
+      ],
+      "runtime_dependency_ready": true,
+      "runtime_dependency_summary": [
+        {
+          "dp_id": "L5.bs.goodwill_ppe",
+          "row_count": 1756,
+          "known_count": 1756,
+          "ts_code_count": 1756,
+          "namespace_counts": {
+            "stock": 1756
+          },
+          "source_counts": {
+            "tushare:balancesheet": 1641,
+            "fmp:balance-sheet": 115
+          },
+          "latest_updated_at_iso": "2026-06-11T07:49:14+00:00",
+          "sample_value_keys": [
+            "goodwill",
+            "fix_assets_ppe",
+            "goodwill_to_assets",
+            "unit",
+            "period",
+            "goodwill_imputed_zero"
+          ]
+        },
+        {
+          "dp_id": "L5.cf.capex",
+          "row_count": 1755,
+          "known_count": 1755,
+          "ts_code_count": 1755,
+          "namespace_counts": {
+            "stock": 1755
+          },
+          "source_counts": {
+            "tushare:cashflow": 1640,
+            "fmp:cash-flow": 115
+          },
+          "latest_updated_at_iso": "2026-06-11T07:49:14+00:00",
+          "sample_value_keys": [
+            "scalar",
+            "unit",
+            "period"
+          ]
+        }
+      ],
+      "direct_existing_structured_source_ready": false,
+      "direct_existing_structured_source_reason": "Current structured runtime dependencies are material, but they do not contain the target business field directly.",
+      "dependency_limit": "PPE, goodwill, and capex show asset intensity but do not identify rent, lease, store, logistics, or energy burden.",
+      "required_evidence": [
+        "lease or rent expense",
+        "store/logistics/energy cost split",
+        "reviewed asset-light policy when direct rent expense is unavailable"
+      ],
+      "overlay_candidate_dp_ids": [
+        "L4.cost.rent_energy_logistics"
+      ],
+      "candidate_source_routes": [
+        "extend structured filing extraction for lease/rent expense",
+        "map existing overlay node L4.cost.rent_energy_logistics where reviewed evidence exists",
+        "extract management discussion / annual report / exchange Q&A cost disclosures"
+      ],
+      "resolution_status": "requires_new_field_mapping_or_text_extraction",
+      "new_mapping_required": true,
+      "reviewed_policy_required": false,
+      "grain_join_policy": {},
+      "partial_known_unlock_candidate": false,
+      "auto_known_candidate_allowed": false,
+      "review_required": true,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.demand.frequency",
+      "score_target": "fundamental_score",
+      "draft_status": "unknown_policy_required",
+      "blocked_reason": "revenue_growth_cannot_separate_purchase_frequency",
+      "required_policy": "frequency needs transaction/order/usage cadence or reviewed decomposition beyond revenue growth",
+      "candidate_status": "ready_for_local_llm_candidate",
+      "source_dependencies": [
+        "L5.is.revenue",
+        "L5.is.revenue_growth"
+      ],
+      "runtime_dependency_ready": true,
+      "runtime_dependency_summary": [
+        {
+          "dp_id": "L5.is.revenue",
+          "row_count": 1755,
+          "known_count": 1755,
+          "ts_code_count": 1755,
+          "namespace_counts": {
+            "stock": 1755
+          },
+          "source_counts": {
+            "tushare:income": 1640,
+            "fmp:income-statement": 115
+          },
+          "latest_updated_at_iso": "2026-06-11T07:49:14+00:00",
+          "sample_value_keys": [
+            "scalar",
+            "unit",
+            "period"
+          ]
+        },
+        {
+          "dp_id": "L5.is.revenue_growth",
+          "row_count": 1722,
+          "known_count": 1722,
+          "ts_code_count": 1722,
+          "namespace_counts": {
+            "stock": 1722
+          },
+          "source_counts": {
+            "tushare:income.derived": 1607,
+            "fmp:financial-growth": 115
+          },
+          "latest_updated_at_iso": "2026-06-11T07:49:14+00:00",
+          "sample_value_keys": [
+            "yoy_pct",
+            "qoq_pct",
+            "current_period",
+            "yoy_compare_period"
+          ]
+        }
+      ],
+      "direct_existing_structured_source_ready": false,
+      "direct_existing_structured_source_reason": "Current structured runtime dependencies are material, but they do not contain the target business field directly.",
+      "dependency_limit": "Revenue and revenue growth do not separate price, volume, order count, repeat rate, or usage cadence.",
+      "required_evidence": [
+        "order, transaction, shipment, or usage frequency",
+        "active user / customer base with repeat cadence",
+        "reviewed decomposition separating volume cadence from ASP"
+      ],
+      "overlay_candidate_dp_ids": [
+        "L4.volume.frequency",
+        "L4.volume.orders",
+        "L4.volume.sales",
+        "L4.volume.shipments",
+        "L4.volume.users"
+      ],
+      "candidate_source_routes": [
+        "map volume/order/user overlay nodes when present",
+        "extract order and usage cadence from exchange Q&A or filing text",
+        "join product-segment volume disclosures when available"
+      ],
+      "resolution_status": "requires_volume_or_usage_source",
+      "new_mapping_required": true,
+      "reviewed_policy_required": false,
+      "grain_join_policy": {},
+      "partial_known_unlock_candidate": false,
+      "auto_known_candidate_allowed": false,
+      "review_required": true,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.demand.penetration",
+      "score_target": "fundamental_score",
+      "draft_status": "unknown_policy_required",
+      "blocked_reason": "revenue_growth_cannot_identify_penetration_without_tam",
+      "required_policy": "penetration needs TAM, market share, user-base, or installed-base evidence",
+      "candidate_status": "ready_for_local_llm_candidate",
+      "source_dependencies": [
+        "L5.is.revenue",
+        "L5.is.revenue_growth"
+      ],
+      "runtime_dependency_ready": true,
+      "runtime_dependency_summary": [
+        {
+          "dp_id": "L5.is.revenue",
+          "row_count": 1755,
+          "known_count": 1755,
+          "ts_code_count": 1755,
+          "namespace_counts": {
+            "stock": 1755
+          },
+          "source_counts": {
+            "tushare:income": 1640,
+            "fmp:income-statement": 115
+          },
+          "latest_updated_at_iso": "2026-06-11T07:49:14+00:00",
+          "sample_value_keys": [
+            "scalar",
+            "unit",
+            "period"
+          ]
+        },
+        {
+          "dp_id": "L5.is.revenue_growth",
+          "row_count": 1722,
+          "known_count": 1722,
+          "ts_code_count": 1722,
+          "namespace_counts": {
+            "stock": 1722
+          },
+          "source_counts": {
+            "tushare:income.derived": 1607,
+            "fmp:financial-growth": 115
+          },
+          "latest_updated_at_iso": "2026-06-11T07:49:14+00:00",
+          "sample_value_keys": [
+            "yoy_pct",
+            "qoq_pct",
+            "current_period",
+            "yoy_compare_period"
+          ]
+        }
+      ],
+      "direct_existing_structured_source_ready": false,
+      "direct_existing_structured_source_reason": "Current structured runtime dependencies are material, but they do not contain the target business field directly.",
+      "dependency_limit": "Revenue and revenue growth do not identify TAM, installed base, customer penetration, or market share.",
+      "required_evidence": [
+        "market share",
+        "TAM or addressable customer base",
+        "installed base or penetration denominator"
+      ],
+      "overlay_candidate_dp_ids": [
+        "L1.position.market_share",
+        "L4.share.market",
+        "L4.share.substitution"
+      ],
+      "candidate_source_routes": [
+        "map market-share overlay nodes where reviewed evidence exists",
+        "extract TAM/share statements from filings, research notes, or exchange Q&A",
+        "join industry dataset denominators when a governed source is added"
+      ],
+      "resolution_status": "requires_market_share_or_tam_source",
+      "new_mapping_required": true,
+      "reviewed_policy_required": false,
+      "grain_join_policy": {},
+      "partial_known_unlock_candidate": false,
+      "auto_known_candidate_allowed": false,
+      "review_required": true,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false
+    },
+    {
+      "dp_id": "L0.price.product_asp",
+      "score_target": "fundamental_score",
+      "draft_status": "unknown_policy_required",
+      "blocked_reason": "revenue_and_margin_cannot_identify_unit_asp_without_volume_mix",
+      "required_policy": "ASP needs unit volume, product mix, or reviewed price-index evidence beyond revenue/gross margin",
+      "candidate_status": "ready_for_local_llm_candidate",
+      "source_dependencies": [
+        "L5.is.revenue",
+        "L5.is.gross_margin"
+      ],
+      "runtime_dependency_ready": true,
+      "runtime_dependency_summary": [
+        {
+          "dp_id": "L5.is.revenue",
+          "row_count": 1755,
+          "known_count": 1755,
+          "ts_code_count": 1755,
+          "namespace_counts": {
+            "stock": 1755
+          },
+          "source_counts": {
+            "tushare:income": 1640,
+            "fmp:income-statement": 115
+          },
+          "latest_updated_at_iso": "2026-06-11T07:49:14+00:00",
+          "sample_value_keys": [
+            "scalar",
+            "unit",
+            "period"
+          ]
+        },
+        {
+          "dp_id": "L5.is.gross_margin",
+          "row_count": 1660,
+          "known_count": 1660,
+          "ts_code_count": 1660,
+          "namespace_counts": {
+            "stock": 1660
+          },
+          "source_counts": {
+            "tushare:income.derived": 1546,
+            "fmp:income-statement": 114
+          },
+          "latest_updated_at_iso": "2026-06-11T07:49:14+00:00",
+          "sample_value_keys": [
+            "scalar",
+            "unit",
+            "period"
+          ]
+        }
+      ],
+      "direct_existing_structured_source_ready": false,
+      "direct_existing_structured_source_reason": "Current structured runtime dependencies are material, but they do not contain the target business field directly.",
+      "dependency_limit": "Revenue and gross margin cannot identify unit ASP without product volume, mix, or a governed external price index.",
+      "required_evidence": [
+        "unit volume or shipment volume",
+        "product mix split",
+        "reviewed price index or segment ASP disclosure"
+      ],
+      "overlay_candidate_dp_ids": [
+        "L0.price.product_asp",
+        "L4.volume.sales",
+        "L4.volume.orders",
+        "L4.volume.shipments",
+        "L4.volume.users"
+      ],
+      "candidate_source_routes": [
+        "map product volume/mix overlay nodes when reviewed evidence exists",
+        "extract Tushare fina_mainbz product revenue with volume/mix text where available",
+        "join governed product price index or exchange Q&A ASP disclosures"
+      ],
+      "resolution_status": "requires_volume_mix_or_price_index",
+      "new_mapping_required": true,
+      "reviewed_policy_required": false,
+      "grain_join_policy": {},
+      "partial_known_unlock_candidate": false,
+      "auto_known_candidate_allowed": false,
+      "review_required": true,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false
+    }
+  ]
+}
