@@ -81,6 +81,341 @@ def test_margin_short_not_wired_no_common_mode():
     assert _realtime_signal("L7.trade.margin_short", payload, "funding_score") is None
 
 
+def test_discussion_hot_list_maps_to_priced_in_discount():
+    hot = _realtime_signal(
+        "L6.priced.discussion",
+        {"dc_hot_count_30d": 20, "ths_hot_count_30d": 0, "avg_rank_pct": 0.5},
+        "priced_in_discount",
+    )
+    mild = _realtime_signal(
+        "L6.priced.discussion",
+        {"dc_hot_count_30d": 1, "ths_hot_count_30d": 0, "avg_rank_pct": 5.0},
+        "priced_in_discount",
+    )
+
+    assert hot == pytest.approx(0.65 * math.tanh(20 / 8.0) + 0.35 * 0.9)
+    assert hot > mild > 0.0
+    assert _realtime_signal("L6.priced.discussion", {}, "priced_in_discount") is None
+
+
+def test_insider_sell_only_penalizes_net_selling():
+    sell = _realtime_signal(
+        "L8.gov.insider_sell",
+        {"net_change_pct": -3.0, "decreases": 2},
+        "risk_discount",
+    )
+    buy = _realtime_signal(
+        "L8.gov.insider_sell",
+        {"net_change_pct": 2.5, "increases": 3, "decreases": 0},
+        "risk_discount",
+    )
+
+    assert sell == pytest.approx(math.tanh(1.0) + 0.10)
+    assert buy == pytest.approx(0.0)
+    assert _realtime_signal("L8.gov.insider_sell", {"count_90d": 2}, "risk_discount") is None
+
+
+def test_management_change_scores_unique_people_and_skips_legacy_duplicate():
+    payload = {
+        "events": [
+            {"type": "高管变动", "person": "A", "title": "董事长", "end_date": None},
+            {"type": "高管变动", "person": "A", "title": "战略委员会委员", "end_date": None},
+            {"type": "高管离职", "person": "B", "title": "财务总监", "end_date": "20260601"},
+            {"type": "高管变动", "person": "C", "title": "董事", "end_date": None},
+        ],
+        "count_window": 4,
+    }
+
+    scored = _realtime_signal("L8.gov.management_change", payload, "risk_discount")
+
+    # A: core appointment max(0.35*1.5, committee duplicate 0.35) = 0.525
+    # B: core departure = 1.5
+    # C: non-core appointment = 0.35
+    assert scored == pytest.approx(math.tanh((0.525 + 1.5 + 0.35) / 3.0))
+    assert _realtime_signal("L9.company.mgmt_litigation", payload, "risk_discount") is None
+    assert _realtime_signal("L7.flow.block_trade", {"total_amount": 10000.0}, "funding_score") is None
+
+
+def test_volume_turnover_routes_to_liquidity_multiplier():
+    high = _realtime_signal(
+        "L7.trade.volume_turnover",
+        {"volume_ratio": 1.6, "turnover_rate_pct": 2.0},
+        "liquidity_multiplier",
+    )
+    low = _realtime_signal(
+        "L7.trade.volume_turnover",
+        {"volume_ratio": 0.4, "turnover_rate_pct": 0.1},
+        "liquidity_multiplier",
+    )
+
+    assert high is not None and high > 0
+    assert low is not None and low < 0
+    assert _realtime_signal(
+        "L7.trade.volume_turnover", {"trade_date": "20260610"}, "liquidity_multiplier"
+    ) is None
+
+
+def test_multiplier_payload_routes_as_delta_only_for_multiplier_targets():
+    assert _realtime_signal(
+        "L6.sens.cashflow", {"multiplier": 1.2}, "valuation_sensitivity_multiplier"
+    ) == pytest.approx(0.2)
+    assert _realtime_signal(
+        "L6.sens.growth_margin", {"multiplier": 0.75}, "valuation_sensitivity_multiplier"
+    ) == pytest.approx(-0.25)
+    assert _realtime_signal(
+        "L7.env.risk_appetite", {"multiplier": 1.001}, "market_regime_multiplier"
+    ) == pytest.approx(0.001)
+    assert _realtime_signal(
+        "L6.sens.cashflow", {"multiplier": 1.2}, "fundamental_score"
+    ) is None
+
+
+def test_confidence_multiplier_payload_emits_neutral_signal():
+    assert _realtime_signal(
+        "L10.industry.pmi",
+        {"manufacturing_pmi": 51.0},
+        "confidence_multiplier",
+    ) == pytest.approx(0.0)
+
+
+def test_market_environment_multiplier_payloads_are_directional():
+    trend = _realtime_signal(
+        "L7.env.market_trend",
+        {"scalar": -0.04},
+        "market_regime_multiplier",
+    )
+    style = _realtime_signal(
+        "L7.env.style",
+        {"growth_minus_value": 0.03},
+        "market_regime_multiplier",
+    )
+    liquidity = _realtime_signal(
+        "L7.env.liquidity",
+        {"m2_yoy_pct": 9.0, "m1_yoy_pct": 6.0},
+        "market_regime_multiplier",
+    )
+    rates = _realtime_signal(
+        "L7.env.rates",
+        {"lpr_1y_change_bp": -10.0, "lpr_5y_change_bp": -10.0},
+        "market_regime_multiplier",
+    )
+
+    assert trend is not None and trend < 0
+    assert style is not None and style > 0
+    assert liquidity is not None and liquidity > 0
+    assert rates is not None and rates > 0
+    assert _realtime_signal("L7.env.rates", {"as_of": "20260320"}, "market_regime_multiplier") is None
+
+
+def test_funding_and_theme_multiplier_payloads_are_directional():
+    etf = _realtime_signal(
+        "L7.flow.etf_inflow",
+        {"etf_avg_delta_pct": 2.0},
+        "funding_multiplier",
+    )
+    north = _realtime_signal(
+        "L7.flow.passive_northbound",
+        {"north_net_amount": -250000.0},
+        "funding_multiplier",
+    )
+    theme = _realtime_signal(
+        "L7.mood.theme",
+        {"concept_count": 12, "top_concepts": [{"pct_change": 2.0}, {"pct_change": 1.0}]},
+        "theme_multiplier",
+    )
+
+    assert etf is not None and etf > 0
+    assert north is not None and north < 0
+    assert theme is not None and theme > 0
+    assert _realtime_signal("L7.flow.etf_inflow", {"etf_sampled": 20}, "funding_multiplier") is None
+
+
+def test_l0_sentiment_payloads_are_directional():
+    institutional = _realtime_signal(
+        "L0.sentiment.institutional",
+        {"delta_30d_pp": 1.0},
+        "funding_multiplier",
+    )
+    leader_drag = _realtime_signal(
+        "L0.sentiment.leader_drag",
+        {"leader_5d_pct": 3.0, "follower_5d_pct": 1.0},
+        "reflexivity_multiplier",
+    )
+    sector_heat = _realtime_signal(
+        "L0.sentiment.sector_heat",
+        {"avg_change_pct": -2.0, "total_fund_inflow": -50.0},
+        "theme_multiplier",
+    )
+    social = _realtime_signal(
+        "L0.sentiment.social",
+        {"engagement_proxy": 2.0, "avg_rank": 25.0},
+        "sentiment_score",
+    )
+
+    assert institutional is not None and institutional > 0
+    assert leader_drag is not None and leader_drag > 0
+    assert sector_heat is not None and sector_heat < 0
+    assert social is not None and social > 0
+
+
+def test_cost_and_segment_payloads_are_directional():
+    capital = _realtime_signal(
+        "L0.cost.capital",
+        {"implied_cost_of_capital_pct": 4.0},
+        "fundamental_score",
+    )
+    energy = _realtime_signal(
+        "L0.cost.energy_logistics",
+        {"crude_pct": -2.0, "bdi_pct": -4.0},
+        "fundamental_score",
+    )
+    raw_material = _realtime_signal(
+        "L0.cost.raw_material",
+        {"avg_pct_change": 3.0},
+        "fundamental_score",
+    )
+    segment_growth = _realtime_signal(
+        "L2.segment.growth",
+        {"segments": [{"yoy_pct": 20.0}, {"yoy_pct": -5.0}]},
+        "fundamental_score",
+    )
+    segment_margin = _realtime_signal(
+        "L2.segment.gross_margin",
+        {"segments": [{"gross_margin_pct": 55.0}, {"gross_margin_pct": 35.0}]},
+        "fundamental_score",
+    )
+    operating_cost = _realtime_signal(
+        "L4.cost.raw_material",
+        {"raw_material_cost_pct": 70.0, "cogs_yoy_pct": 20.0},
+        "fundamental_score",
+    )
+
+    assert capital is not None and capital > 0
+    assert energy is not None and energy > 0
+    assert raw_material is not None and raw_material < 0
+    assert segment_growth is not None and segment_growth > 0
+    assert segment_margin is not None and segment_margin > 0
+    assert operating_cost is not None and operating_cost < 0
+    assert _realtime_signal("L2.segment.growth", {"segments": []}, "fundamental_score") is None
+
+
+def test_macro_and_capital_return_payloads_are_directional():
+    buyback_zero = _realtime_signal(
+        "L9.company.buyback_dividend",
+        {"cash_div_per_share": 0.0, "stk_div_per_share": 0.0},
+        "expectation_gap",
+    )
+    buyback_positive = _realtime_signal(
+        "L9.company.buyback_dividend",
+        {"cash_div_per_share": 0.5, "stk_div_per_share": 0.1},
+        "expectation_gap",
+    )
+    block_none = _realtime_signal(
+        "L9.capital.etf_block",
+        {"events_count": 0, "event_active": False},
+        "expectation_gap",
+    )
+    block_active = _realtime_signal(
+        "L9.capital.etf_block",
+        {"events_count": 2, "total_amount_cny": 80_000_000.0, "event_active": True},
+        "expectation_gap",
+    )
+    cpi_pressure = _realtime_signal(
+        "L9.macro.cpi_employment",
+        {"cpi_yoy_pct": 4.0, "ppi_yoy_pct": 6.0},
+        "expectation_gap",
+    )
+    compete_risk_none = _realtime_signal(
+        "L9.industry.compete_risk",
+        {"count_24h": 0, "event_active": False},
+        "risk_discount",
+    )
+    compete_risk_hit = _realtime_signal(
+        "L9.industry.compete_risk",
+        {"count_24h": 2, "event_active": True},
+        "risk_discount",
+    )
+    policy_neutral = _realtime_signal(
+        "L9.industry.policy_change",
+        {"net_policy_score": 0, "count_24h": 1},
+        "policy_sensitivity_multiplier",
+    )
+    policy_supportive = _realtime_signal(
+        "L9.industry.policy_change",
+        {"net_policy_score": 2, "count_24h": 2},
+        "policy_sensitivity_multiplier",
+    )
+    policy_restrictive = _realtime_signal(
+        "L9.industry.policy_change",
+        {"net_policy_score": -2, "count_24h": 2},
+        "policy_sensitivity_multiplier",
+    )
+    media_neutral = _realtime_signal(
+        "L9.media.report",
+        {"net_media_score": 0, "count_24h": 5},
+        "expectation_gap",
+    )
+    media_positive = _realtime_signal(
+        "L9.media.report",
+        {"net_media_score": 3, "positive_media_count": 3, "negative_media_count": 0},
+        "expectation_gap",
+    )
+    media_negative = _realtime_signal(
+        "L9.media.report",
+        {"net_media_score": -3, "positive_media_count": 0, "negative_media_count": 3},
+        "expectation_gap",
+    )
+    liquidity_small = _realtime_signal(
+        "L9.macro.liquidity",
+        {"m2_yoy_change_pct": 0.1},
+        "expectation_gap",
+    )
+    liquidity_accelerating = _realtime_signal(
+        "L9.macro.liquidity",
+        {"m2_yoy_change_pct": 1.0},
+        "expectation_gap",
+    )
+    liquidity_decelerating = _realtime_signal(
+        "L9.macro.liquidity",
+        {"m2_yoy_change_pct": -1.0},
+        "expectation_gap",
+    )
+    rate_cut = _realtime_signal(
+        "L9.macro.rates",
+        {"lpr_1y_change_bp": -10.0, "lpr_5y_change_bp": -10.0},
+        "risk_discount",
+    )
+    rate_hike = _realtime_signal(
+        "L9.macro.rates",
+        {"lpr_1y_change_bp": 50.0, "lpr_5y_change_bp": 50.0},
+        "risk_discount",
+    )
+
+    assert buyback_zero == pytest.approx(0.0)
+    assert buyback_positive is not None and buyback_positive > 0
+    assert block_none == pytest.approx(0.0)
+    assert block_active is not None and 0 < block_active <= 0.35
+    assert _realtime_signal("L9.capital.etf_block", {"event_active": True}, "expectation_gap") is None
+    assert cpi_pressure is not None and cpi_pressure < 0
+    assert compete_risk_none == pytest.approx(0.0)
+    assert compete_risk_hit is not None and compete_risk_hit > 0
+    assert _realtime_signal("L9.industry.compete_risk", {"event_active": True}, "risk_discount") is None
+    assert policy_neutral == pytest.approx(0.0)
+    assert policy_supportive is not None and policy_supportive > 0
+    assert policy_restrictive is not None and policy_restrictive < 0
+    assert _realtime_signal("L9.industry.policy_change", {"count_24h": 1}, "policy_sensitivity_multiplier") is None
+    assert media_neutral == pytest.approx(0.0)
+    assert media_positive is not None and media_positive > 0
+    assert media_negative is not None and media_negative < 0
+    assert _realtime_signal("L9.media.report", {"count_24h": 10}, "expectation_gap") is None
+    assert liquidity_small == pytest.approx(0.0)
+    assert liquidity_accelerating is not None and liquidity_accelerating > 0
+    assert liquidity_decelerating is not None and liquidity_decelerating < 0
+    assert _realtime_signal("L9.macro.liquidity", {"m2_yoy_pct": 8.6}, "expectation_gap") is None
+    assert rate_cut == pytest.approx(0.0)
+    assert rate_hike is not None and rate_hike > 0
+
+
 def test_signal_score_passthrough_clipped():
     assert _realtime_signal("x", {"score": 0.4}, "fundamental_score") == pytest.approx(0.4)
     assert _realtime_signal("x", {"score": -0.4}, "fundamental_score") == pytest.approx(-0.4)
@@ -291,10 +626,104 @@ def test_synthesize_node_shape_and_direction():
     assert neg["value"]["score"] == pytest.approx(abs((0.95 - 0.5) * 2.0 * -1.0))
 
 
+def test_synthesize_confidence_multiplier_node_is_neutral():
+    registry = _registry({
+        "L10.industry.pmi": _gov("L10.industry.pmi", target="confidence_multiplier"),
+    })
+    snapshot = {
+        "L10.industry.pmi": {
+            "value": {"manufacturing_pmi": 51.0, "composite_pmi": 50.8},
+            "data_status": "Known",
+            "confidence": 0.72,
+            "source": "tushare:cn_pmi",
+        }
+    }
+
+    nodes = synthesize_realtime_nodes(
+        snapshot,
+        registry,
+        existing_dp_ids=set(),
+        ts_code="000001.SZ",
+    )
+
+    assert len(nodes) == 1
+    assert nodes[0]["dp_id"] == "L10.industry.pmi"
+    assert nodes[0]["value"] == {"score": 0.0}
+    assert nodes[0]["direction"] == "neutral"
+    assert nodes[0]["confidence"] == pytest.approx(0.72)
+
+
 def test_synthesize_returns_empty_without_registry():
     assert synthesize_realtime_nodes(
         _full_snapshot(), None, existing_dp_ids=set(), ts_code="X.SZ"
     ) == []
+
+
+def test_unknown_authored_overlay_does_not_block_realtime_synthesis():
+    overlay = {
+        "ts_code": "X.SZ",
+        "nodes": [
+            {
+                "node_id": "X.SZ:L6.derived.sub",
+                "dp_id": "L6.derived.sub",
+                "node_name": "placeholder",
+                "direction": "positive",
+                "data_status": "Unknown",
+                "value": None,
+                "confidence": 0.5,
+            }
+        ],
+    }
+    snap = {
+        "L6.derived.sub": {
+            "value": {"score": 0.6},
+            "data_status": "Known",
+            "confidence": 0.8,
+            "source": "derive:test",
+        }
+    }
+
+    agg = aggregate_company_graph(
+        overlay,
+        role_registry=_full_registry(),
+        realtime_snapshot=snap,
+    )
+
+    assert "X.SZ:L6.derived.sub:rt" in agg
+    assert agg["X.SZ:L6.derived.sub:rt"]["synthetic_realtime"] is True
+
+
+def test_known_authored_overlay_still_blocks_realtime_double_count():
+    overlay = {
+        "ts_code": "X.SZ",
+        "nodes": [
+            {
+                "node_id": "X.SZ:L6.derived.sub",
+                "dp_id": "L6.derived.sub",
+                "node_name": "authored",
+                "direction": "positive",
+                "data_status": "Known",
+                "value": {"score": 0.2},
+                "confidence": 0.5,
+            }
+        ],
+    }
+    snap = {
+        "L6.derived.sub": {
+            "value": {"score": 0.6},
+            "data_status": "Known",
+            "confidence": 0.8,
+            "source": "derive:test",
+        }
+    }
+
+    agg = aggregate_company_graph(
+        overlay,
+        role_registry=_full_registry(),
+        realtime_snapshot=snap,
+    )
+
+    assert "X.SZ:L6.derived.sub:rt" not in agg
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +1021,35 @@ def test_field_guidance_change_direction_and_floor():
     ) is None
 
 
+def test_field_preprice_surprise_routes_runup_to_expectation_gap():
+    # ``run_up_*_pct`` is a decimal ratio (0.10 = +10%). Prefer the 20d
+    # window, then fall back to 10d/5d when history is thin.
+    pos = _realtime_signal(
+        "L5.surprise.preprice",
+        {"run_up_5d_pct": 0.01, "run_up_10d_pct": 0.05, "run_up_20d_pct": 0.10},
+        "expectation_gap",
+    )
+    neg = _realtime_signal(
+        "L5.surprise.preprice",
+        {"run_up_20d_pct": -0.10},
+        "expectation_gap",
+    )
+    fallback = _realtime_signal(
+        "L5.surprise.preprice",
+        {"run_up_10d_pct": 0.04, "run_up_5d_pct": 0.20},
+        "expectation_gap",
+    )
+
+    assert pos == pytest.approx(math.tanh(0.10 / 0.20))
+    assert neg == pytest.approx(-math.tanh(0.10 / 0.20))
+    assert fallback == pytest.approx(math.tanh(0.04 / 0.20))
+    assert _realtime_signal(
+        "L5.surprise.preprice",
+        {"ann_date": "20260415"},
+        "expectation_gap",
+    ) is None
+
+
 # 4. L7.mood.analyst_rating → sentiment_score (additive, signed)
 
 
@@ -619,6 +1077,77 @@ def test_field_analyst_rating_recentered_on_consensus():
     assert _realtime_signal(
         "L7.mood.analyst_rating", {"n_reports": 5}, "sentiment_score"
     ) is None
+
+
+def test_media_social_and_social_buzz_are_not_direct_score_formulas():
+    # ths_hot attention is already consumed by derived L7.mood.fomo
+    # (overheat_risk/risk_discount). The raw hot-list fields remain governance
+    # review items here to avoid reusing the same heat evidence as direct
+    # positive sentiment/expectation_gap.
+    assert _realtime_signal(
+        "L7.mood.media_social",
+        {"rank_overall": 1, "in_top_100": True, "concept_tag_count": 20, "change_pct": 5.0},
+        "sentiment_score",
+    ) is None
+    assert _realtime_signal(
+        "L9.media.social_buzz",
+        {"in_xq_top_buzz": True, "rank_among_buzz_top": 10, "follow_count": 80000.0},
+        "expectation_gap",
+    ) is None
+
+
+def test_field_margin_anomaly_is_positive_expectation_gap_with_severity_gate():
+    warn = _realtime_signal(
+        "L9.capital.margin_anomaly",
+        {"rzmre_5d": 2.0, "rzmre_30d": 1.0, "surge_ratio": 2.0, "alert_severity": "WARN"},
+        "expectation_gap",
+    )
+    error = _realtime_signal(
+        "L9.capital.margin_anomaly",
+        {"rzmre_5d": 3.5, "rzmre_30d": 1.0, "surge_ratio": 3.5, "alert_severity": "ERROR"},
+        "expectation_gap",
+    )
+    assert warn == pytest.approx(0.35)
+    assert error == pytest.approx(0.60)
+    assert 0 < warn < error
+    # Producer severity is required: no alert classification means no score.
+    assert _realtime_signal(
+        "L9.capital.margin_anomaly",
+        {"rzmre_5d": 3.0, "rzmre_30d": 1.0, "surge_ratio": 3.0},
+        "expectation_gap",
+    ) is None
+    assert _realtime_signal(
+        "L9.capital.margin_anomaly",
+        {"rzmre_5d": 3.0, "rzmre_30d": 1.0, "surge_ratio": 3.0, "alert_severity": "INFO"},
+        "expectation_gap",
+    ) is None
+
+
+def test_synthesize_emits_margin_anomaly_positive_node():
+    reg = _registry({
+        "L9.capital.margin_anomaly": _gov("L9.capital.margin_anomaly", target="expectation_gap"),
+    })
+    snap = {
+        "L9.capital.margin_anomaly": {
+            "value": {
+                "rzmre_5d": 4.0,
+                "rzmre_30d": 1.0,
+                "surge_ratio": 4.0,
+                "alert_severity": "ERROR",
+            },
+            "data_status": "Known", "confidence": 0.75,
+            "source": "tushare:margin_detail.history", "updated_at": 1_700_000_000,
+        }
+    }
+    nodes = {
+        n["dp_id"]: n for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="300750.SZ"
+        )
+    }
+    assert "L9.capital.margin_anomaly" in nodes
+    node = nodes["L9.capital.margin_anomaly"]
+    assert node["direction"] == "positive"
+    assert node["value"]["score"] == pytest.approx(0.60)
 
 
 # 5. L6.state.expansion_compression → valuation_rerating (additive, signed)
@@ -1973,6 +2502,41 @@ def test_field_news_age_fresh_is_positive_magnitude():
     ) is None
 
 
+def test_manual_candidate_payloads_bridge_to_numeric_signals():
+    assert _realtime_signal(
+        "L6.mult.dcf", {"scalar": 0.35}, "valuation_rerating"
+    ) == pytest.approx(0.35)
+    assert _realtime_signal(
+        "L6.mult.dcf", {"score": -0.25}, "valuation_rerating"
+    ) == pytest.approx(-0.25)
+    assert _realtime_signal(
+        "L6.mult.dcf", {"assumptions": {}}, "valuation_rerating"
+    ) is None
+
+    assert _realtime_signal(
+        "L6.priced.realization_risk",
+        {"magnitude": 0.42},
+        "priced_in_discount",
+    ) == pytest.approx(0.42)
+    assert _realtime_signal(
+        "L8.val.slope_risk_off",
+        {"magnitude": 0.31},
+        "risk_discount",
+    ) == pytest.approx(0.31)
+    assert _realtime_signal(
+        "L8.val.slope_risk_off",
+        {"drivers": ["risk_appetite"]},
+        "risk_discount",
+    ) is None
+
+    assert _realtime_signal(
+        "L7.reflex.tag", {"multiplier": 1.08}, "reflexivity_multiplier"
+    ) == pytest.approx(0.08)
+    assert _realtime_signal(
+        "L7.trade.gamma", {"multiplier": 1.0}, "gamma_multiplier"
+    ) == pytest.approx(0.0)
+
+
 # 19. L6.mult.peg → valuation_rerating: deliberately DATA-ONLY (None). The PEG
 #     signal is carried by L6.state.peg_match (the banded scored form), so raw
 #     peg must NOT also be scored (would double-count PEG into valuation_rerating).
@@ -2230,7 +2794,7 @@ def test_e2e_crowdedness_extreme_lowers_score():
     assert extreme < quiet
 
 
-# R2-2. L8 risk-alert cluster → risk_discount via ``alert_severity``. The 9
+# R2-2. L8 risk-alert cluster → risk_discount via ``alert_severity``. The 12
 #       dp_ids all carry WARN/ERROR; the alert encodes the bad direction, so the
 #       node is NEGATIVE and the magnitude (WARN 0.5 / ERROR 1.0) feeds the
 #       risk_discount roll-up (which takes abs()). Real payload keys per dp_id.
@@ -2268,6 +2832,18 @@ _RISK_ALERT_REAL_PAYLOADS = {
     "L8.fin.eps_downward": {
         "prev_eps_estimate": 535000.0, "current_eps_estimate": 162500.0,
         "delta_pct": -69.63, "alert_severity": "ERROR",
+    },
+    "L8.fin.goodwill_impairment": {
+        "current_goodwill": 80.0, "prev_goodwill": 100.0,
+        "drop_pct": 20.0, "alert_severity": "ERROR",
+    },
+    "L8.fin.revenue_profit_miss": {
+        "actual_revenue": 5.0, "forecast_revenue_low": 30.0,
+        "miss_pct": 25.0, "alert_severity": "ERROR",
+    },
+    "L8.industry.valuation_compression": {
+        "industry_pe_30d": 32.0, "industry_pe_90d": 40.0,
+        "compression_pct": 20.0, "alert_severity": "ERROR",
     },
     "L8.op.inventory_glut": {
         "inventory_yoy_pct": 25.34, "turnover_yoy_pct_change": -15.87,
@@ -2320,6 +2896,25 @@ def test_field_risk_alert_warn_vs_error_and_missing():
     ) is None
 
 
+def test_field_valuation_compression_known_neutral_maps_to_zero_risk():
+    neutral = _realtime_signal(
+        "L8.industry.valuation_compression",
+        {
+            "industry_pe_30d": 47.5966,
+            "industry_pe_90d": 47.9108,
+            "compression_pct": 0.6558,
+            "alert_severity": None,
+        },
+        "risk_discount",
+    )
+    assert neutral == pytest.approx(0.0)
+    assert _realtime_signal(
+        "L8.industry.valuation_compression",
+        {"industry_pe_30d": 47.5966, "industry_pe_90d": 47.9108},
+        "risk_discount",
+    ) is None
+
+
 def test_synthesize_emits_risk_alert_node_negative_direction():
     # The bridge end-to-end: an ERROR cash_ar alert now emits a node (was a dead
     # sink). Direction negative; magnitude 1.0 stored on the node.
@@ -2362,6 +2957,90 @@ def test_e2e_risk_alert_error_lowers_score_more_than_warn():
     assert error < warn < no_alert
     assert error < 0  # a fired ERROR risk alert drags the score negative
     assert no_alert == pytest.approx(0.0)  # no severity → dead → unchanged base
+
+
+def test_field_beat_miss_maps_classification_to_expectation_gap():
+    beat = _realtime_signal(
+        "L5.surprise.beat_miss",
+        {
+            "actual_revenue_yoy": 65.0,
+            "forecast_range_min": 30.0,
+            "forecast_range_max": 50.0,
+            "deviation_pct": 15.0,
+            "classification": "beat",
+        },
+        "expectation_gap",
+    )
+    miss = _realtime_signal(
+        "L5.surprise.beat_miss",
+        {
+            "actual_revenue_yoy": 5.0,
+            "forecast_range_min": 30.0,
+            "forecast_range_max": 50.0,
+            "deviation_pct": -25.0,
+            "classification": "miss",
+        },
+        "expectation_gap",
+    )
+    in_range = _realtime_signal(
+        "L5.surprise.beat_miss",
+        {
+            "actual_revenue_yoy": 45.0,
+            "forecast_range_min": 30.0,
+            "forecast_range_max": 50.0,
+            "deviation_pct": 5.0,
+            "classification": "in_range",
+        },
+        "expectation_gap",
+    )
+    assert beat > 0
+    assert miss < 0
+    assert in_range == pytest.approx(0.0)
+    assert _realtime_signal(
+        "L5.surprise.beat_miss", {"classification": "unknown"},
+        "expectation_gap",
+    ) is None
+
+
+def test_field_analyst_action_maps_rating_changes_to_expectation_gap():
+    upgrade = _realtime_signal(
+        "L9.media.analyst_action",
+        {
+            "count_7d": 3,
+            "upgrade_count": 3,
+            "downgrade_count": 0,
+            "action_type": "upgrade_event",
+        },
+        "expectation_gap",
+    )
+    downgrade = _realtime_signal(
+        "L9.media.analyst_action",
+        {
+            "count_7d": 2,
+            "upgrades_7d": 0,
+            "downgrades_7d": 2,
+            "action_type": "downgrade_event",
+        },
+        "expectation_gap",
+    )
+    mixed = _realtime_signal(
+        "L9.media.analyst_action",
+        {
+            "count_7d": 2,
+            "upgrades_7d": 1,
+            "downgrades_7d": 1,
+            "action_type": "mixed_event",
+        },
+        "expectation_gap",
+    )
+    assert upgrade > 0
+    assert downgrade < 0
+    assert abs(upgrade) > abs(downgrade)
+    assert mixed == pytest.approx(0.0)
+    assert _realtime_signal(
+        "L9.media.analyst_action", {"action_type": "none"},
+        "expectation_gap",
+    ) == pytest.approx(0.0)
 
 
 # R2-3. L6.mult.ps → valuation_rerating (log-ratio, like ev_ebitda/forward_pe).
@@ -2532,3 +3211,23 @@ def test_e2e_guidance_without_ann_date_unchanged_behaviour():
         {"change_direction": "upgraded", "current_range_pct": 50.0},
     )
     assert with_date == pytest.approx(without_date, abs=1e-9)
+
+
+def test_e2e_margin_anomaly_error_lifts_score_more_than_warn():
+    error = _base_score_for(
+        "L9.capital.margin_anomaly",
+        "expectation_gap",
+        {"surge_ratio": 3.2, "alert_severity": "ERROR"},
+    )
+    warn = _base_score_for(
+        "L9.capital.margin_anomaly",
+        "expectation_gap",
+        {"surge_ratio": 2.0, "alert_severity": "WARN"},
+    )
+    no_alert = _base_score_for(
+        "L9.capital.margin_anomaly",
+        "expectation_gap",
+        {"surge_ratio": 3.2},
+    )
+    assert error > warn > no_alert
+    assert no_alert == pytest.approx(0.0)

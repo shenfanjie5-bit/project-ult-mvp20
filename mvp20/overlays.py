@@ -30,6 +30,7 @@ STOCK_TEMPLATE_VERSION = "stock-overlay-v2"
 INDUSTRY_TEMPLATE_VERSION = "industry-overlay-v2"
 DEFAULT_PERIOD = "2026-Q1"
 PENDING_INDUSTRY_ID = "SPACE_ECONOMY"
+_SAFE_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 DATA_STATUSES = {
     "Known",
@@ -371,7 +372,7 @@ class Membership:
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=_SAFE_YAML_LOADER) or {}
 
 
 def _field_governance_registry():

@@ -2,7 +2,7 @@
 
 Spec v2 designates a large class of dp_ids as **derived** (not directly
 available from any data source) — they are functions of other dp_ids and
-short historical windows. ~124 of the 250 spec dp_ids carry
+short historical windows. A large subset of the 256 spec dp_ids carry
 ``source_status: ○ (possible_but_not_integrated)`` which means: at least
 one source contributes partial info, but a derive/aggregate step is
 required to produce the final value.

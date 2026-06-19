@@ -93,6 +93,68 @@ def test_build_peer_context_run_up_falls_back_to_d5():
     assert ctx["L6.priced.run_up"] == [0.12]
 
 
+def test_build_peer_context_collects_normalized_fundamental_baselines():
+    snaps = {
+        "A.SZ": {
+            "L5.is.eps": {"value": {"scalar": 1.0, "period": "20251231"}},
+            "L5.is.operating_profit": {"value": {"scalar": 20.0}},
+            "L5.is.revenue": {"value": {"scalar": 100.0}},
+            "L5.is.margins": {"value": {"operating": 0.20, "net": 0.10}},
+            "L5.fcst.eps_cf": {"value": {"eps_avg": 1.2}},
+            "L5.fcst.revenue_margin": {"value": {"net_margin": 0.13}},
+        },
+        "B.SZ": {
+            "L5.is.eps": {"value": {"scalar": 2.0, "period": "20251231"}},
+            "L5.is.operating_profit": {"value": {"scalar": 15.0}},
+            "L5.is.revenue": {"value": {"scalar": 100.0}},
+            "L5.is.margins": {"value": {"operating": 0.15, "net": 0.12}},
+            "L5.fcst.eps_cf": {"value": {"eps_avg": 1.8}},
+            "L5.fcst.revenue_margin": {"value": {"net_margin": 0.11}},
+        },
+    }
+
+    ctx = build_peer_context(snaps)
+
+    assert ctx["L5.is.eps"] == [1.0, 2.0]
+    assert ctx["_op_margin_of"] == {"A.SZ": 0.20, "B.SZ": 0.15}
+    assert ctx["_op_margin_pop"] == [0.15, 0.20]
+    assert ctx["_fcst_eps_growth_of"]["A.SZ"] == pytest.approx(0.20)
+    assert ctx["_fcst_eps_growth_of"]["B.SZ"] == pytest.approx(-0.10)
+    assert ctx["_fcst_margin_delta_of"]["A.SZ"] == pytest.approx(0.03)
+    assert ctx["_fcst_margin_delta_of"]["B.SZ"] == pytest.approx(-0.01)
+
+
+def test_normalized_fundamental_signals_use_peer_context_only():
+    ctx = {
+        "L5.is.eps": [1.0, 2.0, 3.0],
+        "_op_margin_of": {"X.SZ": 0.30},
+        "_op_margin_pop": [0.10, 0.20, 0.30],
+        "_fcst_eps_growth_of": {"X.SZ": 0.20},
+        "_fcst_margin_delta_of": {"X.SZ": 0.02},
+    }
+
+    eps = _realtime_field_signal(
+        "L5.is.eps", {"scalar": 3.0}, "fundamental_score", "X.SZ", ctx
+    )
+    op = _realtime_field_signal(
+        "L5.is.operating_profit", {"scalar": 999.0}, "fundamental_score", "X.SZ", ctx
+    )
+    fcst_eps = _realtime_field_signal(
+        "L5.fcst.eps_cf", {"eps_avg": 3.0}, "expectation_gap", "X.SZ", ctx
+    )
+    fcst_margin = _realtime_field_signal(
+        "L5.fcst.revenue_margin", {"net_margin": 0.20}, "expectation_gap", "X.SZ", ctx
+    )
+
+    assert eps == pytest.approx((5 / 6 - 0.5) * 2.0)
+    assert op == pytest.approx((5 / 6 - 0.5) * 2.0)
+    assert fcst_eps == pytest.approx(math.tanh(0.20 / 0.35))
+    assert fcst_margin == pytest.approx(math.tanh(0.02 / 0.05))
+    assert _realtime_field_signal(
+        "L5.is.operating_profit", {"scalar": 999.0}, "fundamental_score", "X.SZ", None
+    ) is None
+
+
 # --------------------------------------------------------------------------- #
 # run_up normalizer
 # --------------------------------------------------------------------------- #
@@ -173,14 +235,17 @@ def test_market_of():
 def test_peer_context_for_market_filters_and_caches(tmp_path, monkeypatch):
     from mvp20 import peer_context as pc
     pc.clear_cache()
-    # fake read_hot_snapshot keyed by ts_code
+    # fake batch snapshot reader keyed by ts_code
     snaps = {
         "A.SZ": _snap(d20=0.30, crowd_pct=0.9),
         "B.SZ": _snap(d20=0.10, crowd_pct=0.5),
         "X.HK": _snap(d20=0.99, crowd_pct=0.99),  # different market → excluded
     }
-    import mvp20.storage as storage
-    monkeypatch.setattr(storage, "read_hot_snapshot", lambda db, ts: snaps.get(ts, {}))
+    monkeypatch.setattr(
+        pc,
+        "_read_peer_snapshots",
+        lambda db, codes: {ts: snaps[ts] for ts in codes if ts in snaps},
+    )
     db = tmp_path / "hot.sqlite"
     db.write_text("x")  # needs to exist for mtime
     ctx = pc.peer_context_for_market(db, list(snaps.keys()), "A", overlays_dir=tmp_path)

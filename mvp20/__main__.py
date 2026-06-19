@@ -7,7 +7,7 @@ so we ship a ``__main__.py`` for parity. Both routes call the same
 
 Current stack (2026-05-15): 4 sources (Tushare / FMP / Futu / AKShare)
 + derive layer + 111-dp LLM governance schema — SQLite snapshot holds
-166 distinct dp_id and covers 136 / 250 spec data points. See
+166 distinct dp_id and covers 136 / 256 spec data points. See
 ``docs/CHANGELOG.md`` for the milestone trail.
 """
 

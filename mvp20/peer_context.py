@@ -16,7 +16,9 @@ Cache invalidation keys on the hot DB's mtime: when realtime data is refreshed
 """
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -29,6 +31,18 @@ from mvp20.aggregator import build_peer_context
 _ARCHETYPE_YAML = "config/business_model_archetypes.yaml"
 _DEFAULT_OVERLAYS_DIR = "config/stock_overlays"
 _MIN_POOL = 5
+_PEER_CONTEXT_DP_IDS = (
+    "L6.priced.run_up",
+    "L6.priced.crowdedness",
+    "L6.mult.pe",
+    "L6.mult.ps",
+    "L5.is.eps",
+    "L5.is.operating_profit",
+    "L5.is.revenue",
+    "L5.is.margins",
+    "L5.fcst.eps_cf",
+    "L5.fcst.revenue_margin",
+)
 
 
 def market_of(ts_code: str) -> str:
@@ -56,6 +70,78 @@ def _mult_scalar(snap: Mapping[str, Any], dp_id: str) -> float | None:
     return x if x > 0 else None
 
 
+def _chunked(seq: list[str], size: int) -> Iterable[list[str]]:
+    for idx in range(0, len(seq), size):
+        yield seq[idx : idx + size]
+
+
+def _read_peer_snapshots(db_path: Path, codes: Iterable[str]) -> dict[str, Mapping[str, Any]]:
+    """Batch-read only the dp_ids needed for peer-context construction.
+
+    This avoids opening the 2GB hot DB once per stock and avoids sentinel rows;
+    peer context is a cross-sectional stock-level artifact, so market/industry
+    inherited values do not belong in these distributions.
+    """
+
+    code_list = sorted({c for c in codes if c})
+    if not code_list or not db_path.exists():
+        return {}
+
+    snaps: dict[str, dict[str, Any]] = {c: {} for c in code_list}
+    dp_placeholders = ",".join(["?"] * len(_PEER_CONTEXT_DP_IDS))
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        for code_chunk in _chunked(code_list, 500):
+            code_placeholders = ",".join(["?"] * len(code_chunk))
+            rows = conn.execute(
+                f"""
+                SELECT ts_code, dp_id, value_json, data_status, confidence,
+                       source, updated_at
+                  FROM realtime_current
+                 WHERE ts_code IN ({code_placeholders})
+                   AND dp_id IN ({dp_placeholders})
+                   AND data_status IN ('Known', 'Proxy')
+                   AND source NOT LIKE 'mock:%'
+                """,
+                [*code_chunk, *_PEER_CONTEXT_DP_IDS],
+            ).fetchall()
+            for ts, dp_id, value_json, status, confidence, source, updated_at in rows:
+                try:
+                    value = json.loads(value_json)
+                except Exception:  # noqa: BLE001
+                    continue
+                snaps.setdefault(ts, {})[dp_id] = {
+                    "value": value,
+                    "data_status": status,
+                    "confidence": confidence,
+                    "source": source,
+                    "updated_at": updated_at,
+                    "_origin_ts_code": ts,
+                }
+    finally:
+        conn.close()
+    return {ts: snap for ts, snap in snaps.items() if snap}
+
+
+def _overlay_industry_id(fp: Path, overlays_root: Path) -> str | None:
+    """Fast top-level industry_id extraction without parsing full overlay YAML."""
+
+    try:
+        with fp.open("r", encoding="utf-8") as handle:
+            for raw in handle:
+                if raw.startswith("nodes:"):
+                    break
+                if raw.startswith("industry_id:"):
+                    value = raw.split(":", 1)[1].strip().strip("\"'")
+                    return value or None
+    except OSError:
+        return None
+
+    parent = fp.parent.name
+    root_name = overlays_root.name
+    return parent if parent and parent != root_name else None
+
+
 def _load_ts_taxonomy(
     ts_codes: Iterable[str], overlays_dir: str | Path
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -67,11 +153,15 @@ def _load_ts_taxonomy(
     coarser pool level). Returns ``(ts_to_archetype, ts_to_industry)``.
     """
     import yaml
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
     tsset = {c for c in ts_codes if c}
     ts_to_arch: dict[str, str] = {}
     try:
-        doc = yaml.safe_load(Path(_ARCHETYPE_YAML).read_text(encoding="utf-8")) or {}
+        doc = yaml.load(
+            Path(_ARCHETYPE_YAML).read_text(encoding="utf-8"),
+            Loader=loader,
+        ) or {}
         for ts, info in (doc.get("assignments") or {}).items():
             if ts in tsset and isinstance(info, Mapping) and info.get("archetype"):
                 ts_to_arch[ts] = str(info["archetype"])
@@ -85,11 +175,7 @@ def _load_ts_taxonomy(
             ts = fp.stem
             if ts not in tsset or ts in ts_to_ind:
                 continue
-            try:
-                o = yaml.safe_load(fp.read_text(encoding="utf-8")) or {}
-            except Exception:  # noqa: BLE001
-                continue
-            iid = o.get("industry_id") or (o.get("industry_ids") or [None])[0]
+            iid = _overlay_industry_id(fp, od)
             if iid:
                 ts_to_ind[ts] = str(iid)
     return ts_to_arch, ts_to_ind
@@ -175,17 +261,18 @@ def peer_context_for_market(
     """Build (or fetch cached) cross-sectional peer context for ``market``.
 
     ``universe_ts_codes`` is the full candidate set (any market); we keep only
-    those whose ``market_of`` matches, read each one's hot snapshot, then build:
+    those whose ``market_of`` matches, batch-read the small set of hot fields
+    needed by peer context, then build:
       * R-3a priced_in pops (``build_peer_context``: run_up / crowdedness), and
       * R-3b.2 hierarchical valuation pools (``build_valuation_pools``: PE / PS).
+      * normalized fundamental / forecast baseline maps consumed by selected
+        score formulas.
     Returns ``{}`` when no snapshots are available (→ caller passes None / falls
     back to absolute). Cache keys on the DB mtime (realtime refresh → rebuild);
     archetype/overlay edits without a DB rewrite need a process restart.
     """
 
-    from mvp20.storage import read_hot_snapshot  # local: keep import cheap
-
-    db_path = Path(db_path)  # read_hot_snapshot needs a Path; accept str callers
+    db_path = Path(db_path)
     codes = sorted({c for c in universe_ts_codes if c and market_of(c) == market})
     key = (str(db_path), market)
     try:
@@ -195,12 +282,7 @@ def peer_context_for_market(
     if use_cache and key in _CACHE and _CACHE[key][0] == mtime:
         return _CACHE[key][1]
 
-    snaps: dict[str, Mapping] = {}
-    for c in codes:
-        try:
-            snaps[c] = read_hot_snapshot(db_path, c)
-        except Exception:  # noqa: BLE001 — a missing snapshot just drops out
-            continue
+    snaps = _read_peer_snapshots(db_path, codes)
     ctx: dict[str, Any] = build_peer_context(snaps)  # R-3a run_up / crowdedness
     # R-3b.2 valuation pools (A-share scope; other markets get an empty hierarchy
     # → _valuation_pooled False → absolute valr path unchanged).

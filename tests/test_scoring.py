@@ -943,6 +943,14 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
                 "participates_in_score": True,
             },
             {
+                "node_id": "liquidity",
+                "node_name": "liquidity",
+                "layer": "funding_sentiment",
+                "field_role": "multiplier",
+                "score_target": "liquidity_multiplier",
+                "participates_in_score": True,
+            },
+            {
                 "node_id": "uncertainty",
                 "node_name": "uncertainty",
                 "layer": "business_optionality",
@@ -977,6 +985,14 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
             "participates_in_score": True,
             "score_enabled": True,
         },
+        "liquidity": {
+            "score": 0.4,
+            "confidence": 1.0,
+            "field_role": "multiplier",
+            "score_target": "liquidity_multiplier",
+            "participates_in_score": True,
+            "score_enabled": True,
+        },
         "uncertainty": {
             "score": -0.1,
             "confidence": 1.0,
@@ -992,6 +1008,7 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
     assert result["company_score"]["components"]["industry_contrib"] == pytest.approx(1.0)
     assert result["role_components"]["funding_score"] == pytest.approx(0.2)
     assert result["role_components"]["theme_multiplier"] == pytest.approx(1.5)
+    assert result["role_components"]["liquidity_multiplier"] == pytest.approx(1.4)
     assert result["role_components"]["risk_discount"] == pytest.approx(0.1)
     # R-2b: fundamental is the single-node coverage-weighted mean = 1.0 (no
     # tanh). The post-tanh ``fundamental *= multiplier_stack`` was REMOVED, so
@@ -1003,6 +1020,7 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
     # own channel. Pre-R-2b this was tanh(1.0)*1.5 + 0.1.
     assert result["core_final_score"]["base_score"] == pytest.approx(1.0 + 0.2 - 0.1)
     assert result["market_adapter"]["market_code"] == "US"
+    assert result["market_adapter"]["raw_factor_signals"]["liquidity"] == pytest.approx(0.4)
     assert result["final_score"]["base_score"] > result["core_final_score"]["base_score"]
 
 

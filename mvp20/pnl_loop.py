@@ -28,17 +28,24 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+# Console entry points run with ``.venv/bin`` as sys.path[0]. ``pit_backtest``
+# is a repo-local support package, so make the repo root importable before the
+# package imports below.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from pit_backtest import metrics as pmetrics
 from pit_backtest import store as pstore
 
-# Anchor on the repo root (same convention as server.py) — CWD-relative paths
+# Anchor on the repo root (same convention as server.py) - CWD-relative paths
 # would silently degrade the quant/backtest surfaces if the server or cron is
 # ever launched from elsewhere.
-REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = REPO_ROOT / "runtime" / "backtest" / "pnl.sqlite"
 HORIZONS = (5, 10, 20)
 

@@ -1496,6 +1496,9 @@ def _role_components_from_flat(aggregated_nodes: Mapping[str, Any]) -> dict[str,
         "reflexivity_multiplier": _multiplier_factor_from_targets(
             aggregated_nodes, {"reflexivity_multiplier"},
         ),
+        "liquidity_multiplier": _multiplier_factor_from_targets(
+            aggregated_nodes, {"liquidity_multiplier"},
+        ),
         "valuation_sensitivity_multiplier": _multiplier_factor_from_targets(
             aggregated_nodes,
             {
