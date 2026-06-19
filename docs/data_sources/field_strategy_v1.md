@@ -1,18 +1,29 @@
 # 字段数据源策略 v1
 
+> **2026-06-20 current-MVP superseding note**: this file keeps the historical
+> bucket design matrix for source-strategy review. The active spec now has
+> 256 `dp_id`s in `config/data_point_roles.yaml`. Current A-share final-score
+> closure is governed by
+> [`docs/audit/a_share_current_mvp_score_applicability_2026-06-20.md`](../audit/a_share_current_mvp_score_applicability_2026-06-20.md):
+> raw score-relevant closure is 132 / 174, current-MVP closure is 132 / 132,
+> actionable gap is 0, and 42 raw fields are excluded from the local MVP
+> denominator only with audit-backed non-applicability/backlog reasons.
+> Runtime materialization evidence is in
+> [`docs/audit/a_share_approval_materialization_batch_execution_2026-06-20.md`](../audit/a_share_approval_materialization_batch_execution_2026-06-20.md).
+
 > 决策矩阵：spec 250 dp_id × 5 个 bucket（闭环硬数据 / 闭环派生 / 闭环 LLM / web LLM / premium 或 skip）
 >
 > 来源交叉：
 >
-> - **spec source of truth**: `config/data_point_roles.yaml`（250 dp_id）+ `docs/data_sources/coverage_audit.md` §7 完整覆盖矩阵
+> - **spec source of truth**: `config/data_point_roles.yaml`（当前 256 dp_id）+ `docs/data_sources/coverage_audit.md` §7 完整覆盖矩阵
 > - **实测 SQLite**: `runtime/hot.sqlite` `realtime_current` 表 distinct dp_id（181 个；136 在 spec 250 内；127 distinct source）
 > - **实测 overlay yaml**: `config/{industry_overlays,stock_overlays}/**/*.yaml` 节点 `data_status ∈ {Known, Optionality}`（48 total / 47 在 spec 250 内）
-> - **A 股专项完成度**: [`docs/audit/a_share_spec_completion.md`](../audit/a_share_spec_completion.md)
->   由 `scripts/check_a_share_spec_completion.py` 生成；当前 A 股
->   effective runtime 覆盖 121 / 250（剔除 `mock:*`，含 MARKET/INDUSTRY
->   sentinel），compiled overlay 覆盖 66 / 250，合并完成 185 / 250
->   （74.0%），剩余 65 个 A 股 gap。补齐拆分见
->   [`docs/audit/a_share_gap_fill_plan.md`](../audit/a_share_gap_fill_plan.md)。
+> - **A 股专项完成度**: 旧 `a_share_spec_completion` 是历史覆盖口径；当前
+>   final-score 闭环以
+>   [`docs/audit/a_share_current_mvp_score_applicability_2026-06-20.md`](../audit/a_share_current_mvp_score_applicability_2026-06-20.md)
+>   和
+>   [`docs/audit/completion_deviation_2026-06-20.md`](../audit/completion_deviation_2026-06-20.md)
+>   为准。
 >
 > 用户提出的架构原则（来自任务上下文）：
 >
@@ -80,7 +91,10 @@
 
 **关键观察**：
 
-- A bucket 107 个中仍有 3 个当前实测未落到 spec dp_id；A 股实时完成度以 `docs/audit/a_share_spec_completion.json` 为准
+- A bucket 107 个中仍有 3 个历史实测未落到 spec dp_id；A 股当前
+  final-score 闭环以
+  `docs/audit/a_share_current_mvp_score_applicability_2026-06-20.json`
+  为准
 - C bucket 103 个中 55 个尚未填（X5 工作流核心 KPI；现在 42 个 overlay + 6 个 SQLite 近似/误标）
 - D bucket 8 个中 4 个已在 overlay 试填阶段，4 个仍 missing（实际产物质量待评估，可能其中部分要重判到 C）
 - B bucket 28 个中 4 个 missing 是因为下游派生未触发（L11.long.* / L11.mode 等待 X4 contribution chain）
@@ -408,9 +422,11 @@
 > **定义**：spec coverage_audit §7 总评 ✓ 单源 full 或 ✓✓ 多源 full；现接 5 源（FMP / Tushare / AKShare / yfinance / Futu）任一源能直接出值。
 
 **实测口径**：本节是长期 provider/source 策略，不是 A 股 runtime
-completion 真相。当前 A 股 completion 以
-`docs/audit/a_share_spec_completion.json` 为准；本节手写 SQLite/overlay
-交叉状态只用于定位字段路线，可能随本地 `runtime/hot.sqlite` 刷新漂移。
+completion 真相。当前 A 股 final-score/current-MVP completion 以
+`docs/audit/a_share_current_mvp_score_applicability_2026-06-20.json` 和
+`docs/audit/completion_deviation_2026-06-20.json` 为准；本节手写
+SQLite/overlay 交叉状态只用于定位字段路线，可能随本地
+`runtime/hot.sqlite` 刷新漂移。
 
 **当前仍需重点跟踪的 A bucket dp_id**：
 

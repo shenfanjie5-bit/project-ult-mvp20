@@ -188,20 +188,10 @@ def test_admin_alerts_handled_by_mvp20_bff(running_server) -> None:
         assert body["data"]["fixture"] is True
 
 
-# Skeleton-wired adapter routes — each is served by a vendor adapter that
-# returns a 200 fixture envelope ONLY when its upstream package is importable
-# (installed in editable mode under `upstream/` via the documented per-vendor
-# `pip install -e ./upstream/<name>` loop). When a vendor import fails (e.g.
-# the CI image installs only `pip install -e ".[dev]"`, which does NOT pull in
-# the `upstream/` packages — the `[vendor]` extras is declarative-only and not
-# pip-installable), the adapter correctly falls back to 503 UPSTREAM_UNAVAILABLE.
-# That fallback path is asserted by test_adapter_import_fallback_returns_503.
-#
-# So the 200-expectation here is conditional on the vendor being present: each
-# case is paired with its adapter module name and skipped when that adapter's
-# `_AVAILABLE` flag is False, rather than fabricating an install. This keeps the
-# test green both locally (all vendors installed -> all run) and in CI (vendors
-# absent -> all skip with a clear reason).
+# Artifact-backed adapter routes — each is served from
+# upstream/*/artifacts/frontend-api when present. Vendor imports are metadata
+# only; the BFF must return 200 locally even when editable upstream installs are
+# absent.
 _ADAPTER_ROUTES = [
     ("/api/project-ult/graph/test", "graph_engine"),
     ("/api/project-ult/data/canonical/some_table", "data_platform"),
@@ -219,32 +209,16 @@ _ADAPTER_ROUTES = [
     # P&L feedback loop handler (handle_pnl_backtests) — covered below by
     # test_backtest_routes_serve_pnl_loop, not by the fixture-shape test.
 ]
-
-
-def _adapter_available(adapter_module: str) -> bool:
-    """True when the vendor package behind ``mvp20.adapters.<adapter_module>``
-    is importable (i.e. the upstream editable install is present)."""
-    import importlib
-
-    mod = importlib.import_module(f"mvp20.adapters.{adapter_module}")
-    return bool(getattr(mod, "_AVAILABLE", False))
-
-
 @pytest.mark.parametrize("path,adapter_module", _ADAPTER_ROUTES)
 def test_adapter_routes_return_200(running_server, path: str, adapter_module: str) -> None:
-    if not _adapter_available(adapter_module):
-        pytest.skip(
-            f"vendor package for {adapter_module!r} not installed "
-            f"(upstream/ editable install absent); the 503 fallback is "
-            f"covered by test_adapter_import_fallback_returns_503"
-        )
     host, port, *_ = running_server
     status, _, body = _get(host, port, path)
     assert status == 200, f"{path} expected 200, got {status}; body={body}"
     assert "data" in body, f"{path} missing 'data' in envelope: {body}"
     data = body["data"]
     assert data.get("fixture") is True, f"{path} fixture flag missing: {data}"
-    assert data.get("wire_depth") == "skeleton", f"{path} wire_depth wrong: {data}"
+    assert data.get("wire_depth") == "artifact", f"{path} wire_depth wrong: {data}"
+    assert data.get("artifact_path"), f"{path} missing artifact path: {data}"
     assert data.get("module"), f"{path} missing module label: {data}"
 
 
@@ -273,6 +247,7 @@ def test_adapter_import_fallback_returns_503(running_server, monkeypatch) -> Non
     error.code == 'UPSTREAM_UNAVAILABLE' instead of crashing the handler."""
     from mvp20.adapters import graph_engine as ge
 
+    monkeypatch.setattr(ge, "load_frontend_artifact", lambda *_args, **_kwargs: (None, None))
     monkeypatch.setattr(ge, "_AVAILABLE", False)
     monkeypatch.setattr(ge, "_IMPORT_ERR", "ModuleNotFoundError: simulated")
 

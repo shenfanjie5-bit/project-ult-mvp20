@@ -13,7 +13,7 @@ def _touch_path(root: Path, rel_path: str) -> None:
     path.write_text("", encoding="utf-8")
 
 
-def test_classify_modules_keeps_dependency_and_skeleton_out_of_running(tmp_path: Path) -> None:
+def test_classify_modules_keeps_dependency_and_artifact_adapter_out_of_running(tmp_path: Path) -> None:
     lock_dir = tmp_path / "locks"
     lock_dir.mkdir()
     (tmp_path / "upstream" / "contracts").mkdir(parents=True)
@@ -21,8 +21,12 @@ def test_classify_modules_keeps_dependency_and_skeleton_out_of_running(tmp_path:
     adapter = tmp_path / "mvp20" / "adapters"
     adapter.mkdir(parents=True)
     (adapter / "graph_engine.py").write_text(
-        'payload = {"wire_depth": "skeleton"}\n', encoding="utf-8"
+        'from mvp20.adapters._artifacts import artifact_envelope\n',
+        encoding="utf-8",
     )
+    artifact = tmp_path / "upstream" / "graph-engine" / "artifacts" / "frontend-api"
+    artifact.mkdir(parents=True)
+    (artifact / "subgraph.json").write_text("{}", encoding="utf-8")
     lock = lock_dir / "modules.lock.yaml"
     lock.write_text(
         """
@@ -66,11 +70,12 @@ modules:
     assert by_name["contracts"]["runtime_state"] == "normal_dependency_not_service"
     assert by_name["contracts"]["evidence_level"] == "vendored_dependency_source"
     assert by_name["contracts"]["live_process_ok"] is None
-    assert by_name["graph-engine"]["classification"] == "skeleton_callable_not_full_service"
+    assert by_name["graph-engine"]["classification"] == "artifact_callable_contract_surface"
     assert (
         by_name["graph-engine"]["evidence_level"]
-        == "vendored_skeleton_adapter_and_route_latency_audit"
+        == "artifact_adapter_and_route_latency_audit"
     )
+    assert result["counts"]["artifact_callable"] == 1
     assert by_name["orchestrator"]["classification"] == "unavailable_as_full_module_here"
     assert by_name["orchestrator"]["evidence_level"] == "missing_vendored_source"
     assert (

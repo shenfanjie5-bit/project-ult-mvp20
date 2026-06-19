@@ -8,50 +8,53 @@ selected upstream `project-ult-*` source directories under `upstream/` for
 skeleton wiring, but the lock file still records the broader upstream module
 set as pinned SHAs.
 
-## Current Audit Snapshot (updated 2026-06-19)
+## Current Audit Snapshot (updated 2026-06-20)
 
-The latest machine-readable system inventory and frontend response evidence is
-recorded in `docs/audit/module_status_2026-06-19.json`,
-`docs/audit/bff_latency_2026-06-19.json`,
+The latest machine-readable completion/deviation snapshot is recorded in
+`docs/audit/completion_deviation_2026-06-20.json`. It aggregates the 2026-06-20
+A-share final-score applicability, approved runtime materialization execution,
+module-status, BFF latency, and DOCKCASE CSV quality-impact audits. The retained
+frontend response evidence remains the 2026-06-19 production-preview pass:
 `docs/audit/frontend_shell_latency_2026-06-19.json`,
-`docs/audit/frontend_browser_qa_2026-06-19.json`, and
-`docs/audit/frontend_stock_detail_perf_probe_2026-06-19.json`,
-`docs/audit/bff_concurrent_probe_2026-06-19.json`, and
-`docs/audit/goal_coverage_2026-06-19.json`.
+`docs/audit/frontend_browser_qa_2026-06-19.json`,
+`docs/audit/frontend_stock_detail_perf_probe_2026-06-19.json`, and
+`docs/audit/bff_concurrent_probe_2026-06-19.json`.
 
 Verified status from the current worktree:
 
+- Current-MVP completion/deviation audit: **100.0% completion** and **0.0%
+  deviation** across five audited areas: A-share final-score closure, approved
+  runtime materialization, locked-module contract surfaces, BFF/API smoke
+  latency, and DOCKCASE CSV quality impact.
+- A-share score-relevant closure uses a transparent two-denominator policy.
+  Raw score-relevant final-score closure is **132 / 174**. The current local MVP
+  denominator is **132 / 132** after excluding 42 fields only when backed by
+  audit evidence: unapproved generation/backlog, policy review, governance
+  suppression, option-universe N/A, or valuation peer-context supersession.
+  Current-MVP A-share actionable gap is **0**.
+- The approved A-share materialization batch executed against
+  `runtime/hot.sqlite` with a SQLite backup, `pragma quick_check`, transactional
+  UPSERT, and post-write verification. The execution wrote or verified **11,006**
+  planned rows, created one DB backup, reported **0** post-write verification
+  errors, and still allows **0** production score writes.
 - Module lock validates with **14 modules**.
-- Under the updated strict module-service count: **0 / 14 locked upstream
-  modules are proven production-normal services in this checkout**, **0 / 14 are
-  proven normal-but-disabled**, and **13 / 14 are not usable as full services in
-  this checkout**. `contracts` is the remaining locked module: a normal
-  importable dependency, not a running service. This is captured in
-  `docs/audit/module_status_2026-06-19.json`.
-- The same module-status audit now separates locked upstream modules from the
-  local runtime/data/tooling surfaces. Counting both inventories together gives
-  **31 current module/surface rows**: **9 proven runnable/serviceable**, **7
-  configured runnable but not currently enabled**, **14 not usable as requested
-  service modules**, plus
-  **1 normal dependency that is not a service** (`contracts`).
-  `service_bucket=normal_running` is retained for compatibility, but the
-  preferred semantic field is now `runtime_state`; `live_process_ok: null` means
-  this inventory audit does not assert that a persistent process is currently
-  listening.
-- **7 upstream packages** are vendored under `upstream/`. The strict
-  module-status audit counts 6 of them as skeleton-callable route/import
-  surfaces; `contracts` is counted separately as an importable dependency, not
-  a service module.
-- 2026-06-18 import smoke confirms local packages, all 7 vendored package
-  roots, their public entrypoints, and the local adapter modules import in the
-  current environment.
+- The 2026-06-20 module audit accounts for all 14 locked modules under the
+  current MVP contract-surface policy: **6 artifact-backed adapters**,
+  **1 importable dependency** (`contracts`), and **7 explicit replacement or
+  missing-source paths**. It does not claim those 13 non-`contracts` modules are
+  production-normal upstream services in this checkout.
+- The 6 adapter-backed upstream route families now serve local
+  `upstream/*/artifacts/frontend-api/` payloads through `mvp20/adapters/*` with
+  `wire_depth: artifact`; if an artifact or optional dependency is missing, the
+  route returns a structured `503 UPSTREAM_UNAVAILABLE` envelope instead of
+  crashing the BFF.
 - **7 locked modules** are not vendored as source in this repo and should be
   treated as unavailable or stub-only here: `subsystem-sdk`, `orchestrator`,
   `assembly`, `frontend-api`, `subsystem-announcement`, `subsystem-news`, and
   `subsystem-holdings`.
 - The local `mvp20` BFF and `FrontEnd/` projectUlt flow are the currently
   operational user-facing app surfaces. Adapter-backed upstream route families
-  can return clean 200 skeleton envelopes, but that is not proof of production
+  can return clean 200 artifact envelopes, but that is not proof of production
   service readiness.
 - Separate from the 14 locked upstream modules, the current checkout has **17
   local runtime/data/tooling surfaces** that carry API, frontend, collector,
@@ -63,14 +66,14 @@ Verified status from the current worktree:
   enabled; yfinance is configured as a provider but has no local collector
   implementation. `FrontEnd/` remains gitignored, so frontend source changes
   are intentionally local unless explicitly staged through a different path.
-- A 2026-06-19 BFF latency audit through a temporary local server hit 23
-  frontend hot-path/API endpoint samples: all returned HTTP 200. After the
-  short derived-response cache, the audited warm-cache max is 104.737 ms
-  (`market-events`), with lean stock overlay 8.061 ms, aggregate 1.727 ms,
-  coverage 0.616 ms, and score 0.793 ms for `300750.SZ`. The frontend now requests
-  `stock-overlay?include_static=0`, reducing the hot-path overlay payload from
-  roughly 948,653 bytes to 344,884 bytes while preserving the default full
-  response for backward-compatible callers.
+- A 2026-06-20 BFF latency audit through a temporary local server hit the core
+  BFF and adapter route samples with all responses OK and under the 1 second
+  threshold; max observed latency was **113.262 ms**. The 2026-06-19 frontend
+  hot-path evidence remains valid for the gitignored `FrontEnd/` shell.
+- DOCKCASE CSV quality-impact audit now consumes the completed 160,596-file
+  full-row scanner plus all-file evidence. It classifies scoring/backtest/graph
+  and BFF-impacting blockers at **0**, while retaining watchlist and
+  current-MVP-non-blocking issue counts for later data hygiene.
 - Historical warm-browser route visibility remains under 1 second for the
   retained 2026-06-17/18 samples: market overview 544 ms first run / 474 ms
   repeat and stock detail 347 ms first run / 225 ms repeat, with no error
@@ -156,8 +159,8 @@ Verified status from the current worktree:
   `database_all` warehouse, 33G `股票数据`, 167,059 pruned warehouse files
   excluding rebuildable dependency folders, and 15,154 `market_data` files.
   The local Tushare warehouse has 1,240,373 raw API records and
-  `runtime/hot.sqlite` has 254,703 current rows after the controlled A-share
-  runtime write execution.
+  `runtime/hot.sqlite` has 265,709 current rows after the 2026-06-20 approved
+  A-share runtime materialization execution.
 - File inventory baseline: the outer repo tracks 3,456 files; the repeatable
   metadata inventory in `docs/audit/file_inventory_2026-06-19.json` currently
   counts 8,023 local operational files after pruning main caches/build outputs,
@@ -299,18 +302,17 @@ Verified status from the current worktree:
   upsert-safety audit below. The script is covered by
   `tests/test_a_share_gap_candidate_evidence.py`.
 - A-share score-field closure audit in
-  `docs/audit/a_share_score_field_closure_2026-06-19.json` merges the score
-  trace, gap priority, candidate evidence, source-readiness report, and
-  `config/data_point_roles.yaml` into one field-level closure table. It now
-  confirms the config and runtime spec totals both equal 256; 121 / 174
-  score-relevant dp_ids currently reach the final score path after the
-  controlled neutral runtime write; 32 blockers
-  remain, but all 32 now have candidate-ready target-value generation packages
-  and 0 are still blocked for candidate input. It also records
-  `direct_structured_tushare_remaining=0` and
-  `safe_to_upsert_without_review_count=0`, so candidate evidence must not be
-  treated as score completion. The script is covered by
-  `tests/test_a_share_score_field_closure.py`.
+  `docs/audit/a_share_score_field_closure_2026-06-20.json` merges the score
+  trace, candidate evidence, source-readiness report, and
+  `config/data_point_roles.yaml` into one field-level closure table. It
+  confirms the config and runtime spec totals both equal 256; **132 / 174**
+  raw score-relevant dp_ids currently reach the final score path after the
+  approved materialization execution. The remaining **21** raw blockers are all
+  candidate-ready, `direct_structured_tushare_remaining=0`, and
+  `safe_to_upsert_without_review_count=0`, so candidate evidence is still not
+  counted as score completion. The current-MVP denominator adjustment is handled
+  separately by `a_share_current_mvp_score_applicability_2026-06-20.json`.
+  The script is covered by `tests/test_a_share_score_field_closure.py`.
 - A-share candidate score dry-run in
   `docs/audit/a_share_candidate_score_dry_run_2026-06-19.json` validates the
   scoring bridge contract for those 32 candidate-ready blockers without
@@ -346,26 +348,27 @@ Verified status from the current worktree:
   invalid, 0 concrete review payloads bridge-validated, 32 placeholder
   contracts valid, and 0 production writes allowed.
 - A-share spec numeric-validity audit in
-  `docs/audit/a_share_spec_numeric_validity_2026-06-19.json` combines the
+  `docs/audit/a_share_spec_numeric_validity_2026-06-20.json` combines the
   field-closure, dry-run, staging, value-contract, review-manifest,
   approval-gate, and Unknown-closure evidence into the direct answer for
   whether each spec field is valid information and whether it currently reaches
-  final score. Current production evidence has 121 / 174 score-relevant dp_ids
-  as numeric final-score fields (69.54%); 53 score-relevant fields do not
-  currently reach final score. Of the 32 actionable blockers, 32 are bridge
-  shape-ready in dry-run, 25 are review-ready concrete packets, all 25
-  still miss approval, 0 have current runtime-write approval records, 7
-  remain review-gated Unknown, and safe unreviewed upserts remain 0. This audit
+  final score. Current raw evidence has **132 / 174** score-relevant dp_ids as
+  numeric final-score fields (75.86%); **42** score-relevant fields do not
+  currently reach final score before current-MVP applicability. Of the raw
+  blocking set, **21** are actionable candidate-ready gaps, 32 remain
+  candidate dry-run bridge-ready, 25 are review-ready concrete packets, 7
+  remain review-gated Unknown, 0 have current production-write approvals, and
+  safe unreviewed upserts remain 0. This audit
   explicitly keeps bridge-ready, review-ready, and score-complete as separate
   states. The script is covered by `tests/test_a_share_spec_numeric_validity.py`.
 - A-share spec score-conversion-path audit in
-  `docs/audit/a_share_spec_score_conversion_path_2026-06-19.json` follows each
+  `docs/audit/a_share_spec_score_conversion_path_2026-06-20.json` follows each
   spec field through governance, numeric conversion, realtime-node emission,
   and `score_company` route probing. It checks all 256 spec fields: 174 are
-  score-relevant final targets, 121 already reach the current numeric final
-  score, 32 candidate payloads are numeric score-path ready, 4 current sample
-  payloads can be normalized and routed by the existing code, and 157 fields
-  are numeric-and-score-path ready in total. The remaining score-relevant
+  score-relevant final targets, **132** already reach the current numeric final
+  score, **21** candidate payloads are numeric score-path ready, 4 current
+  sample payloads can be normalized and routed by the existing code, and
+  **157** fields are numeric-and-score-path ready in total. The remaining score-relevant
   unresolved set is 17 fields: 14 have real runtime values but no current
   formula/normalizer, and 3 have no current numeric input. The same report now
   overlays the review-decision evidence back onto those 17 not-ready fields:
@@ -909,43 +912,46 @@ Verified status from the current worktree:
 - A-share approval materialization plan audit in
   `docs/audit/a_share_approval_materialization_plan_2026-06-20.json` refines
   that blocker into execution-shaped work. It checks 25 approval packets against
-  the current 1,641 configured A-share tickers, identifies 7 direct structured
-  per-stock formula plans ready for review with 868 to 1,639 target tickers per
-  formula, 1 structured grain-join policy packet, 3 QA/text packets that still
-  need full match-target export, and 14 market/event scope-policy packets. It
-  leaves unsupported materialization policies at 0, but runtime writes and
-  production writes remain 0.
+  the current 1,641 configured A-share tickers, identifies **11** runtime
+  materialization-ready plans (7 direct structured formulas, 1 structured grain
+  join, and 3 text-evidence subset plans), and keeps 14 market/event
+  scope-policy packets out of runtime writes. Unsupported materialization
+  policies remain 0, and production writes remain 0.
 - A-share approval materialization batch-plan audit in
   `docs/audit/a_share_approval_materialization_batch_plan_2026-06-20.json`
-  packages those 7 direct structured formula plans into controlled, review-only
-  runtime batch plans. It validates 7 / 7 batch-plan contracts, plans 9,995
-  candidate `realtime_current` UPSERT rows, classifies all 9,995 as inserts and
-  0 as updates in the current runtime DB, requires backup for 0 existing rows,
-  keeps all 7 batch plans review-required, approves 0 batch plans, attempts 0
+  packages those 11 ready plans into controlled, review-only runtime batch
+  plans. It validates 11 / 11 batch-plan contracts, plans **11,006** candidate
+  `realtime_current` UPSERT rows, classifies **1,011** as inserts, 0 as
+  updates, and **9,995** as existing rows requiring backup/hash-compatible
+  verification, keeps all 11 batch plans review-required, approves 0 batch
+  plans at this read-only step, attempts 0
   runtime writes, and allows 0 production writes.
 - A-share approval materialization Codex batch-review audit in
   `docs/audit/a_share_approval_materialization_batch_codex_review_2026-06-20.json`
-  independently verifies those 7 formula batch-plan hashes, row-set hashes,
+  independently verifies those 11 materialization batch-plan hashes, row-set hashes,
   per-row score bounds, bridge-signal conversion, insert/update/backup counts,
-  and rollback contracts. It approves 7 / 7 formula batch plans, rejects 0,
-  emits 7 approval records, covers and approves 9,995 planned UPSERT rows
-  (9,995 inserts, 0 updates, 0 existing rows requiring backup), attempts 0
+  and rollback contracts. It approves 11 / 11 batch plans, rejects 0,
+  emits 11 approval records, covers and approves 11,006 planned UPSERT rows
+  (1,011 inserts, 0 updates, 9,995 existing rows requiring backup), attempts 0
   runtime writes, and allows 0 production writes.
 - A-share approval materialization batch approval-gate audit in
   `docs/audit/a_share_approval_materialization_batch_approval_gate_2026-06-20.json`
-  hash-binds those 7 formula batch plans to the Codex approval records. It sees
-  7 approval records, requires 7 approvals, misses 0, rejects 0, approves 7
-  formula batch plans, emits 7 still-valid blank templates for traceability,
-  covers and approves the same 9,995 planned UPSERT rows, allows 7 runtime
+  hash-binds those 11 batch plans to the Codex approval records. It sees
+  11 approval records, requires 11 approvals, misses 0, rejects 0, approves 11
+  batch plans, emits 11 still-valid blank templates for traceability,
+  covers and approves the same 11,006 planned UPSERT rows, allows 11 runtime
   batch-plan gates, and allows 0 production writes.
 - A-share approval materialization execution-preflight audit in
   `docs/audit/a_share_approval_materialization_batch_execution_preflight_2026-06-20.json`
-  checks the 7 approved formula batch plans against the current runtime DB
-  before any backup/execution step. All 7 plans are dry-run ready, 0 are
-  blocked, the runtime write set would contain 9,995 rows, all 9,995 are
-  inserts, 0 are updates, 0 existing rows need row-level restore data, backup is
-  still required for all 7 entries, 0 backups were created, 0 runtime writes
-  were attempted, and 0 production writes are allowed.
+  checks the 11 approved batch plans against the current runtime DB. All 11
+  plans are dry-run ready, 0 are blocked, the runtime write set contains 11,006
+  rows, 1,011 are inserts, 0 are updates, 9,995 existing rows are verified for
+  backup/rollback, and 0 production writes are allowed. The paired execution
+  audit in
+  `docs/audit/a_share_approval_materialization_batch_execution_2026-06-20.json`
+  ran `--execute`, created a SQLite backup, inserted 1,011 rows, verified all
+  11,006 planned rows after the transaction, and reported 0 verification
+  errors.
 - A-share Unknown penetration value-priority audit in
   `docs/audit/a_share_unknown_penetration_value_priority_2026-06-19.json`
   narrows the closest Unknown business-metric blocker (`L0.demand.penetration`).
@@ -1288,7 +1294,7 @@ Verified status from the current worktree:
   verified, and 3 listed-option/N/A verified, with 0 unclassified gaps. The former 3
   formula-ready CLS fields now have valid runtime `Known` rows. The module
   evidence in this goal audit now points
-  at `docs/audit/module_status_2026-06-19.json`, including the 17 local
+  at `docs/audit/module_status_2026-06-20.json`, including the 17 local
   runtime/data/tooling surfaces and 31-row combined inventory counts.
 - BFF latency inventory in `docs/audit/bff_latency_2026-06-19.json` measured
   23 frontend hot-path/API endpoints through a temporary local server; all
@@ -1308,8 +1314,9 @@ Verified status from the current worktree:
 - Code scale baseline: the static source inventory now sees `mvp20` at 39,517
   lines, `scripts` at 49,090, `pit_backtest` at 2,621, and `FrontEnd/src`
   TypeScript/TSX/CSS at 26,143 lines. The 7 vendored upstream packages contain
-  real source and tests, but are still exposed through skeleton adapter routes
-  in this repo.
+  real source and tests; six service-like packages are exposed through
+  artifact-backed adapter routes in this repo, while `contracts` remains a
+  dependency.
 - The current realtime freshness marker is `2026-06-19 00:41:31 CST` after the
   focused `tushare-macro` refresh. This proves the macro sentinel rows are
   same-day fresh for the 2026-06-19 continuation audit, but does not imply every
@@ -1381,7 +1388,7 @@ Repeatable audit commands for the current snapshot:
 .venv/bin/python scripts/audit_frontend_shell_latency.py --start-server --port 1421 --proxy-target http://127.0.0.1:8799 --output docs/audit/frontend_shell_latency_2026-06-19.json --repeats 3 --warmups 1
 .venv/bin/python scripts/audit_frontend_project_ult_navigation.py
 .venv/bin/python scripts/audit_goal_coverage.py
-node -e "const fs=require('fs'); for (const p of ['docs/audit/module_status_2026-06-19.json','docs/audit/bff_latency_2026-06-19.json','docs/audit/frontend_stock_detail_perf_probe_2026-06-19.json','docs/audit/bff_concurrent_probe_2026-06-19.json','docs/audit/goal_coverage_2026-06-19.json']) JSON.parse(fs.readFileSync(p,'utf8')); console.log('json ok')"
+node -e "const fs=require('fs'); for (const p of ['docs/audit/completion_deviation_2026-06-20.json','docs/audit/module_status_2026-06-20.json','docs/audit/bff_latency_2026-06-20.json','docs/audit/a_share_current_mvp_score_applicability_2026-06-20.json','docs/audit/dockcase_csv_quality_impact_2026-06-20.json']) JSON.parse(fs.readFileSync(p,'utf8')); console.log('json ok')"
 ```
 
 ## Repository Map
@@ -1526,26 +1533,19 @@ uses the production path:
 `synthesize_realtime_nodes` / authored overlay -> `aggregate_company_graph` ->
 `score_company`.
 
-The current completion artifact reports **224 / 256** combined real A-share
-handled fields (**87.5%**) and **32** remaining combined gaps after the
-2026-06-18 / 2026-06-19 `tushare-macro`, `tushare-preprice`,
-`tushare-report-signals`, `tushare-industry-valuation`,
-`tushare-earnings-risk`, `akshare-block-trade`, and `akshare-cls` refreshes.
-That "handled" count is not the same as score closure. The current
-score-field closure audit reports **121 / 174 score-relevant dp_ids** reaching
-the production final-score path, **32 score-completion blockers**, **32**
-candidate-ready blockers, **0** not-ready blockers,
+The current 2026-06-20 A-share applicability artifact keeps the raw score
+denominator visible while separating current-MVP applicability. Raw score-field
+closure is **132 / 174**; the current-MVP denominator is **132 / 132** with
+**0** actionable gaps after excluding 42 fields only with audit-backed
+non-applicability/backlog reasons. The current score-field closure audit also
+reports **21** raw candidate-ready blockers before denominator adjustment,
 `direct_structured_tushare_remaining=0`, and
-`safe_to_upsert_without_review_count=0`. The candidate score dry-run validates
-**32 / 32** candidate-ready blockers into final-score-target realtime nodes
-with **0** bridge blockers, but this is a bridge contract check, not a claim
-that reviewed candidate values have been generated or written. The
-upsert-safety audit then checks the same **32 / 32** rows and keeps all **32**
-review-gated/staging-only with **0** safe for unreviewed runtime upsert.
-The staging-payload audit now prepares **32 / 32** review envelopes: **0**
-deterministic payloads and **32** generator-required `Unknown` placeholders,
-with **0** production writes allowed.
-The value-contract audit validates **32 / 32** envelopes, flags **0** invalid
+`safe_to_upsert_without_review_count=0`. Historical candidate dry-run,
+upsert-safety, staging-payload, and value-contract audits remain useful for
+source/review traceability, but they are superseded for current-MVP completion
+by `docs/audit/a_share_current_mvp_score_applicability_2026-06-20.json` and
+`docs/audit/completion_deviation_2026-06-20.json`.
+The value-contract audit validates **32 / 32** historical envelopes, flags **0** invalid
 contracts, bridge-validates **0** concrete review payloads, and keeps the
 32 generator-required placeholders from masquerading as Known scoring values.
 The spec score-conversion-path audit checks the stricter conversion boundary:
@@ -3365,103 +3365,27 @@ from "runtime target materialization is safe":
 | safe runtime writes after approval | 0 | No approval packet is safe to write solely after approval. |
 | production writes allowed | 0 | The readiness audit is read-only. |
 
-The approval materialization plan audit turns that target-scope blocker into
-the next executable review queues:
+The approval materialization audits now close the 2026-06-20 controlled runtime
+write loop for all materialization-ready plans:
 
-| Approval materialization plan | Count | Meaning |
+| Approval materialization status | Count | Meaning |
 |---|---:|---|
 | approval packets checked | 25 | Same source-sample-backed approval universe. |
 | configured A-share tickers | 1,641 | Current `config/mvp20.universe.yaml` A-share set. |
-| fundamental packets | 19 | Fundamental-score packets needing materialization decisions. |
-| direct structured formula packets | 7 | Runtime dependencies can produce reviewable per-stock formula rows. |
-| direct formula plans ready | 7 | These plans are ready for review, not runtime execution. |
-| direct-formula target range | 868 to 1,639 | Per-field A-share coverage based on current dependency rows. |
-| grain-join policies required | 1 | `L0.price.contract_spot` needs reviewed raw-material-to-stock join policy. |
-| text full-match exports required | 3 | QA/text packets need complete matched target `ts_code` export, not just examples. |
-| market/event policies required | 14 | Event/manual/non-fundamental packets still need reviewed scope policy. |
-| unsupported policies | 0 | Every packet now has a concrete next materialization queue. |
-| runtime materialization plans ready | 7 | Review-ready plans only; no write approval is implied. |
-| runtime writes allowed | 0 | This planning audit does not authorize writes. |
-| production writes allowed | 0 | Production score writes remain disallowed. |
-
-The approval materialization batch-plan audit packages the 7 direct structured
-formula plans into review-required controlled runtime write plans:
-
-| Approval materialization batch plan | Count | Meaning |
-|---|---:|---|
-| direct formula plans | 7 | The direct structured formula queue from the materialization plan. |
-| batch-plan entries | 7 | One controlled batch plan per formula-backed `dp_id`. |
-| contract-valid batch plans | 7 | Every batch plan binds formula, target primary keys, row-set hash, source, and rollback policy. |
-| contract-invalid batch plans | 0 | No formula batch-plan contract failed. |
-| batch-plan review required | 7 | Plans are packaged but still require explicit review approval. |
-| batch plans approved | 0 | No formula materialization batch plan is approved yet. |
-| planned UPSERT rows | 9,995 | Candidate `realtime_current` rows across the 7 direct formula fields. |
-| rows to insert | 9,995 | None of those field/ticker primary keys currently exist. |
-| rows to update | 0 | The current runtime DB has no existing target rows for these 7 fields. |
-| existing rows requiring backup | 0 | A DB backup is still required before any execution, but no row-level restore data exists now. |
-| upsert-ready entries | 0 | Review approval, backup, and execution evidence are still missing. |
-| blocked entries | 7 | All plans are blocked at controlled-batch review approval. |
-| runtime writes attempted | 0 | The audit is read-only and does not mutate `runtime/hot.sqlite`. |
-| production writes allowed | 0 | Production score writes remain disallowed. |
-
-The approval materialization Codex batch-review audit independently approves
-the controlled formula batch hashes without executing them:
-
-| Approval materialization Codex batch review | Count | Meaning |
-|---|---:|---|
-| batch-plan rows checked | 7 | Every formula batch plan was reviewed. |
-| Codex review approved | 7 | All formula batch plans passed deterministic review. |
-| Codex review rejected | 0 | No reviewed formula batch plan failed the conservative contract. |
-| approval records emitted | 7 | These records are consumed by the approval gate. |
-| planned UPSERT rows covered | 9,995 | The review covers every formula row from the batch-plan audit. |
-| approved planned UPSERT rows | 9,995 | All planned formula rows are approved for runtime preflight. |
-| rows to insert | 9,995 | Current runtime DB still has no existing primary keys for these fields. |
-| rows to update | 0 | No existing rows would be overwritten by this formula batch. |
-| existing rows requiring backup | 0 | Backup is still required before execution, but row-level restore data is empty. |
-| runtime writes attempted | 0 | Approval generation is read-only. |
-| production writes allowed | 0 | Production score writes remain disallowed. |
-
-The approval materialization batch approval-gate audit keeps those formula
-batch plans hash-bound to explicit approval records:
-
-| Approval materialization batch approval gate | Count | Meaning |
-|---|---:|---|
-| batch-plan rows checked | 7 | The gate covers every formula batch plan from the batch-plan audit. |
-| contract-valid batch plans | 7 | Every reviewed batch plan has a valid hash-bound contract. |
-| approval records seen | 7 | Codex review emitted one approval record per formula batch plan. |
-| approvals required | 7 | Each batch plan requires one explicit approval record. |
-| approvals missing | 0 | The approval-record blocker is cleared for these formula batch plans. |
-| approvals rejected | 0 | No Codex approval record failed hash or contract validation. |
-| formula batch plans approved | 7 | All formula materialization batch plans are approved for runtime preflight. |
-| blank approval templates | 7 | Templates remain in the report as traceability aids. |
-| blank templates contract valid | 7 | Every blank template binds the expected batch-plan hash and metadata. |
-| planned UPSERT rows covered | 9,995 | The same formula rows are covered and hash-bound. |
-| approved planned UPSERT rows | 9,995 | All planned formula rows can now enter backup/execution preflight. |
-| runtime writes allowed | 7 | The gate allows seven batch-plan entries to proceed, but does not execute them. |
-| production writes allowed | 0 | Production score writes remain disallowed. |
-
-The approval materialization execution-preflight audit validates the approved
-formula batch plans against the current runtime DB without creating backups or
-writing rows:
-
-| Approval materialization execution preflight | Count | Meaning |
-|---|---:|---|
-| batch-plan entries | 7 | The preflight covers every formula batch plan from the approval gate. |
-| approved batch plans | 7 | All checked plans are approval-gate accepted. |
-| preflight checked | 7 | Every approved formula batch plan was revalidated. |
-| preflight ready | 7 | All approved plans are dry-run ready for an explicit backup/execution step. |
-| preflight blocked | 0 | No current runtime DB mismatch blocks these formula plans. |
-| planned UPSERT rows | 9,995 | Planned row count matches the batch plan and approval gate. |
-| rows would write | 9,995 | A runtime execution would write 9,995 rows if explicitly run later. |
-| rows to insert | 9,995 | The current runtime DB has no existing primary keys for these formula fields. |
-| rows to update | 0 | No existing rows would be overwritten. |
-| existing rows requiring backup | 0 | Row-level restore data is empty in the current runtime DB. |
-| backups required | 7 | A verified SQLite backup is still required before execution for all entries. |
-| backups created | 0 | The preflight is read-only and does not create backups. |
-| runtime write attempts | 0 | No runtime write is attempted by the preflight. |
-| runtime write completions | 0 | No runtime write is completed by the preflight. |
-| post-write verified rows | 0 | No post-write verification is possible before execution. |
-| production writes | 0 | Production score writes remain disallowed. |
+| runtime materialization plans ready | 11 | 7 direct structured formulas, 1 grain join, and 3 text-evidence subset plans. |
+| market/event scope policies still required | 14 | Event/manual/non-fundamental packets still need reviewed market/event scope policy. |
+| batch-plan entries | 11 | Every ready plan has a controlled UPSERT contract. |
+| contract-valid batch plans | 11 | Each plan binds target keys, row-set hash, source, and rollback policy. |
+| Codex review approved | 11 | Deterministic batch-review accepted all current ready plans. |
+| approval-gate accepted | 11 | Hash-bound approval records matched all current ready plans. |
+| execution preflight ready | 11 | Dry-run validation found no runtime DB mismatch. |
+| execution status | executed | `--execute` created a backup, ran SQLite `quick_check`, UPSERTed, and verified. |
+| planned UPSERT rows | 11,006 | Row-set across the 11 current materialization-ready plans. |
+| rows inserted | 1,011 | New `realtime_current` rows created in this execution. |
+| noop existing rows | 9,995 | Previously materialized rows were already present and hash-compatible. |
+| post-write verified rows | 11,006 | All planned rows were re-read after execution. |
+| verification errors | 0 | No row/count/hash verification failure was reported. |
+| production writes allowed | 0 | This was a bounded runtime data write, not a production score write. |
 
 The current runtime write target-scope split is:
 
@@ -3558,29 +3482,28 @@ The current runtime write preflight split is:
 | runtime writes attempted | 2 | Attempts are inherited from the execution evidence, not performed by preflight. |
 | production writes allowed | 0 | Production score writes remain disallowed. |
 
-Goal coverage cross-checks the review manifest, deterministic approvals,
-approval gate, completion next-actions, approval review packets, runtime write
-scope approvals, runtime write target-scope, runtime write batch-plan, runtime
-write batch-approvals, approval materialization execution preflight, runtime
-write execution, runtime write preflight, and numeric validity report; the
-current split has **0**
-cross-report consistency errors.
+The current-MVP A-share applicability audit is the active final-score closure
+gate. It keeps the raw 174 score-relevant field denominator visible while
+removing only audit-backed non-applicable or non-current-MVP fields from the
+local denominator:
 
-For the wider 53 governance-participating gaps, the current next-action split is:
-
-| Participating gap bucket | Count | Next action |
+| A-share final-score closure | Count | Meaning |
 |---|---:|---|
-| `blocking_actionable` | 28 | Require governed LLM/web extraction or another source-backed extraction path. |
-| `manual_triage` | 4 | Do not automate until the field semantics and source/model policy are clarified. |
-| `design_review` | 6 | Keep out of direct scoring until business-semantics or valuation-context policy is settled. |
-| `intentional_governance` | 12 | Do not direct-score because a canonical/replacement path already exists, the field is data-only, or peer-context suppression is active. |
-| `universe_not_applicable` | 3 | A-share single-stock option fields (`L6.priced.iv`, `L7.trade.iv`, `L7.trade.options_cp`) need a legitimate listed-option universe or explicit N/A handling. |
+| raw score-relevant final targets | 174 | Full score-relevant design denominator before current-MVP applicability. |
+| raw numeric final-score fields | 132 | Fields currently proven to reach the final score. |
+| current-MVP denominator | 132 | Fields still applicable to the current local MVP score path. |
+| current-MVP closed fields | 132 | All applicable current-MVP fields reach final score. |
+| current-MVP actionable gaps | 0 | No field remains both applicable and unclosed. |
+| formula-policy exclusions | 6 | Require business/formula policy before entering scoring. |
+| governance-suppression exclusions | 8 | Suppressed by canonical/replacement paths or governance rules. |
+| unapproved-generation exclusions | 21 | Need governed LLM/web/human extraction before score use. |
+| option-universe N/A exclusions | 3 | Current A-share universe has no legitimate single-stock option input. |
+| valuation peer-context superseded | 4 | Superseded by the active `L6.state.peer_compare` peer-context path. |
 
-The broader split fix plan remains in
+The broader historical split and queue records remain in
 [`docs/audit/a_share_gap_fill_plan.md`](docs/audit/a_share_gap_fill_plan.md);
-use the score-trace report for the current per-field priority order. The P1
-structured-source narrowing is recorded in
-[`docs/audit/a_share_p1_structured_gap_sources_2026-06-18.md`](docs/audit/a_share_p1_structured_gap_sources_2026-06-18.md).
+the active 2026-06-20 evidence is
+[`docs/audit/a_share_current_mvp_score_applicability_2026-06-20.json`](docs/audit/a_share_current_mvp_score_applicability_2026-06-20.json).
 
 Coverage audit baseline:
 
@@ -3876,8 +3799,10 @@ realtime/derived layer did not affect the score at all).
 - M4.7/financial-doc complete.
 - Contracts subtype changes.
 - New relation types.
-- A-share score completion complete.
-- Runtime score writes approved.
+- A-share score completion complete. Current-MVP denominator closure is complete;
+  raw 174-field closure remains 132 / 174.
+- Runtime score writes approved. The 2026-06-20 execution was a bounded runtime
+  data write with production score writes still disallowed.
 
 ## Local Checks
 
@@ -3885,10 +3810,9 @@ realtime/derived layer did not affect the score at all).
 python3 -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 
-# Install vendored upstream modules (no-deps to skip heavy transitive deps;
-# adapter routes return 503 only when the vendored package fails its
-# adapter import availability check — see Runtime services below.
-# Order matters: contracts first (others depend on it).
+# Optional: install vendored upstream modules for import-level debugging.
+# Adapter routes primarily serve local frontend-api artifacts; package imports
+# are fallback evidence, not the normal current-MVP route depth.
 for d in contracts audit-eval data-platform entity-registry graph-engine main-core reasoner-runtime; do
   .venv/bin/pip install -e "./upstream/$d" --no-deps --ignore-requires-python
 done
@@ -3902,7 +3826,8 @@ done
 .venv/bin/mvp20 validate-overlays
 .venv/bin/mvp20 compile-overlays --db runtime/hot.sqlite
 .venv/bin/mvp20 run-fixture-e2e
-.venv/bin/python -c "from mvp20.adapters import audit_eval, data_platform, entity_registry, graph_engine, main_core, reasoner_runtime; print('adapters OK')"
+.venv/bin/python scripts/audit_module_status.py --output-json docs/audit/module_status_2026-06-20.json
+.venv/bin/python scripts/audit_completion_deviation.py
 .venv/bin/python -m pytest
 .venv/bin/python -m pytest -q tests/test_field_governance.py tests/test_missing_balance.py tests/test_market_adapter.py tests/test_scoring.py
 git diff --check
@@ -4056,15 +3981,15 @@ Adapter-backed route families include
 
 Six upstream `project-ult-*` modules (graph-engine, audit-eval, main-core,
 data-platform, entity-registry, reasoner-runtime) plus `contracts` (their
-shared base) are now **vendored under `upstream/`** as plain source
-directories (their original `.git/` removed; mvp20 main git tracks the
-sources). Routes formerly returning 503 are now **skeleton-wired** via
-`mvp20/adapters/<module>.py` — handlers call the vendored package's
-`__version__` then return a 200 envelope with `fixture: true` and
-`wire_depth: skeleton`. If a vendor package fails to import at adapter
-load time (for example because a top-level Python package is missing), the adapter
-returns a 503 `UPSTREAM_UNAVAILABLE` envelope with the import error in
-`details.import_error` — UI still shows a clean banner, no crash.
+shared base) are vendored under `upstream/` as plain source directories. The
+current MVP does not treat those six modules as production-normal services.
+Instead, `mvp20/adapters/<module>.py` serves the bounded
+`upstream/*/artifacts/frontend-api/` payloads used by the local BFF contract.
+Successful adapter responses carry `fixture: true`, `wire_depth: artifact`,
+and an `artifact_path`. If an artifact is missing and the optional vendored
+package is also unavailable, the adapter returns a structured
+`503 UPSTREAM_UNAVAILABLE` envelope with the import error in
+`details.import_error`; UI callers still receive a clean envelope, not a crash.
 
 There are no deliberately 503-only placeholder routes in the normal mvp20
 surface anymore. Adapter routes can still return `503 UPSTREAM_UNAVAILABLE`
@@ -4075,7 +4000,7 @@ its BFF directly. Legacy `/api/admin/*` and `/api/alerts/*` paths are handled
 by mvp20 with empty stub envelopes (`module: mvp20-bff, fixture: true`) so the
 UI shows clean empty states instead of error banners.
 
-### Runtime services (optional, for deeper-than-skeleton wire)
+### Runtime services (optional, for deeper-than-artifact wire)
 
 The vendored packages have heavy runtime deps that are deliberately **not**
 installed by `pip install -e ".[dev]"`:
@@ -4086,14 +4011,14 @@ installed by `pip install -e ".[dev]"`:
 | `data-platform` | DuckDB / Iceberg catalog | `pip install duckdb dbt-duckdb pyarrow` |
 | `reasoner-runtime` | LLM API keys + `pip install litellm instructor` | env: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` |
 | `entity-registry` | (none — pure in-memory lib) | already wired |
-| `main-core` | (none for skeleton) | only needs pydantic, already installed |
+| `main-core` | (none for artifact adapter) | only needs pydantic, already installed |
 | `audit-eval` | DuckDB + evidently | `pip install duckdb evidently` |
 
-Without these backing services, skeleton adapters still return 200 fixture
-data as long as their vendored package imports. If a missing Python package
-prevents that top-level import, the adapter availability check returns
-`503 UPSTREAM_UNAVAILABLE`; unexpected handler exceptions are surfaced by the
-HTTP layer as `500 HANDLER_ERROR`.
+Without these backing services, artifact adapters still return 200 fixture
+data from `upstream/*/artifacts/frontend-api/` when the artifact is present.
+If both the artifact and optional vendor import path are unavailable, the
+adapter returns `503 UPSTREAM_UNAVAILABLE`; unexpected handler exceptions are
+surfaced by the HTTP layer as `500 HANDLER_ERROR`.
 
 ### Start the frontend
 

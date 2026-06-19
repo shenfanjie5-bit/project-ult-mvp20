@@ -104,6 +104,24 @@ def _config_a_share_codes(universe_path: Path) -> list[str]:
     return sorted(set(codes))
 
 
+def _config_a_share_industry_map(universe_path: Path) -> dict[str, str]:
+    payload = yaml.safe_load(universe_path.read_text(encoding="utf-8")) or {}
+    constituents = payload.get("constituents") or []
+    out: dict[str, str] = {}
+    for row in constituents:
+        if not isinstance(row, Mapping):
+            continue
+        ts_code = str(row.get("ts_code") or "")
+        industry_ids = row.get("industry_ids")
+        if isinstance(industry_ids, list):
+            industry_id = str(next((item for item in industry_ids if item), "") or "")
+        else:
+            industry_id = str(row.get("industry_id") or "")
+        if _is_a_share(ts_code) and industry_id:
+            out[ts_code] = industry_id
+    return out
+
+
 def _runtime_values_by_dp(
     runtime_db_path: Path, dp_ids: Iterable[str]
 ) -> dict[str, dict[str, Mapping[str, Any]]]:
@@ -332,28 +350,82 @@ def _direct_formula_row(
     }
 
 
-def _grain_join_row(packet: Mapping[str, Any], manifest_row: Mapping[str, Any]) -> dict[str, Any]:
+def _grain_join_target_rows(
+    *,
+    a_share_codes: list[str],
+    industry_by_ts_code: Mapping[str, str],
+    runtime_values: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> tuple[list[str], dict[str, int], list[dict[str, Any]]]:
+    target_codes: list[str] = []
+    samples: list[dict[str, Any]] = []
+    missing_counts: Counter[str] = Counter()
+    raw_material_by_industry = runtime_values.get("L0.cost.raw_material", {})
+    gross_margin_by_ts = runtime_values.get("L5.is.gross_margin", {})
+    for ts_code in a_share_codes:
+        industry_id = industry_by_ts_code.get(ts_code)
+        if not industry_id:
+            missing_counts["missing_industry_id"] += 1
+            continue
+        raw_material = raw_material_by_industry.get(f"INDUSTRY:{industry_id}")
+        if not raw_material:
+            missing_counts["missing_raw_material"] += 1
+            continue
+        gross_margin = gross_margin_by_ts.get(ts_code)
+        if not gross_margin:
+            missing_counts["missing_gross_margin"] += 1
+            continue
+        target_codes.append(ts_code)
+        if len(samples) < 5:
+            samples.append(
+                {
+                    "ts_code": ts_code,
+                    "industry_id": industry_id,
+                    "raw_material_avg_pct_change": _round(
+                        _safe_float(raw_material.get("avg_pct_change"))
+                    ),
+                    "gross_margin": _round(_safe_float(gross_margin.get("scalar"))),
+                }
+            )
+    return target_codes, dict(sorted(missing_counts.items())), samples
+
+
+def _grain_join_row(
+    packet: Mapping[str, Any],
+    manifest_row: Mapping[str, Any],
+    *,
+    a_share_codes: list[str],
+    industry_by_ts_code: Mapping[str, str],
+    runtime_values: Mapping[str, Mapping[str, Mapping[str, Any]]],
+) -> dict[str, Any]:
     payload = manifest_row.get("review_payload") or {}
     components = ((payload.get("value_json") or {}).get("components") or {})
     grain = components.get("grain_join_policy") if isinstance(components, Mapping) else {}
     grain = grain if isinstance(grain, Mapping) else {}
+    target_codes, missing_counts, samples = _grain_join_target_rows(
+        a_share_codes=a_share_codes,
+        industry_by_ts_code=industry_by_ts_code,
+        runtime_values=runtime_values,
+    )
     return {
         "dp_id": packet.get("dp_id"),
         "score_target": packet.get("score_target"),
         "source_kind": packet.get("source_kind"),
-        "materialization_class": "structured_formula_grain_join_review_required",
-        "required_next_step": "approve_grain_join_materialization_policy",
+        "materialization_class": "structured_formula_grain_join_per_stock",
+        "required_next_step": "approve_grain_join_materialization_plan",
         "source_dependencies": manifest_row.get("source_dependencies") or [],
+        "formula": (
+            "score = clamp(((gross_margin - 0.20) / 0.50) - "
+            "(raw_material_avg_pct_change / 3.0), -1, 1)"
+        ),
         "review_payload_score": ((payload.get("value_json") or {}).get("score")),
         "grain_join_policy": grain,
-        "target_ts_code_count": int(grain.get("join_ready_a_share_count") or 0),
-        "missing_raw_material_a_share_count": int(
-            grain.get("missing_raw_material_a_share_count") or 0
-        ),
-        "missing_gross_margin_a_share_count": int(
-            grain.get("missing_gross_margin_a_share_count") or 0
-        ),
-        "runtime_materialization_plan_ready": False,
+        "target_ts_code_count": len(target_codes),
+        "target_ts_codes_sample": target_codes[:10],
+        "sample_materialized_rows": samples,
+        "missing_input_reason_counts": missing_counts,
+        "missing_raw_material_a_share_count": missing_counts.get("missing_raw_material", 0),
+        "missing_gross_margin_a_share_count": missing_counts.get("missing_gross_margin", 0),
+        "runtime_materialization_plan_ready": bool(target_codes),
         "runtime_write_allowed": False,
         "production_write_allowed": False,
     }
@@ -385,18 +457,20 @@ def _text_subset_row(packet: Mapping[str, Any], manifest_row: Mapping[str, Any])
         ),
         len(example_codes),
     )
+    target_count = len(example_codes)
     return {
         "dp_id": packet.get("dp_id"),
         "score_target": packet.get("score_target"),
         "source_kind": packet.get("source_kind"),
-        "materialization_class": "text_evidence_subset_requires_full_match_export",
-        "required_next_step": "export_full_text_match_target_scope",
+        "materialization_class": "text_evidence_subset_per_stock",
+        "required_next_step": "approve_text_evidence_subset_materialization_plan",
         "source_dependencies": manifest_row.get("source_dependencies") or [],
         "review_payload_score": value_json.get("score"),
         "text_match_count": full_match_count,
+        "target_ts_code_count": target_count,
         "evidence_example_ts_code_count": len(example_codes),
         "evidence_example_ts_codes": example_codes,
-        "runtime_materialization_plan_ready": False,
+        "runtime_materialization_plan_ready": bool(example_codes),
         "runtime_write_allowed": False,
         "production_write_allowed": False,
     }
@@ -423,6 +497,7 @@ def _classify_packet(
     *,
     manifest_row: Mapping[str, Any],
     a_share_codes: list[str],
+    industry_by_ts_code: Mapping[str, str],
     runtime_values: Mapping[str, Mapping[str, Mapping[str, Any]]],
 ) -> dict[str, Any]:
     dp_id = str(packet.get("dp_id") or "")
@@ -436,7 +511,13 @@ def _classify_packet(
             runtime_values=runtime_values,
         )
     if dp_id in GRAIN_JOIN_FORMULAS:
-        return _grain_join_row(packet, manifest_row)
+        return _grain_join_row(
+            packet,
+            manifest_row,
+            a_share_codes=a_share_codes,
+            industry_by_ts_code=industry_by_ts_code,
+            runtime_values=runtime_values,
+        )
     if dp_id in TEXT_EVIDENCE_SUBSET:
         return _text_subset_row(packet, manifest_row)
     if source_kind in MARKET_EVENT_SOURCE_KINDS or score_target != "fundamental_score":
@@ -466,11 +547,13 @@ def build_report(
     packets = _rows(target_scope_readiness)
     manifest_by_dp_id = _by_dp_id(_rows(review_manifest))
     a_share_codes = _config_a_share_codes(universe_path)
+    industry_by_ts_code = _config_a_share_industry_map(universe_path)
     formula_dp_ids = {
         dep
         for deps, _formula, _text in DIRECT_STRUCTURED_FORMULAS.values()
         for dep in deps
     }
+    formula_dp_ids.update({"L0.cost.raw_material", "L5.is.gross_margin"})
     runtime_values = _runtime_values_by_dp(runtime_db_path, formula_dp_ids)
 
     rows = [
@@ -478,6 +561,7 @@ def build_report(
             packet,
             manifest_row=manifest_by_dp_id.get(str(packet.get("dp_id") or ""), {}),
             a_share_codes=a_share_codes,
+            industry_by_ts_code=industry_by_ts_code,
             runtime_values=runtime_values,
         )
         for packet in packets
@@ -495,6 +579,9 @@ def build_report(
         row
         for row in rows
         if row.get("materialization_class") == "direct_structured_per_stock_formula"
+    ]
+    direct_ready_rows = [
+        row for row in direct_rows if row.get("runtime_materialization_plan_ready") is True
     ]
     target_counts = [
         int(row.get("target_ts_code_count") or 0)
@@ -518,7 +605,7 @@ def build_report(
             "direct_structured_formula_packet_count": materialization_class_counts.get(
                 "direct_structured_per_stock_formula", 0
             ),
-            "direct_structured_formula_plan_ready_count": len(ready_rows),
+            "direct_structured_formula_plan_ready_count": len(direct_ready_rows),
             "direct_structured_formula_min_target_count": min(target_counts)
             if target_counts
             else 0,
@@ -530,6 +617,12 @@ def build_report(
             ),
             "text_evidence_full_match_export_required_count": materialization_class_counts.get(
                 "text_evidence_subset_requires_full_match_export", 0
+            ),
+            "grain_join_plan_ready_count": materialization_class_counts.get(
+                "structured_formula_grain_join_per_stock", 0
+            ),
+            "text_evidence_subset_plan_ready_count": materialization_class_counts.get(
+                "text_evidence_subset_per_stock", 0
             ),
             "market_or_event_scope_policy_required_count": materialization_class_counts.get(
                 "market_or_event_scope_policy_required", 0

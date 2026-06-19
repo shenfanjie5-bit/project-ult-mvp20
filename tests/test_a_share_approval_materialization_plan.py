@@ -131,7 +131,9 @@ def test_materialization_plan_splits_formula_text_and_event_scope(
     assert summary["fundamental_packet_count"] == 3
     assert summary["direct_structured_formula_packet_count"] == 1
     assert summary["direct_structured_formula_plan_ready_count"] == 1
-    assert summary["text_evidence_full_match_export_required_count"] == 1
+    assert summary["text_evidence_full_match_export_required_count"] == 0
+    assert summary["text_evidence_subset_plan_ready_count"] == 1
+    assert summary["runtime_materialization_plan_ready_count"] == 2
     assert summary["market_or_event_scope_policy_required_count"] == 2
     assert summary["runtime_write_allowed_count"] == 0
     assert summary["production_write_allowed_count"] == 0
@@ -145,7 +147,11 @@ def test_materialization_plan_splits_formula_text_and_event_scope(
     assert by_dp_id["L0.cost.cac"]["bridge_ready_count"] == 2
     assert (
         by_dp_id["L0.demand.user_count"]["required_next_step"]
-        == "export_full_text_match_target_scope"
+        == "approve_text_evidence_subset_materialization_plan"
+    )
+    assert (
+        by_dp_id["L0.demand.user_count"]["materialization_class"]
+        == "text_evidence_subset_per_stock"
     )
     assert by_dp_id["L0.demand.user_count"]["evidence_example_ts_code_count"] == 2
     assert (
@@ -156,3 +162,85 @@ def test_materialization_plan_splits_formula_text_and_event_scope(
         by_dp_id["L6.mult.dcf"]["materialization_class"]
         == "market_or_event_scope_policy_required"
     )
+
+
+def test_grain_join_plan_uses_universe_industry_ids(tmp_path: Path) -> None:
+    target_scope_path = tmp_path / "target_scope.json"
+    manifest_path = tmp_path / "manifest.json"
+    runtime_db_path = tmp_path / "hot.sqlite"
+    universe_path = tmp_path / "universe.yaml"
+
+    _write_json(
+        target_scope_path,
+        {
+            "rows": [
+                {
+                    "dp_id": "L0.price.contract_spot",
+                    "score_target": "fundamental_score",
+                    "source_kind": "local_structured_policy_pilot",
+                }
+            ]
+        },
+    )
+    _write_json(
+        manifest_path,
+        {
+            "rows": [
+                {
+                    "dp_id": "L0.price.contract_spot",
+                    "source_dependencies": [
+                        "L0.cost.raw_material",
+                        "L5.is.gross_margin",
+                    ],
+                    "review_payload": {
+                        "value_json": {
+                            "score": 0.1,
+                            "components": {
+                                "grain_join_policy": {
+                                    "join_ready_a_share_count": 1,
+                                }
+                            },
+                        }
+                    },
+                }
+            ]
+        },
+    )
+    universe_path.write_text(
+        "constituents:\n"
+        "  - ts_code: 000001.SZ\n"
+        "    industry_ids: [AI_COMPUTE]\n"
+        "  - ts_code: 000002.SZ\n"
+        "    industry_ids: [CONSUMER_ELECTRONICS]\n",
+        encoding="utf-8",
+    )
+    conn = sqlite3.connect(runtime_db_path)
+    conn.execute(
+        "create table realtime_current(ts_code text, dp_id text, value_json text)"
+    )
+    _insert(
+        conn,
+        "INDUSTRY:AI_COMPUTE",
+        "L0.cost.raw_material",
+        {"avg_pct_change": 0.3},
+    )
+    _insert(conn, "000001.SZ", "L5.is.gross_margin", {"scalar": 0.35})
+    _insert(conn, "000002.SZ", "L5.is.gross_margin", {"scalar": 0.35})
+    conn.commit()
+    conn.close()
+
+    report = audit.build_report(
+        target_scope_readiness_path=target_scope_path,
+        review_manifest_path=manifest_path,
+        runtime_db_path=runtime_db_path,
+        universe_path=universe_path,
+    )
+
+    summary = report["summary"]
+    row = report["rows"][0]
+    assert summary["grain_join_plan_ready_count"] == 1
+    assert summary["runtime_materialization_plan_ready_count"] == 1
+    assert row["materialization_class"] == "structured_formula_grain_join_per_stock"
+    assert row["target_ts_code_count"] == 1
+    assert row["target_ts_codes_sample"] == ["000001.SZ"]
+    assert row["missing_input_reason_counts"] == {"missing_raw_material": 1}

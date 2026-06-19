@@ -9,6 +9,7 @@ records are created and no ``realtime_current`` rows are written.
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as dt
 import json
 import sqlite3
@@ -30,8 +31,10 @@ from scripts.audit_a_share_approval_materialization_plan import (  # noqa: E402
     DEFAULT_RUNTIME_DB_PATH,
     DEFAULT_UNIVERSE_PATH,
     _config_a_share_codes,
+    _config_a_share_industry_map,
     _runtime_values_by_dp,
     _round,
+    _safe_float,
 )
 from scripts.audit_a_share_runtime_write_batch_plan import (  # noqa: E402
     REALTIME_PRIMARY_KEY,
@@ -53,6 +56,11 @@ DEFAULT_JSON_OUTPUT = (
 DEFAULT_MD_OUTPUT = (
     AUDIT_DIR / "a_share_approval_materialization_batch_plan_2026-06-20.md"
 )
+PLAN_READY_CLASSES = {
+    "direct_structured_per_stock_formula",
+    "structured_formula_grain_join_per_stock",
+    "text_evidence_subset_per_stock",
+}
 
 
 def _rows(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -121,13 +129,126 @@ def _planned_rows_for_dp(
     *,
     manifest_row: Mapping[str, Any],
     a_share_codes: list[str],
+    industry_by_ts_code: Mapping[str, str],
     runtime_values: Mapping[str, Mapping[str, Mapping[str, Any]]],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     dp_id = str(materialization_row.get("dp_id") or "")
-    deps, formula, formula_text = DIRECT_STRUCTURED_FORMULAS[dp_id]
+    materialization_class = str(materialization_row.get("materialization_class") or "")
     confidence = _manifest_confidence(manifest_row)
     planned_rows: list[dict[str, Any]] = []
     errors: list[str] = []
+    if materialization_class == "text_evidence_subset_per_stock":
+        payload = manifest_row.get("review_payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        base_value_json = payload.get("value_json")
+        base_value_json = dict(base_value_json) if isinstance(base_value_json, Mapping) else {}
+        components = base_value_json.get("components")
+        components = dict(components) if isinstance(components, Mapping) else {}
+        examples = [
+            example
+            for example in components.get("evidence_examples") or []
+            if isinstance(example, Mapping)
+        ]
+        examples_by_ts: dict[str, list[Mapping[str, Any]]] = {}
+        for example in examples:
+            ts_code = str(example.get("ts_code") or "")
+            if ts_code:
+                examples_by_ts.setdefault(ts_code, []).append(example)
+        for ts_code in sorted(examples_by_ts):
+            value_json = copy.deepcopy(base_value_json)
+            value_json["materialization_class"] = materialization_class
+            value_json["materialization_formula"] = (
+                "reviewed company QA text evidence; materialize only retained "
+                "evidence_example ts_codes"
+            )
+            value_components = dict(value_json.get("components") or {})
+            value_components["evidence_examples"] = [
+                dict(example) for example in examples_by_ts[ts_code]
+            ]
+            value_json["components"] = value_components
+            bridge_signal = _realtime_signal(
+                dp_id,
+                value_json,
+                str(materialization_row.get("score_target") or "fundamental_score"),
+                ts_code=ts_code,
+            )
+            if bridge_signal is None:
+                errors.append(f"{ts_code}:bridge_signal_missing")
+                continue
+            planned_rows.append(
+                {
+                    "ts_code": ts_code,
+                    "dp_id": dp_id,
+                    "score_target": materialization_row.get("score_target"),
+                    "value_json": value_json,
+                    "data_status": "Known",
+                    "confidence": confidence,
+                    "source": _runtime_source(dp_id),
+                    "updated_at": "execution_time_epoch_seconds",
+                    "bridge_signal": _round(bridge_signal),
+                }
+            )
+        return planned_rows, errors
+
+    if materialization_class == "structured_formula_grain_join_per_stock":
+        deps = ["L0.cost.raw_material", "L5.is.gross_margin"]
+        formula_text = str(materialization_row.get("formula") or "")
+        for ts_code in a_share_codes:
+            industry_id = industry_by_ts_code.get(ts_code)
+            raw_material = (
+                runtime_values.get("L0.cost.raw_material", {}).get(f"INDUSTRY:{industry_id}")
+                if industry_id
+                else None
+            )
+            gross_margin = runtime_values.get("L5.is.gross_margin", {}).get(ts_code)
+            raw_pct = _safe_float((raw_material or {}).get("avg_pct_change"))
+            gross_margin_value = _safe_float((gross_margin or {}).get("scalar"))
+            if raw_pct is None or gross_margin_value is None:
+                continue
+            raw_material_relief_component = -(raw_pct / 3.0)
+            gross_margin_buffer_component = (gross_margin_value - 0.20) / 0.50
+            score = max(
+                -1.0,
+                min(1.0, raw_material_relief_component + gross_margin_buffer_component),
+            )
+            value_json = {
+                "score": _round(score),
+                "drivers": deps,
+                "components": {
+                    "industry_id": industry_id,
+                    "raw_material_avg_pct_change": _round(raw_pct),
+                    "gross_margin": _round(gross_margin_value),
+                    "raw_material_relief_component": _round(raw_material_relief_component),
+                    "gross_margin_buffer_component": _round(gross_margin_buffer_component),
+                },
+                "materialization_formula": formula_text,
+                "materialization_class": materialization_class,
+            }
+            bridge_signal = _realtime_signal(
+                dp_id,
+                value_json,
+                str(materialization_row.get("score_target") or "fundamental_score"),
+                ts_code=ts_code,
+            )
+            if bridge_signal is None:
+                errors.append(f"{ts_code}:bridge_signal_missing")
+                continue
+            planned_rows.append(
+                {
+                    "ts_code": ts_code,
+                    "dp_id": dp_id,
+                    "score_target": materialization_row.get("score_target"),
+                    "value_json": value_json,
+                    "data_status": "Known",
+                    "confidence": confidence,
+                    "source": _runtime_source(dp_id),
+                    "updated_at": "execution_time_epoch_seconds",
+                    "bridge_signal": _round(bridge_signal),
+                }
+            )
+        return planned_rows, errors
+
+    deps, formula, formula_text = DIRECT_STRUCTURED_FORMULAS[dp_id]
     for ts_code in a_share_codes:
         values = {dep: runtime_values.get(dep, {}).get(ts_code, {}) for dep in deps}
         score, components = formula(values)
@@ -221,8 +342,8 @@ def _plan_contract_errors(
     errors: list[str] = []
     if materialization_row.get("runtime_materialization_plan_ready") is not True:
         errors.append("runtime_materialization_plan_must_be_ready")
-    if materialization_row.get("materialization_class") != "direct_structured_per_stock_formula":
-        errors.append("materialization_class_must_be_direct_structured_formula")
+    if materialization_row.get("materialization_class") not in PLAN_READY_CLASSES:
+        errors.append("materialization_class_must_be_plan_ready")
     if not planned_rows:
         errors.append("planned_rows_must_be_non_empty")
     if bridge_errors:
@@ -237,6 +358,7 @@ def _batch_plan_for_row(
     *,
     manifest_row: Mapping[str, Any],
     a_share_codes: list[str],
+    industry_by_ts_code: Mapping[str, str],
     runtime_values: Mapping[str, Mapping[str, Mapping[str, Any]]],
     conn: sqlite3.Connection,
     schema: Mapping[str, Any],
@@ -246,6 +368,7 @@ def _batch_plan_for_row(
         materialization_row,
         manifest_row=manifest_row,
         a_share_codes=a_share_codes,
+        industry_by_ts_code=industry_by_ts_code,
         runtime_values=runtime_values,
     )
     target_ts_codes = [str(row["ts_code"]) for row in planned_rows]
@@ -370,15 +493,17 @@ def build_report(
     plan_rows = [
         row
         for row in _rows(materialization_plan)
-        if row.get("materialization_class") == "direct_structured_per_stock_formula"
+        if row.get("materialization_class") in PLAN_READY_CLASSES
         and row.get("runtime_materialization_plan_ready") is True
     ]
     a_share_codes = _config_a_share_codes(universe_path)
+    industry_by_ts_code = _config_a_share_industry_map(universe_path)
     formula_deps = {
         dep
         for deps, _formula, _text in DIRECT_STRUCTURED_FORMULAS.values()
         for dep in deps
     }
+    formula_deps.update({"L0.cost.raw_material", "L5.is.gross_margin"})
     runtime_values = _runtime_values_by_dp(runtime_db_path, formula_deps)
     conn = sqlite3.connect(f"file:{runtime_db_path}?mode=ro", uri=True)
     try:
@@ -388,6 +513,7 @@ def build_report(
                 row,
                 manifest_row=manifest_by_dp.get(str(row.get("dp_id") or ""), {}),
                 a_share_codes=a_share_codes,
+                industry_by_ts_code=industry_by_ts_code,
                 runtime_values=runtime_values,
                 conn=conn,
                 schema=schema,

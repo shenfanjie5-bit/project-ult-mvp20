@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from mvp20.adapters._artifacts import artifact_envelope, load_frontend_artifact
+
 try:
     import graph_engine as _vendor  # noqa: F401
     _AVAILABLE = True
@@ -25,6 +27,20 @@ def _fixture(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_graph_query(cfg, query: dict) -> tuple[int, dict]:
+    payload, artifact_path = load_frontend_artifact(
+        "graph-engine", query.get("artifact", ["subgraph.json"])[0]
+    )
+    if payload is not None and artifact_path is not None:
+        from mvp20.server import _ok_envelope
+        return 200, _ok_envelope(
+            artifact_envelope(
+                module="graph-engine",
+                version=_VERSION,
+                artifact_path=artifact_path,
+                payload=payload,
+                import_error=_IMPORT_ERR,
+            )
+        )
     if not _AVAILABLE:
         from mvp20.server import _error_envelope
         return 503, _error_envelope(

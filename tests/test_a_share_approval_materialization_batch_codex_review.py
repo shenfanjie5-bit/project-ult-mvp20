@@ -122,6 +122,43 @@ def test_codex_review_emits_gate_accepted_approval(tmp_path: Path) -> None:
     assert gate_report["summary"]["approved_planned_upsert_row_count"] == 1
 
 
+def test_codex_review_accepts_backup_for_noop_existing_rows(tmp_path: Path) -> None:
+    batch_plan = _valid_batch_plan()
+    row = batch_plan["rows"][0]
+    row["rows_to_insert_count"] = 0
+    row["noop_existing_rows_count"] = 1
+    row["existing_rows_to_backup_count"] = 1
+    batch_plan_path = tmp_path / "batch_plan.json"
+    _write_json(batch_plan_path, batch_plan)
+
+    report = audit.build_report(batch_plan_path=batch_plan_path)
+
+    assert report["summary"]["codex_review_approved_count"] == 1
+    assert report["rows"][0]["validation_errors"] == []
+
+
+def test_codex_review_accepts_plan_ready_non_direct_class(tmp_path: Path) -> None:
+    batch_plan = _valid_batch_plan()
+    batch_plan["rows"][0]["materialization_class"] = "text_evidence_subset_per_stock"
+    batch_plan["planned_rows"][0]["value_json"]["materialization_class"] = (
+        "text_evidence_subset_per_stock"
+    )
+    planned_row_set_sha256 = audit._row_set_hash(batch_plan["planned_rows"])
+    batch_plan["rows"][0]["planned_row_set_sha256"] = planned_row_set_sha256
+    payload = batch_plan["rows"][0]["batch_plan_payload"]
+    payload["planned_row_set_sha256"] = planned_row_set_sha256
+    batch_plan_sha256 = audit._canonical_hash(payload)
+    batch_plan["rows"][0]["batch_plan_sha256"] = batch_plan_sha256
+    batch_plan["batch_plan_set"]["batch_plan_hashes"] = [batch_plan_sha256]
+    batch_plan_path = tmp_path / "batch_plan.json"
+    _write_json(batch_plan_path, batch_plan)
+
+    report = audit.build_report(batch_plan_path=batch_plan_path)
+
+    assert report["summary"]["codex_review_approved_count"] == 1
+    assert report["rows"][0]["validation_errors"] == []
+
+
 def test_codex_review_rejects_invalid_score(tmp_path: Path) -> None:
     batch_plan = _valid_batch_plan()
     batch_plan["planned_rows"][0]["value_json"]["score"] = 2.0

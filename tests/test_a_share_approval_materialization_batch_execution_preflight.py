@@ -155,6 +155,61 @@ def test_formula_batch_execution_preflight_ready_without_mutation(tmp_path: Path
     assert "dry_run_ready" in audit.render_markdown(report)
 
 
+def test_formula_batch_execution_execute_backs_up_and_upserts(tmp_path: Path) -> None:
+    batch_plan_path = tmp_path / "batch_plan.json"
+    gate_path = tmp_path / "gate.json"
+    runtime_db_path = tmp_path / "hot.sqlite"
+    backup_dir = tmp_path / "backups"
+    batch_plan, approval_gate = _batch_and_gate()
+    _write_json(batch_plan_path, batch_plan)
+    _write_json(gate_path, approval_gate)
+    _write_runtime_db(runtime_db_path)
+
+    report = audit.build_report(
+        batch_plan_path=batch_plan_path,
+        approval_gate_path=gate_path,
+        runtime_db_path=runtime_db_path,
+        backup_dir=backup_dir,
+        execute=True,
+    )
+
+    summary = report["summary"]
+    assert summary["execution_status"] == "executed"
+    assert summary["runtime_backup_created_count"] == 1
+    assert summary["runtime_write_attempted_count"] == 1
+    assert summary["runtime_write_completed_count"] == 1
+    assert summary["runtime_rows_written_count"] == 1
+    assert summary["post_write_verified_count"] == 1
+    assert summary["post_write_verified_row_count"] == 1
+    assert summary["post_write_verification_error_count"] == 0
+
+    backup_path = Path(report["backup"]["backup_path"])
+    assert backup_path.exists()
+    with sqlite3.connect(backup_path) as conn:
+        assert conn.execute("select count(*) from realtime_current").fetchone()[0] == 0
+    with sqlite3.connect(runtime_db_path) as conn:
+        row = conn.execute(
+            """
+            select value_json, data_status, confidence, source
+            from realtime_current
+            where ts_code = '000001.SZ' and dp_id = 'L0.demand.terminal'
+            """
+        ).fetchone()
+    assert json.loads(row[0]) == {
+        "components": {"revenue_yoy_pct": 9.0},
+        "drivers": ["L5.is.revenue_yoy"],
+        "materialization_class": "direct_structured_per_stock_formula",
+        "materialization_formula": "score = clamp(tanh(revenue_yoy_pct / 35), -1, 1)",
+        "score": 0.25,
+    }
+    assert row[1:] == (
+        "Known",
+        0.36,
+        "a_share_approval_materialization_batch_plan:L0.demand.terminal",
+    )
+    assert "executed" in audit.render_markdown(report)
+
+
 def test_formula_batch_execution_preflight_blocks_on_current_db_mismatch(
     tmp_path: Path,
 ) -> None:

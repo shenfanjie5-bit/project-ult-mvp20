@@ -1,4 +1,4 @@
-"""Stdlib HTTP BFF exposing mvp20 data and skeleton adapter routes.
+"""Stdlib HTTP BFF exposing mvp20 data and upstream adapter routes.
 
 Stdlib-only (no new deps). The server is read-only: every handler is GET,
 while POST/PUT/DELETE return 405.
@@ -11,11 +11,12 @@ data-platform canonical/raw data, entity-registry, reasoner-runtime,
 main-core cycles/stocks/pool/world-state, and audit/backtest surfaces.
 Legacy frontend-api admin/alerts paths are local BFF stubs.
 
-Adapter routes normally return 200 fixture envelopes when the vendored
-package imports. If a vendor package fails at adapter import time, they
-return a structured 503 UPSTREAM_UNAVAILABLE envelope so the frontend can
-surface the missing module/dependency rather than crashing. Unmatched
-``/api/*`` paths return a 404 envelope.
+Adapter routes normally return 200 artifact-backed envelopes from
+``upstream/*/artifacts/frontend-api``. Vendor imports add version metadata when
+available; if neither artifact nor vendor package is available, routes return a
+structured 503 UPSTREAM_UNAVAILABLE envelope so the frontend can surface the
+missing module/dependency rather than crashing. Unmatched ``/api/*`` paths
+return a 404 envelope.
 """
 
 from __future__ import annotations

@@ -1,0 +1,154 @@
+{
+  "generated_at": "2026-06-20T02:31:29+08:00",
+  "inputs": {
+    "full_scan_progress_path": "docs/audit/dockcase_csv_full_scan_progress_2026-06-19.json",
+    "file_evidence_path": "docs/audit/dockcase_csv_file_evidence_2026-06-19.json"
+  },
+  "summary": {
+    "total_business_csv_files": 160596,
+    "csv_files_scanned": 160596,
+    "coverage_ratio_of_business_csv_files": 1.0,
+    "rows_scanned": 212621857,
+    "file_evidence_count": 160596,
+    "read_or_shape_error_count": 0,
+    "blocking_issue_type_count": 0,
+    "blocking_issue_total_count": 0,
+    "watchlist_issue_type_count": 6,
+    "watchlist_issue_total_count": 117324,
+    "current_mvp_non_blocking_issue_type_count": 6,
+    "current_mvp_non_blocking_issue_total_count": 38384805,
+    "current_mvp_data_quality_actionable_gap_count": 0,
+    "score_mutation": "none; this audit classifies existing full-scan evidence only"
+  },
+  "blocking_rows": [],
+  "watchlist_rows": [
+    {
+      "issue": "future_primary_date_gt_7d",
+      "count": 8,
+      "impact": "watchlist",
+      "scope": "raw_date_cells",
+      "rationale": "Future dates remain review items, but the current MVP does not ingest raw CSV rows directly into score without collector/source validation."
+    },
+    {
+      "issue": "invalid_date",
+      "count": 3990,
+      "impact": "watchlist",
+      "scope": "raw_date_cells",
+      "rationale": "Date parse issues are rare versus scanned rows; current hot-store freshness uses collector timestamps and audited source rows."
+    },
+    {
+      "issue": "invalid_numeric",
+      "count": 118,
+      "impact": "watchlist",
+      "scope": "raw_numeric_cells",
+      "rationale": "Numeric parse issues are rare versus total cells and require per-source review before any direct CSV-backed promotion."
+    },
+    {
+      "issue": "ohlc_invariant_violation",
+      "count": 32038,
+      "impact": "watchlist",
+      "scope": "historical_market_bars",
+      "rationale": "OHLC invariant violations matter for offline bar repair, but current score and BFF are served from hot.sqlite/derived artifacts."
+    },
+    {
+      "issue": "stale_primary_market_date_gt_45d",
+      "count": 76722,
+      "impact": "watchlist",
+      "scope": "inactive_or_legacy_files",
+      "rationale": "Stale raw files are expected for inactive/legacy symbols; current runtime freshness is audited separately in BFF/score paths."
+    },
+    {
+      "issue": "zero_ohlc_no_trade_carry_forward",
+      "count": 4448,
+      "impact": "watchlist",
+      "scope": "historical_market_bars",
+      "rationale": "Zero-traffic carry-forward rows are legitimate no-trade cases for some securities and must be handled by bar-specific loaders."
+    }
+  ],
+  "rows": [
+    {
+      "issue": "duplicate_grain_key_sample",
+      "count": 2491811,
+      "impact": "current_mvp_non_blocking",
+      "scope": "raw_csv_history",
+      "rationale": "Current runtime hot store uses primary-key upserts and audited materialization hashes; raw CSV duplicate samples are retained for offline dedup review."
+    },
+    {
+      "issue": "future_primary_date_gt_7d",
+      "count": 8,
+      "impact": "watchlist",
+      "scope": "raw_date_cells",
+      "rationale": "Future dates remain review items, but the current MVP does not ingest raw CSV rows directly into score without collector/source validation."
+    },
+    {
+      "issue": "high_empty_cell_ratio_signature",
+      "count": 15188,
+      "impact": "current_mvp_non_blocking",
+      "scope": "wide_optional_tables",
+      "rationale": "High-empty signatures are wide optional tables; field-level collectors and bridge audits decide score eligibility."
+    },
+    {
+      "issue": "index_by_symbol_bundle_mismatch",
+      "count": 34631768,
+      "impact": "current_mvp_non_blocking",
+      "scope": "index_bundle_metadata",
+      "rationale": "Index-by-symbol bundle naming mismatch does not feed current A-share score, BFF, graph, or PIT scoring inputs."
+    },
+    {
+      "issue": "invalid_date",
+      "count": 3990,
+      "impact": "watchlist",
+      "scope": "raw_date_cells",
+      "rationale": "Date parse issues are rare versus scanned rows; current hot-store freshness uses collector timestamps and audited source rows."
+    },
+    {
+      "issue": "invalid_numeric",
+      "count": 118,
+      "impact": "watchlist",
+      "scope": "raw_numeric_cells",
+      "rationale": "Numeric parse issues are rare versus total cells and require per-source review before any direct CSV-backed promotion."
+    },
+    {
+      "issue": "invalid_ts_code",
+      "count": 233330,
+      "impact": "current_mvp_non_blocking",
+      "scope": "non_equity_or_legacy_symbols",
+      "rationale": "Invalid raw-code samples are dominated by fund/index/legacy symbols and are filtered before A-share target scoring."
+    },
+    {
+      "issue": "no_sampled_rows",
+      "count": 4,
+      "impact": "current_mvp_non_blocking",
+      "scope": "header_only_files",
+      "rationale": "Full file evidence identifies four header-only/tail-empty files; they are not current score/backtest inputs."
+    },
+    {
+      "issue": "ohlc_invariant_violation",
+      "count": 32038,
+      "impact": "watchlist",
+      "scope": "historical_market_bars",
+      "rationale": "OHLC invariant violations matter for offline bar repair, but current score and BFF are served from hot.sqlite/derived artifacts."
+    },
+    {
+      "issue": "sparse_columns_lt_5pct_non_empty",
+      "count": 1012704,
+      "impact": "current_mvp_non_blocking",
+      "scope": "optional_statement_columns",
+      "rationale": "Sparse optional financial columns are not promoted to Known score inputs without field-level validity audits."
+    },
+    {
+      "issue": "stale_primary_market_date_gt_45d",
+      "count": 76722,
+      "impact": "watchlist",
+      "scope": "inactive_or_legacy_files",
+      "rationale": "Stale raw files are expected for inactive/legacy symbols; current runtime freshness is audited separately in BFF/score paths."
+    },
+    {
+      "issue": "zero_ohlc_no_trade_carry_forward",
+      "count": 4448,
+      "impact": "watchlist",
+      "scope": "historical_market_bars",
+      "rationale": "Zero-traffic carry-forward rows are legitimate no-trade cases for some securities and must be handled by bar-specific loaders."
+    }
+  ]
+}

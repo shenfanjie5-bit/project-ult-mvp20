@@ -25,6 +25,7 @@ if str(_BOOTSTRAP_ROOT) not in sys.path:
 from mvp20.aggregator import _realtime_signal  # noqa: E402
 from scripts.audit_a_share_approval_materialization_batch_plan import (  # noqa: E402
     DEFAULT_JSON_OUTPUT as DEFAULT_BATCH_PLAN_PATH,
+    PLAN_READY_CLASSES,
 )
 from scripts.audit_a_share_approval_materialization_batch_approval_gate import (  # noqa: E402
     APPROVAL_SCOPE,
@@ -146,8 +147,9 @@ def _review_errors(
         errors.append("batch_plan_contract_must_be_valid")
     if row.get("batch_plan_status") != "review_required":
         errors.append("batch_plan_status_must_be_review_required")
-    if row.get("materialization_class") != "direct_structured_per_stock_formula":
-        errors.append("materialization_class_must_be_direct_structured_formula")
+    materialization_class = str(row.get("materialization_class") or "")
+    if materialization_class not in PLAN_READY_CLASSES:
+        errors.append("materialization_class_must_be_plan_ready_class")
     if row.get("score_target") != "fundamental_score":
         errors.append("score_target_must_be_fundamental_score")
     if row.get("backup_required") is not True:
@@ -217,8 +219,8 @@ def _review_errors(
         errors.append("planned_rows_must_have_unique_target_keys")
     if rows_to_insert + rows_to_update + noop_rows != planned_count:
         errors.append("insert_update_noop_counts_must_equal_planned_count")
-    if backup_rows != rows_to_update:
-        errors.append("backup_rows_must_match_update_rows")
+    if backup_rows != rows_to_update + noop_rows:
+        errors.append("backup_rows_must_match_existing_planned_rows")
     if conflict_rows != rows_to_update:
         errors.append("conflict_rows_must_match_update_rows")
     if _row_set_hash(planned_rows) != row.get("planned_row_set_sha256"):
@@ -252,7 +254,7 @@ def _review_errors(
             continue
         if not -1 <= float(score) <= 1:
             errors.append(f"{ts_code}:score_must_be_in_unit_interval")
-        if value_json.get("materialization_class") != "direct_structured_per_stock_formula":
+        if value_json.get("materialization_class") != materialization_class:
             errors.append(f"{ts_code}:value_materialization_class_must_match")
         if not isinstance(value_json.get("drivers"), list) or not value_json.get(
             "drivers"
@@ -299,7 +301,7 @@ def _approval_record(
         "backup_required": True,
         "risk_acknowledged": True,
         "review_basis": (
-            "Codex verified batch-plan hash, formula row-set hash, per-row score "
+            "Codex verified batch-plan hash, materialized row-set hash, per-row score "
             "range, bridge-signal conversion, insert/update/backup counts, and "
             "rollback policy; approval is runtime-only and keeps production writes disabled."
         ),

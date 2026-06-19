@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-20T00:26:54+08:00",
+  "generated_at": "2026-06-20T02:15:08+08:00",
   "inputs": {
     "target_scope_readiness_path": "docs/audit/a_share_approval_target_scope_readiness_2026-06-20.json",
     "review_manifest_path": "docs/audit/a_share_review_staging_manifest_2026-06-19.json",
@@ -14,24 +14,26 @@
     "direct_structured_formula_plan_ready_count": 7,
     "direct_structured_formula_min_target_count": 868,
     "direct_structured_formula_max_target_count": 1639,
-    "grain_join_policy_required_count": 1,
-    "text_evidence_full_match_export_required_count": 3,
+    "grain_join_policy_required_count": 0,
+    "text_evidence_full_match_export_required_count": 0,
+    "grain_join_plan_ready_count": 1,
+    "text_evidence_subset_plan_ready_count": 3,
     "market_or_event_scope_policy_required_count": 14,
     "unsupported_materialization_policy_count": 0,
-    "runtime_materialization_plan_ready_count": 7,
+    "runtime_materialization_plan_ready_count": 11,
     "runtime_write_allowed_count": 0,
     "production_write_allowed_count": 0,
     "materialization_class_counts": {
       "direct_structured_per_stock_formula": 7,
       "market_or_event_scope_policy_required": 14,
-      "structured_formula_grain_join_review_required": 1,
-      "text_evidence_subset_requires_full_match_export": 3
+      "structured_formula_grain_join_per_stock": 1,
+      "text_evidence_subset_per_stock": 3
     },
     "required_next_step_counts": {
       "approve_formula_materialization_plan": 7,
-      "approve_grain_join_materialization_policy": 1,
+      "approve_grain_join_materialization_plan": 1,
       "approve_market_or_event_target_scope_policy": 14,
-      "export_full_text_match_target_scope": 3
+      "approve_text_evidence_subset_materialization_plan": 3
     },
     "score_mutation": "none; materialization planning audit is read-only and does not alter realtime_current"
   },
@@ -286,14 +288,15 @@
       "dp_id": "L0.demand.user_count",
       "score_target": "fundamental_score",
       "source_kind": "local_structured_text_policy_pilot",
-      "materialization_class": "text_evidence_subset_requires_full_match_export",
-      "required_next_step": "export_full_text_match_target_scope",
+      "materialization_class": "text_evidence_subset_per_stock",
+      "required_next_step": "approve_text_evidence_subset_materialization_plan",
       "source_dependencies": [
         "L5.is.revenue",
         "L9.disclosure.qa_recent"
       ],
       "review_payload_score": 0.245,
       "text_match_count": 25,
+      "target_ts_code_count": 4,
       "evidence_example_ts_code_count": 4,
       "evidence_example_ts_codes": [
         "000338.SZ",
@@ -301,7 +304,7 @@
         "000725.SZ",
         "002409.SZ"
       ],
-      "runtime_materialization_plan_ready": false,
+      "runtime_materialization_plan_ready": true,
       "runtime_write_allowed": false,
       "production_write_allowed": false
     },
@@ -369,12 +372,13 @@
       "dp_id": "L0.price.contract_spot",
       "score_target": "fundamental_score",
       "source_kind": "local_structured_policy_pilot",
-      "materialization_class": "structured_formula_grain_join_review_required",
-      "required_next_step": "approve_grain_join_materialization_policy",
+      "materialization_class": "structured_formula_grain_join_per_stock",
+      "required_next_step": "approve_grain_join_materialization_plan",
       "source_dependencies": [
         "L0.cost.raw_material",
         "L5.is.gross_margin"
       ],
+      "formula": "score = clamp(((gross_margin - 0.20) / 0.50) - (raw_material_avg_pct_change / 3.0), -1, 1)",
       "review_payload_score": -0.063964,
       "grain_join_policy": {
         "a_share_universe_count": 1641,
@@ -384,10 +388,58 @@
         "missing_raw_material_a_share_count": 539,
         "missing_gross_margin_a_share_count": 95
       },
-      "target_ts_code_count": 1007,
-      "missing_raw_material_a_share_count": 539,
-      "missing_gross_margin_a_share_count": 95,
-      "runtime_materialization_plan_ready": false,
+      "target_ts_code_count": 1005,
+      "target_ts_codes_sample": [
+        "000009.SZ",
+        "000012.SZ",
+        "000021.SZ",
+        "000039.SZ",
+        "000050.SZ",
+        "000060.SZ",
+        "000062.SZ",
+        "000100.SZ",
+        "000157.SZ",
+        "000301.SZ"
+      ],
+      "sample_materialized_rows": [
+        {
+          "ts_code": "000009.SZ",
+          "industry_id": "STORAGE_GRID",
+          "raw_material_avg_pct_change": 0.683,
+          "gross_margin": 0.250018
+        },
+        {
+          "ts_code": "000012.SZ",
+          "industry_id": "ANTI_INVOLUTION_CYCLICAL",
+          "raw_material_avg_pct_change": -0.005,
+          "gross_margin": 0.110208
+        },
+        {
+          "ts_code": "000021.SZ",
+          "industry_id": "CONSUMER_ELECTRONICS",
+          "raw_material_avg_pct_change": 0.197,
+          "gross_margin": 0.170662
+        },
+        {
+          "ts_code": "000039.SZ",
+          "industry_id": "ROBOTICS",
+          "raw_material_avg_pct_change": -1.584,
+          "gross_margin": 0.11541
+        },
+        {
+          "ts_code": "000050.SZ",
+          "industry_id": "CONSUMER_ELECTRONICS",
+          "raw_material_avg_pct_change": 0.197,
+          "gross_margin": 0.177339
+        }
+      ],
+      "missing_input_reason_counts": {
+        "missing_gross_margin": 1,
+        "missing_raw_material": 635
+      },
+      "missing_raw_material_a_share_count": 635,
+      "missing_gross_margin_a_share_count": 1,
+      "runtime_materialization_plan_ready": true,
       "runtime_write_allowed": false,
       "production_write_allowed": false
     },
@@ -395,19 +447,20 @@
       "dp_id": "L0.price.discount",
       "score_target": "fundamental_score",
       "source_kind": "local_structured_text_policy_pilot",
-      "materialization_class": "text_evidence_subset_requires_full_match_export",
-      "required_next_step": "export_full_text_match_target_scope",
+      "materialization_class": "text_evidence_subset_per_stock",
+      "required_next_step": "approve_text_evidence_subset_materialization_plan",
       "source_dependencies": [
         "L5.is.gross_margin",
         "L9.disclosure.qa_recent"
       ],
       "review_payload_score": -0.196519,
       "text_match_count": 1,
+      "target_ts_code_count": 1,
       "evidence_example_ts_code_count": 1,
       "evidence_example_ts_codes": [
         "300760.SZ"
       ],
-      "runtime_materialization_plan_ready": false,
+      "runtime_materialization_plan_ready": true,
       "runtime_write_allowed": false,
       "production_write_allowed": false
     },
@@ -627,19 +680,20 @@
       "dp_id": "L0.supply.channel_service",
       "score_target": "fundamental_score",
       "source_kind": "local_structured_text_policy_pilot",
-      "materialization_class": "text_evidence_subset_requires_full_match_export",
-      "required_next_step": "export_full_text_match_target_scope",
+      "materialization_class": "text_evidence_subset_per_stock",
+      "required_next_step": "approve_text_evidence_subset_materialization_plan",
       "source_dependencies": [
         "L5.is.sga_rd",
         "L9.disclosure.qa_recent"
       ],
       "review_payload_score": 0.124543,
       "text_match_count": 1,
+      "target_ts_code_count": 1,
       "evidence_example_ts_code_count": 1,
       "evidence_example_ts_codes": [
         "000338.SZ"
       ],
-      "runtime_materialization_plan_ready": false,
+      "runtime_materialization_plan_ready": true,
       "runtime_write_allowed": false,
       "production_write_allowed": false
     },

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from mvp20.adapters._artifacts import artifact_envelope, load_frontend_artifact
+
 try:
     import data_platform as _vendor  # noqa: F401
     _AVAILABLE = True
@@ -35,6 +37,20 @@ def _unavailable() -> tuple[int, dict]:
 
 
 def handle_canonical(cfg, query: dict) -> tuple[int, dict]:
+    payload, artifact_path = load_frontend_artifact(
+        "data-platform", "data", "canonical", "stock_basic.json"
+    )
+    if payload is not None and artifact_path is not None:
+        from mvp20.server import _ok_envelope
+        return 200, _ok_envelope(
+            artifact_envelope(
+                module="data-platform",
+                version=_VERSION,
+                artifact_path=artifact_path,
+                payload={"source": "canonical", **payload},
+                import_error=_IMPORT_ERR,
+            )
+        )
     if not _AVAILABLE:
         return _unavailable()
     from mvp20.server import _ok_envelope
@@ -42,6 +58,20 @@ def handle_canonical(cfg, query: dict) -> tuple[int, dict]:
 
 
 def handle_raw(cfg, query: dict) -> tuple[int, dict]:
+    payload, artifact_path = load_frontend_artifact(
+        "data-platform", "data", "raw", "tushare_stock_basic.json"
+    )
+    if payload is not None and artifact_path is not None:
+        from mvp20.server import _ok_envelope
+        return 200, _ok_envelope(
+            artifact_envelope(
+                module="data-platform",
+                version=_VERSION,
+                artifact_path=artifact_path,
+                payload={"source": "raw", **payload},
+                import_error=_IMPORT_ERR,
+            )
+        )
     if not _AVAILABLE:
         return _unavailable()
     from mvp20.server import _ok_envelope

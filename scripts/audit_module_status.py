@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Classify locked Project ULT modules from current repo evidence.
 
-The output is intentionally conservative. A skeleton adapter returning HTTP 200
-does not count as a production-normal service, and an importable dependency does
-not count as a running service.
+The output is intentionally conservative. An artifact-backed adapter returning
+HTTP 200 counts as a local contract surface, not as a production-normal service;
+an importable dependency does not count as a running service.
 """
 from __future__ import annotations
 
@@ -16,30 +16,36 @@ from typing import Any
 import yaml
 
 
-SKELETON_MODULES = {
+ADAPTER_MODULES = {
     "audit-eval": {
         "adapter": "mvp20/adapters/audit_eval.py",
         "endpoint": "/api/project-ult/audit/smoke",
+        "artifact": "upstream/audit-eval/artifacts/frontend-api/audit/CYCLE_20260424.json",
     },
     "data-platform": {
         "adapter": "mvp20/adapters/data_platform.py",
         "endpoint": "/api/project-ult/data/canonical/smoke",
+        "artifact": "upstream/data-platform/artifacts/frontend-api/data/canonical/stock_basic.json",
     },
     "entity-registry": {
         "adapter": "mvp20/adapters/entity_registry.py",
         "endpoint": "/api/project-ult/entities",
+        "artifact": "upstream/entity-registry/artifacts/frontend-api/entities.json",
     },
     "graph-engine": {
         "adapter": "mvp20/adapters/graph_engine.py",
         "endpoint": "/api/project-ult/graph/query",
+        "artifact": "upstream/graph-engine/artifacts/frontend-api/subgraph.json",
     },
     "main-core": {
         "adapter": "mvp20/adapters/main_core.py",
         "endpoint": "/api/stocks/smoke",
+        "artifact": "upstream/data-platform/artifacts/frontend-api/cycles.json",
     },
     "reasoner-runtime": {
         "adapter": "mvp20/adapters/reasoner_runtime.py",
         "endpoint": "/api/project-ult/reasoner/smoke",
+        "artifact": "upstream/reasoner-runtime/artifacts/frontend-api/results.json",
     },
 }
 
@@ -233,6 +239,12 @@ def _locked_evidence_level(
 ) -> str:
     if classification == "normal_dependency_not_service":
         return "vendored_dependency_source"
+    if classification == "artifact_callable_contract_surface":
+        if route_ok:
+            return "artifact_adapter_and_route_latency_audit"
+        if has_source:
+            return "artifact_adapter_without_route_proof"
+        return "artifact_adapter_without_vendored_source"
     if classification == "skeleton_callable_not_full_service":
         if route_ok:
             return "vendored_skeleton_adapter_and_route_latency_audit"
@@ -273,6 +285,16 @@ def _adapter_is_skeleton(repo: Path, adapter: str | None) -> bool:
         return False
     text = path.read_text(encoding="utf-8", errors="replace")
     return '"wire_depth": "skeleton"' in text or "'wire_depth': 'skeleton'" in text
+
+
+def _adapter_is_artifact_backed(repo: Path, adapter: str | None) -> bool:
+    if not adapter:
+        return False
+    path = repo / adapter
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return "artifact_envelope" in text or '"wire_depth": "artifact"' in text
 
 
 def _frontend_audit_ok(frontend_latency: dict[str, Any], frontend_navigation: dict[str, Any]) -> bool:
@@ -399,14 +421,25 @@ def classify_modules(
             evidence.append("vendored source under upstream")
             if has_source:
                 evidence.append("dependency source present")
-        elif name in SKELETON_MODULES:
-            cfg = SKELETON_MODULES[name]
+        elif name in ADAPTER_MODULES:
+            cfg = ADAPTER_MODULES[name]
             skeleton = _adapter_is_skeleton(repo, cfg.get("adapter"))
+            artifact_backed = _adapter_is_artifact_backed(repo, cfg.get("adapter"))
+            artifact_path = str(cfg.get("artifact") or "")
+            artifact_present = bool(artifact_path and (repo / artifact_path).exists())
             route_ok = _latency_endpoint_ok(latency, cfg.get("endpoint"))
-            classification = "skeleton_callable_not_full_service"
+            classification = (
+                "artifact_callable_contract_surface"
+                if artifact_backed and artifact_present
+                else "skeleton_callable_not_full_service"
+            )
             service_bucket = "not_usable_full_service"
             if has_source:
                 evidence.append("vendored source under upstream")
+            if artifact_present:
+                evidence.append(f"frontend-api artifact present: {artifact_path}")
+            if artifact_backed:
+                evidence.append("adapter serves local frontend-api artifact")
             if skeleton:
                 evidence.append("adapter declares wire_depth=skeleton")
             if route_ok:
@@ -457,6 +490,9 @@ def classify_modules(
         "skeleton_callable": sum(
             1 for r in rows if r["classification"] == "skeleton_callable_not_full_service"
         ),
+        "artifact_callable": sum(
+            1 for r in rows if r["classification"] == "artifact_callable_contract_surface"
+        ),
         "missing_or_stub_only": sum(
             1 for r in rows if r["classification"] == "unavailable_as_full_module_here"
         ),
@@ -493,6 +529,8 @@ def classify_modules(
             "combined_inventory_total_is_locked_plus_local_surfaces": True,
         },
         "classification_policy": {
+            "artifact_200_is_normal_service": False,
+            "artifact_200_is_local_contract_surface": True,
             "skeleton_200_is_normal": False,
             "dependency_is_service": False,
             "normal_but_not_enabled_requires_proof": True,

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
+import shutil
 import sqlite3
 import sys
 import time
@@ -189,6 +191,128 @@ def _noop_existing_count(
     return count
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _safe_batch_id(batch_plan_set: Mapping[str, Any]) -> str:
+    raw = str(batch_plan_set.get("batch_plan_set_id") or "a-share-formula-batch")
+    safe = "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in raw)
+    return safe[:80] or "a-share-formula-batch"
+
+
+def _create_backup(
+    *,
+    runtime_db_path: Path,
+    backup_dir: Path,
+    batch_plan_set: Mapping[str, Any],
+) -> tuple[Path, str]:
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+    backup_path = (
+        backup_dir
+        / f"hot.sqlite.before_{_safe_batch_id(batch_plan_set)}_{stamp}.sqlite"
+    )
+    shutil.copy2(runtime_db_path, backup_path)
+    with sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True) as conn:
+        quick_check = str(conn.execute("pragma quick_check").fetchone()[0])
+    return backup_path, quick_check
+
+
+def _flatten_ready_planned_rows(
+    *,
+    ready_rows: list[Mapping[str, Any]],
+    planned_by_dp: Mapping[str, list[Mapping[str, Any]]],
+) -> list[Mapping[str, Any]]:
+    rows: list[Mapping[str, Any]] = []
+    for row in ready_rows:
+        rows.extend(planned_by_dp.get(str(row.get("dp_id") or ""), []))
+    rows.sort(key=lambda item: (str(item.get("dp_id") or ""), str(item.get("ts_code") or "")))
+    return rows
+
+
+def _execute_upserts(
+    *,
+    runtime_db_path: Path,
+    planned_rows: list[Mapping[str, Any]],
+    updated_at: int,
+) -> int:
+    rows = [
+        (
+            str(row.get("ts_code") or ""),
+            str(row.get("dp_id") or ""),
+            _canonical_value_json(row.get("value_json") or {}),
+            str(row.get("data_status") or ""),
+            float(row.get("confidence") or 0.0),
+            str(row.get("source") or ""),
+            updated_at,
+        )
+        for row in planned_rows
+    ]
+    with sqlite3.connect(runtime_db_path) as conn:
+        try:
+            conn.executemany(
+                """
+                insert into realtime_current
+                    (ts_code, dp_id, value_json, data_status, confidence, source, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?)
+                on conflict(ts_code, dp_id) do update set
+                    value_json = excluded.value_json,
+                    data_status = excluded.data_status,
+                    confidence = excluded.confidence,
+                    source = excluded.source,
+                    updated_at = excluded.updated_at
+                """,
+                rows,
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    return len(rows)
+
+
+def _post_write_match_count(
+    conn: sqlite3.Connection,
+    *,
+    dp_id: str,
+    planned_rows: list[Mapping[str, Any]],
+) -> int:
+    planned_by_ts = {str(row.get("ts_code") or ""): row for row in planned_rows}
+    existing_rows = _fetch_existing_rows(
+        conn,
+        dp_id=dp_id,
+        ts_codes=sorted(planned_by_ts),
+    )
+    matches = 0
+    for existing in existing_rows:
+        planned = planned_by_ts.get(str(existing.get("ts_code") or ""))
+        if not planned:
+            continue
+        try:
+            existing_value = _canonical_value_json(json.loads(str(existing["value_json"])))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        try:
+            existing_confidence = float(existing.get("confidence"))
+        except (TypeError, ValueError):
+            continue
+        if existing_value != _canonical_value_json(planned.get("value_json") or {}):
+            continue
+        if existing.get("data_status") != planned.get("data_status"):
+            continue
+        if existing.get("source") != planned.get("source"):
+            continue
+        if existing_confidence != float(planned.get("confidence") or 0.0):
+            continue
+        matches += 1
+    return matches
+
+
 def _planned_row_errors(
     planned: Mapping[str, Any],
     *,
@@ -335,6 +459,7 @@ def build_report(
     approval_gate_path: Path,
     runtime_db_path: Path,
     backup_dir: Path,
+    execute: bool = False,
 ) -> dict[str, Any]:
     started = time.time()
     batch_plan = _load_json(batch_plan_path)
@@ -387,6 +512,80 @@ def build_report(
         if validation_rows and len(ready_rows) == len(validation_rows)
         else "blocked"
     )
+    batch_plan_set = batch_plan.get("batch_plan_set") or {}
+    backup_path: Path | None = None
+    backup_quick_check: str | None = None
+    backup_sha256: str | None = None
+    backup_size_bytes: int | None = None
+    runtime_rows_written = 0
+    updated_at: int | None = None
+    post_errors: list[str] = []
+    post_match_counts_by_dp_id: dict[str, int] = {}
+    post_write_verified_count = 0
+    post_write_verified_row_count = 0
+    ready_planned_rows = _flatten_ready_planned_rows(
+        ready_rows=ready_rows,
+        planned_by_dp=planned_by_dp,
+    )
+    if execute and execution_status == "dry_run_ready" and ready_rows:
+        backup_path, backup_quick_check = _create_backup(
+            runtime_db_path=runtime_db_path,
+            backup_dir=backup_dir,
+            batch_plan_set=batch_plan_set,
+        )
+        backup_sha256 = _file_sha256(backup_path)
+        backup_size_bytes = backup_path.stat().st_size
+        updated_at = int(time.time())
+        runtime_rows_written = _execute_upserts(
+            runtime_db_path=runtime_db_path,
+            planned_rows=ready_planned_rows,
+            updated_at=updated_at,
+        )
+        execution_status = "executed"
+        with sqlite3.connect(f"file:{runtime_db_path}?mode=ro", uri=True) as conn:
+            for row in ready_rows:
+                dp_id = str(row.get("dp_id") or "")
+                planned_rows = planned_by_dp.get(dp_id, [])
+                match_count = _post_write_match_count(
+                    conn,
+                    dp_id=dp_id,
+                    planned_rows=planned_rows,
+                )
+                post_match_counts_by_dp_id[dp_id] = match_count
+                if match_count == int(row["planned_upsert_row_count"]):
+                    post_write_verified_count += 1
+                    post_write_verified_row_count += match_count
+                else:
+                    post_errors.append(f"{dp_id}:post_write_match_count:{match_count}")
+    elif execute and not ready_rows:
+        execution_status = "blocked"
+
+    for row in validation_rows:
+        row_status = (
+            "executed"
+            if execution_status == "executed" and not row["validation_errors"]
+            else row["preflight_status"]
+        )
+        row["execution_status"] = row_status
+        row["backup_completed"] = backup_path is not None and row_status == "executed"
+        row["backup_path"] = _portable_path(backup_path) if backup_path else None
+        row["backup_sha256"] = backup_sha256
+        row["backup_size_bytes"] = backup_size_bytes
+        row["updated_at"] = updated_at
+        row["runtime_write_attempted"] = row_status == "executed"
+        row["runtime_write_completed"] = row_status == "executed"
+        row["runtime_rows_written"] = (
+            int(row["planned_upsert_row_count"]) if row_status == "executed" else 0
+        )
+        row["upserted_row_count"] = row["runtime_rows_written"]
+        row["post_write_verified_row_count"] = post_match_counts_by_dp_id.get(
+            str(row.get("dp_id") or ""),
+            0,
+        )
+        row["post_write_verified"] = (
+            row_status == "executed"
+            and row["post_write_verified_row_count"] == int(row["planned_upsert_row_count"])
+        )
     return {
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "elapsed_s": round(time.time() - started, 3),
@@ -395,8 +594,16 @@ def build_report(
             "approval_gate_path": _portable_path(approval_gate_path),
             "runtime_db_path": _portable_path(runtime_db_path),
             "backup_dir": _portable_path(backup_dir),
+            "execute": execute,
         },
-        "batch_plan_set": batch_plan.get("batch_plan_set") or {},
+        "batch_plan_set": batch_plan_set,
+        "backup": {
+            "backup_created": backup_path is not None,
+            "backup_path": _portable_path(backup_path) if backup_path else None,
+            "backup_quick_check": backup_quick_check,
+            "backup_sha256": backup_sha256,
+            "backup_size_bytes": backup_size_bytes,
+        },
         "summary": {
             "execution_status": execution_status,
             "batch_plan_entry_count": len(batch_rows),
@@ -416,22 +623,50 @@ def build_report(
                 int(row["existing_rows_to_backup_count"]) for row in ready_rows
             ),
             "runtime_backup_required_count": len(ready_rows),
-            "runtime_backup_created_count": 0,
-            "runtime_write_attempted_count": 0,
-            "runtime_write_completed_count": 0,
-            "post_write_verified_row_count": 0,
+            "runtime_backup_created_count": 1 if backup_path else 0,
+            "backup_completed_count": len(ready_rows) if backup_path else 0,
+            "backup_failed_count": 0,
+            "runtime_write_attempted_count": len(ready_rows)
+            if execution_status == "executed"
+            else 0,
+            "runtime_write_completed_count": len(ready_rows)
+            if execution_status == "executed"
+            else 0,
+            "runtime_write_failed_count": 0,
+            "runtime_rows_written_count": runtime_rows_written,
+            "upserted_row_count": runtime_rows_written,
+            "rows_inserted_count": sum(int(row["rows_to_insert_count"]) for row in ready_rows)
+            if execution_status == "executed"
+            else 0,
+            "rows_updated_count": sum(int(row["rows_to_update_count"]) for row in ready_rows)
+            if execution_status == "executed"
+            else 0,
+            "existing_rows_backed_up_count": sum(
+                int(row["existing_rows_to_backup_count"]) for row in ready_rows
+            )
+            if backup_path
+            else 0,
+            "post_write_verified_count": post_write_verified_count,
+            "post_write_verified_row_count": post_write_verified_row_count,
+            "post_write_verification_error_count": len(post_errors),
             "production_write_allowed_count": 0,
             "blocking_reason_counts": dict(sorted(reason_counts.items())),
-            "score_mutation": "none; execution preflight is read-only and does not alter realtime_current",
+            "score_mutation": (
+                "runtime write executed; realtime_current was mutated with approved formula materialization rows"
+                if execution_status == "executed"
+                else "none; execution preflight is read-only and does not alter realtime_current"
+            ),
         },
+        "post_write_errors": post_errors,
         "rows": validation_rows,
     }
 
 
 def render_markdown(report: Mapping[str, Any]) -> str:
     summary = report["summary"]
+    backup = report.get("backup") or {}
     lines = [
-        "# A-share formula materialization batch execution preflight",
+        "# A-share formula materialization batch execution",
         "",
         f"- Generated: `{report['generated_at']}`",
         f"- Execution status: `{summary['execution_status']}`",
@@ -440,26 +675,32 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"- Preflight blocked: `{summary['preflight_blocked_count']}`",
         f"- Runtime rows would write: `{summary['runtime_rows_would_write_count']}`",
         f"- Runtime backups created: `{summary['runtime_backup_created_count']}`",
+        f"- Backup path: `{backup.get('backup_path')}`",
+        f"- Backup quick_check: `{backup.get('backup_quick_check')}`",
         f"- Runtime writes attempted: `{summary['runtime_write_attempted_count']}`",
+        f"- Runtime rows written: `{summary.get('runtime_rows_written_count', 0)}`",
+        f"- Post-write verified rows: `{summary.get('post_write_verified_row_count', 0)}`",
+        f"- Post-write verification errors: `{summary.get('post_write_verification_error_count', 0)}`",
         f"- Production writes allowed: `{summary['production_write_allowed_count']}`",
         f"- Score mutation: `{summary['score_mutation']}`",
         "",
         "## Rows",
         "",
-        "| dp_id | status | planned rows | inserts | updates | backup rows | would write | blockers |",
-        "|---|---|---:|---:|---:|---:|---:|---|",
+        "| dp_id | status | planned rows | inserts | updates | backup rows | would write | written | blockers |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in report.get("rows") or []:
         blockers = ", ".join(row.get("validation_errors") or []) or "none"
         lines.append(
             "| "
             f"`{row['dp_id']}` | "
-            f"`{row['preflight_status']}` | "
+            f"`{row.get('execution_status') or row['preflight_status']}` | "
             f"{row['planned_upsert_row_count']} | "
             f"{row['rows_to_insert_count']} | "
             f"{row['rows_to_update_count']} | "
             f"{row['existing_rows_to_backup_count']} | "
             f"{row['runtime_rows_would_write']} | "
+            f"{row.get('runtime_rows_written', 0)} | "
             f"{blockers} |"
         )
     lines.extend(
@@ -468,8 +709,8 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             "## Interpretation",
             "",
             "- `dry_run_ready` means approved formula plans still match the current runtime DB.",
-            "- This preflight does not create a backup and does not execute UPSERTs.",
-            "- The next step is an explicit backup plus bounded runtime UPSERT execution.",
+            "- `dry_run_ready` does not create a backup and does not execute UPSERTs.",
+            "- `executed` means a SQLite backup was created before the bounded UPSERT.",
             "",
         ]
     )
@@ -484,6 +725,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUP_DIR)
     parser.add_argument("--json-output", type=Path, default=DEFAULT_JSON_OUTPUT)
     parser.add_argument("--md-output", type=Path, default=DEFAULT_MD_OUTPUT)
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="create a backup and mutate runtime/hot.sqlite after validation",
+    )
     return parser.parse_args()
 
 
@@ -494,6 +740,7 @@ def main() -> None:
         approval_gate_path=args.approval_gate_path,
         runtime_db_path=args.runtime_db_path,
         backup_dir=args.backup_dir,
+        execute=args.execute,
     )
     args.json_output.parent.mkdir(parents=True, exist_ok=True)
     args.json_output.write_text(

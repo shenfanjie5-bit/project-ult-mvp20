@@ -1,11 +1,11 @@
 # A-share formula materialization Codex batch review
 
-- Generated: `2026-06-20T00:59:38+08:00`
-- Batch-plan rows checked: `7`
-- Codex review approved: `7`
+- Generated: `2026-06-20T02:17:16+08:00`
+- Batch-plan rows checked: `11`
+- Codex review approved: `11`
 - Codex review rejected: `0`
-- Approval records emitted: `7`
-- Approved planned UPSERT rows: `9995`
+- Approval records emitted: `11`
+- Approved planned UPSERT rows: `11006`
 - Runtime writes attempted: `0`
 - Production writes allowed: `0`
 - Score mutation: `approval records only; no realtime_current or production score mutation`
@@ -17,9 +17,13 @@
 | `L0.cost.cac` | `approved_controlled_formula_batch_plan` | 1639 | -1.0 | 0.594241 | none |
 | `L0.cost.labor` | `approved_controlled_formula_batch_plan` | 1289 | -1.0 | 1.0 | none |
 | `L0.demand.terminal` | `approved_controlled_formula_batch_plan` | 1607 | -0.990625 | 1.0 | none |
+| `L0.demand.user_count` | `approved_controlled_formula_batch_plan` | 4 | 0.245 | 0.245 | none |
+| `L0.price.contract_spot` | `approved_controlled_formula_batch_plan` | 1005 | -1.0 | 1.0 | none |
+| `L0.price.discount` | `approved_controlled_formula_batch_plan` | 1 | -0.196519 | -0.196519 | none |
 | `L0.price.pricing_power` | `approved_controlled_formula_batch_plan` | 1546 | -1.0 | 1.0 | none |
 | `L0.supply.capacity` | `approved_controlled_formula_batch_plan` | 868 | -0.519216 | 1.0 | none |
 | `L0.supply.chain_eff` | `approved_controlled_formula_batch_plan` | 1517 | -1.0 | 1.0 | none |
+| `L0.supply.channel_service` | `approved_controlled_formula_batch_plan` | 1 | 0.124543 | 0.124543 | none |
 | `L0.supply.inventory` | `approved_controlled_formula_batch_plan` | 1529 | -1.0 | 0.5 | none |
 
 ## Interpretation

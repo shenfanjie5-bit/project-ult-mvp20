@@ -57,18 +57,18 @@ specific tickers.
 8. Run `mvp20 plan-backfill` and review provider coverage / gaps. The
    plan auto-loads `data_providers.yaml` when it sits next to the
    manifest and surfaces per-market provider lists.
-9. Verify the 6 adapter-backed vendored upstream modules (under `upstream/`)
-   are importable through their skeleton adapters. The `contracts` directory
-   is vendored as their shared schema dependency, while
-   `locks/modules.lock.yaml` pins the broader 14-module Project ULT set:
-   `python -c "from mvp20.adapters import audit_eval, data_platform,
-   entity_registry, graph_engine, main_core, reasoner_runtime;
-   all_avail = all(m._AVAILABLE for m in [audit_eval, data_platform,
-   entity_registry, graph_engine, main_core, reasoner_runtime]);
-   print('all adapters available:', all_avail)"`. If any adapter shows
-   `_AVAILABLE=False`, check `_IMPORT_ERR` for the missing dep and either
-   install the runtime dep or accept that the corresponding routes will
-   return 503 `UPSTREAM_UNAVAILABLE`.
+9. Verify the 14 locked modules through the current-MVP contract-surface
+   policy. The 6 vendored upstream service modules are served through local
+   `upstream/*/artifacts/frontend-api/` payloads by `mvp20/adapters/*`;
+   `contracts` is an importable schema dependency; and 7 locked modules are
+   explicit replacement or missing-source paths. Run:
+
+   `python scripts/audit_module_status.py --output-json docs/audit/module_status_2026-06-20.json`
+
+   A 200 adapter response with `wire_depth: artifact` is normal current-MVP
+   behavior, not proof that the upstream module is a production-normal service.
+   If an artifact is missing and an optional vendored package cannot import,
+   the route should return a structured 503 `UPSTREAM_UNAVAILABLE` envelope.
 10. **Overlay source / compiler sanity check** — graph information is
     authored in YAML and compiled into SQLite before the frontend reads it:
 
@@ -108,6 +108,25 @@ specific tickers.
     Daily compaction (cron, 01:00):
     `python scripts/compact_history.py`
 12. Run fixture and live evidence only through explicit gates.
+
+## Current-MVP Audit Evidence
+
+The 2026-06-20 completion gate is reproducible from five audit inputs:
+
+```bash
+.venv/bin/python scripts/audit_a_share_current_mvp_score_applicability.py
+.venv/bin/python scripts/audit_a_share_approval_materialization_batch_execution_preflight.py --execute
+.venv/bin/python scripts/audit_module_status.py --output-json docs/audit/module_status_2026-06-20.json
+.venv/bin/python scripts/audit_bff_latency.py --start-server --port 8799 --output docs/audit/bff_latency_2026-06-20.json --repeats 2 --warmups 1 --threshold-ms 1000
+.venv/bin/python scripts/audit_dockcase_csv_quality_impact.py
+.venv/bin/python scripts/audit_completion_deviation.py
+```
+
+Expected current result: `docs/audit/completion_deviation_2026-06-20.json`
+reports 100.0% completion, 0.0% deviation, A-share current-MVP actionable gap
+0, BFF/API smoke under 1s, and DOCKCASE current-MVP data-quality actionable gap
+0. Production score writes remain disallowed; the materialization execution is
+a bounded runtime-data UPSERT with backup and post-write verification.
 
 ## Phase Z: schema governance + LLM workflow
 
@@ -280,5 +299,7 @@ files, generated manifests, stdout/stderr captures, or exitcode files.
 - M4.7/financial-doc complete.
 - Contracts subtype changes.
 - New relation types.
-- A-share score completion complete.
-- Runtime score writes approved.
+- A-share score completion complete. Current-MVP denominator closure is complete;
+  raw 174-field closure remains 132 / 174.
+- Runtime score writes approved. The 2026-06-20 execution was a bounded
+  runtime-data write with production score writes still disallowed.
