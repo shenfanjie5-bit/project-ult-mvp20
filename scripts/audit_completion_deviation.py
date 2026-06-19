@@ -21,8 +21,14 @@ AUDIT_DIR = ROOT / "docs/audit"
 DEFAULT_A_SHARE_APPLICABILITY_PATH = (
     AUDIT_DIR / "a_share_current_mvp_score_applicability_2026-06-20.json"
 )
+DEFAULT_A_SHARE_SCORE_SINK_EFFECT_PATH = (
+    AUDIT_DIR / "a_share_score_sink_effect_2026-06-20.json"
+)
 DEFAULT_A_SHARE_EXECUTION_PATH = (
     AUDIT_DIR / "a_share_approval_materialization_batch_execution_2026-06-20.json"
+)
+DEFAULT_A_SHARE_MATERIALIZATION_REVIEW_PATH = (
+    AUDIT_DIR / "a_share_materialization_execution_review_2026-06-20.json"
 )
 DEFAULT_MODULE_STATUS_PATH = AUDIT_DIR / "module_status_2026-06-20.json"
 DEFAULT_BFF_LATENCY_PATH = AUDIT_DIR / "bff_latency_2026-06-20.json"
@@ -82,19 +88,23 @@ def _component(
 def build_report(
     *,
     a_share_applicability_path: Path,
+    a_share_score_sink_effect_path: Path,
     a_share_execution_path: Path,
+    a_share_materialization_review_path: Path,
     module_status_path: Path,
     bff_latency_path: Path,
     dockcase_quality_path: Path,
 ) -> dict[str, Any]:
     a_share = _load_json(a_share_applicability_path)
     a_share_execution = _load_json(a_share_execution_path)
+    a_share_materialization_review = _load_json(a_share_materialization_review_path)
     module_status = _load_json(module_status_path)
     bff = _load_json(bff_latency_path)
     dockcase = _load_json(dockcase_quality_path)
 
     a_sum = _summary(a_share)
     exec_sum = _summary(a_share_execution)
+    materialization_review_sum = _summary(a_share_materialization_review)
     mod_counts = module_status.get("counts") or {}
     dock_sum = _summary(dockcase)
 
@@ -102,7 +112,7 @@ def build_report(
     accounted_modules = (
         int(mod_counts.get("artifact_callable") or 0)
         + int(mod_counts.get("normal_dependency_not_service") or 0)
-        + int(mod_counts.get("missing_or_stub_only") or 0)
+        + int(mod_counts.get("replacement_path_verified") or 0)
     )
     module_accounted_pct = _pct(accounted_modules, locked_total)
     bff_ok = bool(bff.get("all_ok") and bff.get("all_under_threshold"))
@@ -121,7 +131,11 @@ def build_report(
             deviation_pct=_number(a_sum, "current_mvp_deviation_pct", 100.0),
             gap=f"actionable_gap={a_sum.get('current_mvp_actionable_gap_count', 0)}",
             repair_action="Executed approved runtime materialization and added current-MVP applicability audit for unapproved/NA/suppressed fields.",
-            evidence_paths=[a_share_applicability_path, a_share_execution_path],
+            evidence_paths=[
+                a_share_applicability_path,
+                a_share_score_sink_effect_path,
+                a_share_execution_path,
+            ],
             residual_reason=(
                 f"Raw closure is {a_sum.get('raw_current_numeric_final_score_count', 0)} / "
                 f"{a_sum.get('raw_score_relevant_final_target_count', 0)}; "
@@ -133,13 +147,27 @@ def build_report(
             design_requirement="Approved candidate rows must be written only after review/gate/preflight and post-write verification.",
             current_implementation=(
                 f"execution_status={exec_sum.get('execution_status')}; "
-                f"verified_rows={exec_sum.get('post_write_verified_row_count', 0)}"
+                f"verified_rows={exec_sum.get('post_write_verified_row_count', 0)}; "
+                "post_execution_value_errors="
+                f"{materialization_review_sum.get('current_value_contract_error_count', 0)}"
             ),
-            completion_pct=100.0 if exec_sum.get("execution_status") == "executed" and int(exec_sum.get("post_write_verification_error_count") or 0) == 0 else 0.0,
-            deviation_pct=0.0 if exec_sum.get("execution_status") == "executed" and int(exec_sum.get("post_write_verification_error_count") or 0) == 0 else 100.0,
-            gap=f"post_write_errors={exec_sum.get('post_write_verification_error_count', 0)}",
-            repair_action="Added execute mode with backup, quick_check, UPSERT, and canonical post-write verification.",
-            evidence_paths=[a_share_execution_path],
+            completion_pct=100.0
+            if exec_sum.get("execution_status") == "executed"
+            and int(exec_sum.get("post_write_verification_error_count") or 0) == 0
+            and int(materialization_review_sum.get("current_value_contract_error_count") or 0) == 0
+            else 0.0,
+            deviation_pct=0.0
+            if exec_sum.get("execution_status") == "executed"
+            and int(exec_sum.get("post_write_verification_error_count") or 0) == 0
+            and int(materialization_review_sum.get("current_value_contract_error_count") or 0) == 0
+            else 100.0,
+            gap=(
+                f"post_write_errors={exec_sum.get('post_write_verification_error_count', 0)}; "
+                "historical_noop_updated_at_changed="
+                f"{materialization_review_sum.get('noop_updated_at_changed_count', 0)}"
+            ),
+            repair_action="Added execute mode with SQLite online backup, no-op write suppression, canonical post-write verification, and post-execution value/timestamp review.",
+            evidence_paths=[a_share_execution_path, a_share_materialization_review_path],
         ),
         _component(
             name="locked_module_contract_surfaces",
@@ -148,11 +176,12 @@ def build_report(
                 f"{accounted_modules} / {locked_total} locked modules are accounted for: "
                 f"{mod_counts.get('artifact_callable', 0)} artifact-backed adapters, "
                 f"{mod_counts.get('normal_dependency_not_service', 0)} dependency, "
-                f"{mod_counts.get('missing_or_stub_only', 0)} replacement/missing-source paths."
+                f"{mod_counts.get('replacement_path_verified', 0)} verified replacement paths "
+                f"({mod_counts.get('missing_or_stub_only', 0)} missing-source modules tracked)."
             ),
             completion_pct=module_accounted_pct,
             deviation_pct=round(100.0 - module_accounted_pct, 2),
-            gap="full upstream services remain unavailable locally; current MVP uses artifact-backed adapters and replacement paths.",
+            gap="full upstream services remain unavailable locally; current MVP counts only artifact-backed adapters, dependencies, and verified replacement paths.",
             repair_action="Converted adapter routes from import-gated skeletons to local frontend-api artifacts and refreshed module status.",
             evidence_paths=[module_status_path, bff_latency_path],
         ),
@@ -197,7 +226,11 @@ def build_report(
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "inputs": {
             "a_share_applicability_path": _portable_path(a_share_applicability_path),
+            "a_share_score_sink_effect_path": _portable_path(a_share_score_sink_effect_path),
             "a_share_execution_path": _portable_path(a_share_execution_path),
+            "a_share_materialization_review_path": _portable_path(
+                a_share_materialization_review_path
+            ),
             "module_status_path": _portable_path(module_status_path),
             "bff_latency_path": _portable_path(bff_latency_path),
             "dockcase_quality_path": _portable_path(dockcase_quality_path),
@@ -257,7 +290,9 @@ def render_markdown(report: Mapping[str, Any]) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--a-share-applicability-path", type=Path, default=DEFAULT_A_SHARE_APPLICABILITY_PATH)
+    parser.add_argument("--a-share-score-sink-effect-path", type=Path, default=DEFAULT_A_SHARE_SCORE_SINK_EFFECT_PATH)
     parser.add_argument("--a-share-execution-path", type=Path, default=DEFAULT_A_SHARE_EXECUTION_PATH)
+    parser.add_argument("--a-share-materialization-review-path", type=Path, default=DEFAULT_A_SHARE_MATERIALIZATION_REVIEW_PATH)
     parser.add_argument("--module-status-path", type=Path, default=DEFAULT_MODULE_STATUS_PATH)
     parser.add_argument("--bff-latency-path", type=Path, default=DEFAULT_BFF_LATENCY_PATH)
     parser.add_argument("--dockcase-quality-path", type=Path, default=DEFAULT_DOCKCASE_QUALITY_PATH)
@@ -270,7 +305,9 @@ def main() -> int:
     args = parse_args()
     report = build_report(
         a_share_applicability_path=args.a_share_applicability_path,
+        a_share_score_sink_effect_path=args.a_share_score_sink_effect_path,
         a_share_execution_path=args.a_share_execution_path,
+        a_share_materialization_review_path=args.a_share_materialization_review_path,
         module_status_path=args.module_status_path,
         bff_latency_path=args.bff_latency_path,
         dockcase_quality_path=args.dockcase_quality_path,

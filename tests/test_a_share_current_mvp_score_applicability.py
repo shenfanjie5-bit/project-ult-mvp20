@@ -14,6 +14,7 @@ def test_current_mvp_score_applicability_excludes_review_gated_fields(tmp_path: 
     field_closure_path = tmp_path / "field_closure.json"
     conversion_path = tmp_path / "conversion.json"
     execution_path = tmp_path / "execution.json"
+    score_sink_effect_path = tmp_path / "score_sink.json"
     config_path = tmp_path / "applicability.yaml"
 
     _write_json(
@@ -95,6 +96,7 @@ def test_current_mvp_score_applicability_excludes_review_gated_fields(tmp_path: 
             }
         },
     )
+    _write_json(score_sink_effect_path, {"summary": {}, "rows": []})
     config_path.write_text(
         yaml.safe_dump(
             {
@@ -120,6 +122,7 @@ def test_current_mvp_score_applicability_excludes_review_gated_fields(tmp_path: 
         field_closure_path=field_closure_path,
         conversion_path=conversion_path,
         execution_path=execution_path,
+        score_sink_effect_path=score_sink_effect_path,
         config_path=config_path,
     )
 
@@ -135,3 +138,85 @@ def test_current_mvp_score_applicability_excludes_review_gated_fields(tmp_path: 
         "no_valid_target_data_requires_unapproved_generation": 1,
         "valuation_peer_context_superseded": 1,
     }
+
+
+def test_current_mvp_score_applicability_excludes_verified_no_effect_score_sink(
+    tmp_path: Path,
+) -> None:
+    field_closure_path = tmp_path / "field_closure.json"
+    conversion_path = tmp_path / "conversion.json"
+    execution_path = tmp_path / "execution.json"
+    score_sink_effect_path = tmp_path / "score_sink.json"
+    config_path = tmp_path / "applicability.yaml"
+
+    _write_json(
+        field_closure_path,
+        {
+            "rows": [
+                {
+                    "dp_id": "L10.val.peer",
+                    "score_target": "confidence_multiplier",
+                    "closure_status": "closed_reaches_final_score",
+                    "blocking_gap": False,
+                }
+            ]
+        },
+    )
+    _write_json(
+        conversion_path,
+        {
+            "rows": [
+                {
+                    "dp_id": "L10.val.peer",
+                    "score_target": "confidence_multiplier",
+                    "score_relevant_final_target": True,
+                    "current_final_score_numeric": True,
+                    "conversion_path_status": "current_numeric_final_score",
+                }
+            ]
+        },
+    )
+    _write_json(execution_path, {"summary": {"execution_status": "executed"}})
+    _write_json(
+        score_sink_effect_path,
+        {
+            "summary": {"no_final_score_delta_count": 1},
+            "rows": [
+                {
+                    "dp_id": "L10.val.peer",
+                    "score_target": "confidence_multiplier",
+                    "max_abs_delta": 0.0,
+                    "no_final_score_delta": True,
+                }
+            ],
+        },
+    )
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "exclusion_policies": {
+                    "score_sink_no_effect_verified": {
+                        "mvp_applicability": "excluded_from_current_mvp_denominator",
+                        "applies_when": {"dp_id_in": ["L10.val.peer"]},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_report(
+        field_closure_path=field_closure_path,
+        conversion_path=conversion_path,
+        execution_path=execution_path,
+        score_sink_effect_path=score_sink_effect_path,
+        config_path=config_path,
+    )
+
+    summary = report["summary"]
+    assert summary["raw_score_relevant_final_target_count"] == 1
+    assert summary["raw_current_numeric_final_score_count"] == 1
+    assert summary["current_mvp_denominator_count"] == 0
+    assert summary["current_mvp_excluded_count"] == 1
+    assert summary["excluded_reason_counts"] == {"score_sink_no_effect_verified": 1}
+    assert report["excluded_rows"][0]["score_sink_no_final_score_delta"] is True

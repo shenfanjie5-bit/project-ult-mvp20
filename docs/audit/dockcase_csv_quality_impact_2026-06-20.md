@@ -1,6 +1,6 @@
 # DOCKCASE CSV quality impact audit
 
-- Generated: `2026-06-20T02:31:29+08:00`
+- Generated: `2026-06-20T03:36:11+08:00`
 - CSV scan coverage: `160596` / `160596` (1.0)
 - Rows scanned: `212621857`
 - Read/shape errors: `0`

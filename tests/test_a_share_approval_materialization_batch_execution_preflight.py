@@ -125,6 +125,37 @@ def _batch_and_gate() -> tuple[dict, dict]:
     return batch_plan, approval_gate
 
 
+def _make_single_row_plan_noop(batch_plan: dict) -> None:
+    row = batch_plan["rows"][0]
+    row["rows_to_insert_count"] = 0
+    row["rows_to_update_count"] = 0
+    row["existing_rows_to_backup_count"] = 1
+    row["noop_existing_rows_count"] = 1
+
+
+def _write_matching_runtime_row(path: Path, batch_plan: dict, *, updated_at: int) -> None:
+    _write_runtime_db(path)
+    planned = batch_plan["planned_rows"][0]
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            insert into realtime_current
+                (ts_code, dp_id, value_json, data_status, confidence, source, updated_at)
+            values (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                planned["ts_code"],
+                planned["dp_id"],
+                audit._canonical_value_json(planned["value_json"]),
+                planned["data_status"],
+                planned["confidence"],
+                planned["source"],
+                updated_at,
+            ),
+        )
+        conn.commit()
+
+
 def test_formula_batch_execution_preflight_ready_without_mutation(tmp_path: Path) -> None:
     batch_plan_path = tmp_path / "batch_plan.json"
     gate_path = tmp_path / "gate.json"
@@ -208,6 +239,48 @@ def test_formula_batch_execution_execute_backs_up_and_upserts(tmp_path: Path) ->
         "a_share_approval_materialization_batch_plan:L0.demand.terminal",
     )
     assert "executed" in audit.render_markdown(report)
+
+
+def test_formula_batch_execution_execute_preserves_noop_updated_at(tmp_path: Path) -> None:
+    batch_plan_path = tmp_path / "batch_plan.json"
+    gate_path = tmp_path / "gate.json"
+    runtime_db_path = tmp_path / "hot.sqlite"
+    backup_dir = tmp_path / "backups"
+    batch_plan, approval_gate = _batch_and_gate()
+    _make_single_row_plan_noop(batch_plan)
+    _write_json(batch_plan_path, batch_plan)
+    _write_json(gate_path, approval_gate)
+    _write_matching_runtime_row(runtime_db_path, batch_plan, updated_at=123)
+
+    report = audit.build_report(
+        batch_plan_path=batch_plan_path,
+        approval_gate_path=gate_path,
+        runtime_db_path=runtime_db_path,
+        backup_dir=backup_dir,
+        execute=True,
+    )
+
+    summary = report["summary"]
+    assert summary["execution_status"] == "executed"
+    assert summary["runtime_backup_created_count"] == 1
+    assert summary["runtime_rows_would_write_count"] == 0
+    assert summary["runtime_rows_would_noop_count"] == 1
+    assert summary["runtime_rows_written_count"] == 0
+    assert summary["rows_noop_count"] == 1
+    assert summary["noop_rows_preserved_count"] == 1
+    assert summary["noop_updated_at_changed_count"] == 0
+    assert summary["post_write_verified_row_count"] == 1
+    assert summary["post_write_timestamp_verified_row_count"] == 1
+    assert summary["post_write_verification_error_count"] == 0
+
+    with sqlite3.connect(runtime_db_path) as conn:
+        updated_at = conn.execute(
+            """
+            select updated_at from realtime_current
+            where ts_code = '000001.SZ' and dp_id = 'L0.demand.terminal'
+            """
+        ).fetchone()[0]
+    assert updated_at == 123
 
 
 def test_formula_batch_execution_preflight_blocks_on_current_db_mismatch(

@@ -16,8 +16,8 @@ Current 2026-06-20 evidence reports 100.0% current-MVP completion, 0.0%
 deviation, A-share actionable gap 0, BFF/API smoke under 1s, and DOCKCASE
 current-MVP data-quality actionable gap 0. The upstream locked-module status is
 contract-surface complete for this local MVP through artifact-backed adapters,
-an importable `contracts` dependency, and explicit replacement/missing-source
-paths; it is not a claim that every locked upstream module runs locally as a
+an importable `contracts` dependency, and verified replacement paths; it is not
+a claim that every locked upstream module runs locally as a
 production-normal service.
 
 Current storage split:

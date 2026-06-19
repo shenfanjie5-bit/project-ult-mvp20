@@ -5,9 +5,10 @@
 > 256 `dp_id`s in `config/data_point_roles.yaml`. Current A-share final-score
 > closure is governed by
 > [`docs/audit/a_share_current_mvp_score_applicability_2026-06-20.md`](../audit/a_share_current_mvp_score_applicability_2026-06-20.md):
-> raw score-relevant closure is 132 / 174, current-MVP closure is 132 / 132,
-> actionable gap is 0, and 42 raw fields are excluded from the local MVP
-> denominator only with audit-backed non-applicability/backlog reasons.
+> raw score-relevant closure is 132 / 174, current-MVP closure is 120 / 120,
+> actionable gap is 0, and 54 raw fields are excluded from the local MVP
+> denominator only with audit-backed non-applicability/backlog or verified
+> no-final-score-delta score-sink reasons.
 > Runtime materialization evidence is in
 > [`docs/audit/a_share_approval_materialization_batch_execution_2026-06-20.md`](../audit/a_share_approval_materialization_batch_execution_2026-06-20.md).
 

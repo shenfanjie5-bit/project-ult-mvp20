@@ -13,7 +13,6 @@ import argparse
 import datetime as dt
 import hashlib
 import json
-import shutil
 import sqlite3
 import sys
 import time
@@ -169,26 +168,71 @@ def _noop_existing_count(
     for existing in existing_rows:
         ts_code = str(existing.get("ts_code") or "")
         planned = planned_by_ts_code.get(ts_code)
-        if not planned:
-            continue
-        try:
-            existing_value = _canonical_value_json(json.loads(str(existing["value_json"])))
-        except (json.JSONDecodeError, TypeError):
-            continue
-        try:
-            existing_confidence = float(existing.get("confidence"))
-        except (TypeError, ValueError):
-            continue
-        if existing_value != _canonical_value_json(planned.get("value_json")):
-            continue
-        if existing.get("data_status") != planned.get("data_status"):
-            continue
-        if existing.get("source") != planned.get("source"):
-            continue
-        if existing_confidence != float(planned.get("confidence") or 0):
-            continue
-        count += 1
+        if planned and _existing_matches_planned(existing, planned):
+            count += 1
     return count
+
+
+def _existing_matches_planned(
+    existing: Mapping[str, Any],
+    planned: Mapping[str, Any],
+) -> bool:
+    try:
+        existing_value = _canonical_value_json(json.loads(str(existing["value_json"])))
+    except (json.JSONDecodeError, TypeError):
+        return False
+    try:
+        existing_confidence = float(existing.get("confidence"))
+    except (TypeError, ValueError):
+        return False
+    return (
+        existing_value == _canonical_value_json(planned.get("value_json") or {})
+        and existing.get("data_status") == planned.get("data_status")
+        and existing.get("source") == planned.get("source")
+        and existing_confidence == float(planned.get("confidence") or 0)
+    )
+
+
+def _row_key(row: Mapping[str, Any]) -> tuple[str, str]:
+    return str(row.get("ts_code") or ""), str(row.get("dp_id") or "")
+
+
+def _physical_write_plan(
+    conn: sqlite3.Connection,
+    planned_rows: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    by_dp: dict[str, list[Mapping[str, Any]]] = {}
+    for row in planned_rows:
+        by_dp.setdefault(str(row.get("dp_id") or ""), []).append(row)
+    existing_by_key: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for dp_id, rows in by_dp.items():
+        ts_codes = sorted({str(row.get("ts_code") or "") for row in rows})
+        for existing in _fetch_existing_rows(conn, dp_id=dp_id, ts_codes=ts_codes):
+            existing_by_key[(str(existing.get("ts_code") or ""), dp_id)] = existing
+
+    rows_to_write: list[Mapping[str, Any]] = []
+    insert_count = 0
+    update_count = 0
+    noop_count = 0
+    for row in planned_rows:
+        key = _row_key(row)
+        existing = existing_by_key.get(key)
+        if existing is None:
+            rows_to_write.append(row)
+            insert_count += 1
+        elif _existing_matches_planned(existing, row):
+            noop_count += 1
+        else:
+            rows_to_write.append(row)
+            update_count += 1
+    return {
+        "rows_to_write": rows_to_write,
+        "insert_count": insert_count,
+        "update_count": update_count,
+        "noop_count": noop_count,
+        "existing_by_key": existing_by_key,
+        "write_keys": {_row_key(row) for row in rows_to_write},
+    }
 
 
 def _file_sha256(path: Path) -> str:
@@ -217,7 +261,9 @@ def _create_backup(
         backup_dir
         / f"hot.sqlite.before_{_safe_batch_id(batch_plan_set)}_{stamp}.sqlite"
     )
-    shutil.copy2(runtime_db_path, backup_path)
+    with sqlite3.connect(f"file:{runtime_db_path}?mode=ro", uri=True) as src:
+        with sqlite3.connect(backup_path) as dst:
+            src.backup(dst)
     with sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True) as conn:
         quick_check = str(conn.execute("pragma quick_check").fetchone()[0])
     return backup_path, quick_check
@@ -266,6 +312,10 @@ def _execute_upserts(
                     confidence = excluded.confidence,
                     source = excluded.source,
                     updated_at = excluded.updated_at
+                where realtime_current.value_json is not excluded.value_json
+                   or realtime_current.data_status is not excluded.data_status
+                   or realtime_current.confidence is not excluded.confidence
+                   or realtime_current.source is not excluded.source
                 """,
                 rows,
             )
@@ -311,6 +361,49 @@ def _post_write_match_count(
             continue
         matches += 1
     return matches
+
+
+def _post_write_verify_counts(
+    conn: sqlite3.Connection,
+    *,
+    dp_id: str,
+    planned_rows: list[Mapping[str, Any]],
+    pre_existing_by_key: Mapping[tuple[str, str], Mapping[str, Any]],
+    write_keys: set[tuple[str, str]],
+    updated_at: int | None,
+) -> dict[str, int]:
+    planned_by_ts = {str(row.get("ts_code") or ""): row for row in planned_rows}
+    existing_rows = _fetch_existing_rows(
+        conn,
+        dp_id=dp_id,
+        ts_codes=sorted(planned_by_ts),
+    )
+    value_matches = 0
+    timestamp_matches = 0
+    noop_preserved = 0
+    noop_timestamp_changed = 0
+    for existing in existing_rows:
+        key = (str(existing.get("ts_code") or ""), dp_id)
+        planned = planned_by_ts.get(key[0])
+        if not planned or not _existing_matches_planned(existing, planned):
+            continue
+        value_matches += 1
+        if key in write_keys:
+            if updated_at is not None and int(existing.get("updated_at") or 0) == updated_at:
+                timestamp_matches += 1
+            continue
+        before = pre_existing_by_key.get(key)
+        if before is not None and existing.get("updated_at") == before.get("updated_at"):
+            timestamp_matches += 1
+            noop_preserved += 1
+        elif before is not None:
+            noop_timestamp_changed += 1
+    return {
+        "value_match_count": value_matches,
+        "timestamp_match_count": timestamp_matches,
+        "noop_preserved_count": noop_preserved,
+        "noop_timestamp_changed_count": noop_timestamp_changed,
+    }
 
 
 def _planned_row_errors(
@@ -497,7 +590,12 @@ def build_report(
             else None
         )
         row["runtime_rows_would_write"] = (
-            row["planned_upsert_row_count"]
+            int(row["rows_to_insert_count"]) + int(row["rows_to_update_count"])
+            if row["preflight_status"] == "dry_run_ready"
+            else 0
+        )
+        row["runtime_rows_would_noop"] = (
+            int(row["current_noop_row_count"])
             if row["preflight_status"] == "dry_run_ready"
             else 0
         )
@@ -521,8 +619,19 @@ def build_report(
     updated_at: int | None = None
     post_errors: list[str] = []
     post_match_counts_by_dp_id: dict[str, int] = {}
+    post_timestamp_match_counts_by_dp_id: dict[str, int] = {}
+    post_noop_preserved_counts_by_dp_id: dict[str, int] = {}
+    post_noop_timestamp_changed_counts_by_dp_id: dict[str, int] = {}
     post_write_verified_count = 0
     post_write_verified_row_count = 0
+    post_write_timestamp_verified_row_count = 0
+    noop_rows_preserved_count = 0
+    noop_updated_at_changed_count = 0
+    physical_insert_count = 0
+    physical_update_count = 0
+    physical_noop_count = 0
+    pre_existing_by_key: dict[tuple[str, str], Mapping[str, Any]] = {}
+    write_keys: set[tuple[str, str]] = set()
     ready_planned_rows = _flatten_ready_planned_rows(
         ready_rows=ready_rows,
         planned_by_dp=planned_by_dp,
@@ -536,9 +645,16 @@ def build_report(
         backup_sha256 = _file_sha256(backup_path)
         backup_size_bytes = backup_path.stat().st_size
         updated_at = int(time.time())
+        with sqlite3.connect(f"file:{runtime_db_path}?mode=ro", uri=True) as conn:
+            write_plan = _physical_write_plan(conn, ready_planned_rows)
+        pre_existing_by_key = dict(write_plan["existing_by_key"])
+        write_keys = set(write_plan["write_keys"])
+        physical_insert_count = int(write_plan["insert_count"])
+        physical_update_count = int(write_plan["update_count"])
+        physical_noop_count = int(write_plan["noop_count"])
         runtime_rows_written = _execute_upserts(
             runtime_db_path=runtime_db_path,
-            planned_rows=ready_planned_rows,
+            planned_rows=list(write_plan["rows_to_write"]),
             updated_at=updated_at,
         )
         execution_status = "executed"
@@ -557,6 +673,31 @@ def build_report(
                     post_write_verified_row_count += match_count
                 else:
                     post_errors.append(f"{dp_id}:post_write_match_count:{match_count}")
+                verify_counts = _post_write_verify_counts(
+                    conn,
+                    dp_id=dp_id,
+                    planned_rows=planned_rows,
+                    pre_existing_by_key=pre_existing_by_key,
+                    write_keys=write_keys,
+                    updated_at=updated_at,
+                )
+                timestamp_match_count = verify_counts["timestamp_match_count"]
+                post_timestamp_match_counts_by_dp_id[dp_id] = timestamp_match_count
+                post_noop_preserved_counts_by_dp_id[dp_id] = verify_counts[
+                    "noop_preserved_count"
+                ]
+                post_noop_timestamp_changed_counts_by_dp_id[dp_id] = verify_counts[
+                    "noop_timestamp_changed_count"
+                ]
+                post_write_timestamp_verified_row_count += timestamp_match_count
+                noop_rows_preserved_count += verify_counts["noop_preserved_count"]
+                noop_updated_at_changed_count += verify_counts[
+                    "noop_timestamp_changed_count"
+                ]
+                if timestamp_match_count != int(row["planned_upsert_row_count"]):
+                    post_errors.append(
+                        f"{dp_id}:post_write_timestamp_match_count:{timestamp_match_count}"
+                    )
     elif execute and not ready_rows:
         execution_status = "blocked"
 
@@ -575,16 +716,33 @@ def build_report(
         row["runtime_write_attempted"] = row_status == "executed"
         row["runtime_write_completed"] = row_status == "executed"
         row["runtime_rows_written"] = (
-            int(row["planned_upsert_row_count"]) if row_status == "executed" else 0
+            int(row["rows_to_insert_count"]) + int(row["rows_to_update_count"])
+            if row_status == "executed"
+            else 0
+        )
+        row["runtime_rows_noop"] = (
+            int(row["runtime_rows_would_noop"]) if row_status == "executed" else 0
         )
         row["upserted_row_count"] = row["runtime_rows_written"]
         row["post_write_verified_row_count"] = post_match_counts_by_dp_id.get(
             str(row.get("dp_id") or ""),
             0,
         )
+        row["post_write_timestamp_verified_row_count"] = (
+            post_timestamp_match_counts_by_dp_id.get(str(row.get("dp_id") or ""), 0)
+        )
+        row["noop_rows_preserved_count"] = post_noop_preserved_counts_by_dp_id.get(
+            str(row.get("dp_id") or ""),
+            0,
+        )
+        row["noop_updated_at_changed_count"] = (
+            post_noop_timestamp_changed_counts_by_dp_id.get(str(row.get("dp_id") or ""), 0)
+        )
         row["post_write_verified"] = (
             row_status == "executed"
             and row["post_write_verified_row_count"] == int(row["planned_upsert_row_count"])
+            and row["post_write_timestamp_verified_row_count"]
+            == int(row["planned_upsert_row_count"])
         )
     return {
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -617,6 +775,9 @@ def build_report(
             "runtime_rows_would_write_count": sum(
                 int(row["runtime_rows_would_write"]) for row in ready_rows
             ),
+            "runtime_rows_would_noop_count": sum(
+                int(row["runtime_rows_would_noop"]) for row in ready_rows
+            ),
             "rows_to_insert_count": sum(int(row["rows_to_insert_count"]) for row in ready_rows),
             "rows_to_update_count": sum(int(row["rows_to_update_count"]) for row in ready_rows),
             "existing_rows_to_backup_count": sum(
@@ -635,12 +796,9 @@ def build_report(
             "runtime_write_failed_count": 0,
             "runtime_rows_written_count": runtime_rows_written,
             "upserted_row_count": runtime_rows_written,
-            "rows_inserted_count": sum(int(row["rows_to_insert_count"]) for row in ready_rows)
-            if execution_status == "executed"
-            else 0,
-            "rows_updated_count": sum(int(row["rows_to_update_count"]) for row in ready_rows)
-            if execution_status == "executed"
-            else 0,
+            "rows_inserted_count": physical_insert_count,
+            "rows_updated_count": physical_update_count,
+            "rows_noop_count": physical_noop_count,
             "existing_rows_backed_up_count": sum(
                 int(row["existing_rows_to_backup_count"]) for row in ready_rows
             )
@@ -648,6 +806,11 @@ def build_report(
             else 0,
             "post_write_verified_count": post_write_verified_count,
             "post_write_verified_row_count": post_write_verified_row_count,
+            "post_write_timestamp_verified_row_count": (
+                post_write_timestamp_verified_row_count
+            ),
+            "noop_rows_preserved_count": noop_rows_preserved_count,
+            "noop_updated_at_changed_count": noop_updated_at_changed_count,
             "post_write_verification_error_count": len(post_errors),
             "production_write_allowed_count": 0,
             "blocking_reason_counts": dict(sorted(reason_counts.items())),
@@ -674,20 +837,25 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"- Preflight ready: `{summary['preflight_ready_count']}`",
         f"- Preflight blocked: `{summary['preflight_blocked_count']}`",
         f"- Runtime rows would write: `{summary['runtime_rows_would_write_count']}`",
+        f"- Runtime rows would no-op: `{summary.get('runtime_rows_would_noop_count', 0)}`",
         f"- Runtime backups created: `{summary['runtime_backup_created_count']}`",
         f"- Backup path: `{backup.get('backup_path')}`",
         f"- Backup quick_check: `{backup.get('backup_quick_check')}`",
         f"- Runtime writes attempted: `{summary['runtime_write_attempted_count']}`",
         f"- Runtime rows written: `{summary.get('runtime_rows_written_count', 0)}`",
+        f"- Runtime rows no-op: `{summary.get('rows_noop_count', 0)}`",
         f"- Post-write verified rows: `{summary.get('post_write_verified_row_count', 0)}`",
+        f"- Post-write timestamp verified rows: `{summary.get('post_write_timestamp_verified_row_count', 0)}`",
+        f"- No-op rows preserved: `{summary.get('noop_rows_preserved_count', 0)}`",
+        f"- No-op updated_at changed: `{summary.get('noop_updated_at_changed_count', 0)}`",
         f"- Post-write verification errors: `{summary.get('post_write_verification_error_count', 0)}`",
         f"- Production writes allowed: `{summary['production_write_allowed_count']}`",
         f"- Score mutation: `{summary['score_mutation']}`",
         "",
         "## Rows",
         "",
-        "| dp_id | status | planned rows | inserts | updates | backup rows | would write | written | blockers |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---|",
+        "| dp_id | status | planned rows | inserts | updates | no-op | backup rows | would write | written | blockers |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in report.get("rows") or []:
         blockers = ", ".join(row.get("validation_errors") or []) or "none"
@@ -698,6 +866,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             f"{row['planned_upsert_row_count']} | "
             f"{row['rows_to_insert_count']} | "
             f"{row['rows_to_update_count']} | "
+            f"{row.get('runtime_rows_would_noop', 0)} | "
             f"{row['existing_rows_to_backup_count']} | "
             f"{row['runtime_rows_would_write']} | "
             f"{row.get('runtime_rows_written', 0)} | "

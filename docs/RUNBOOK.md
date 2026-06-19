@@ -61,9 +61,9 @@ specific tickers.
    policy. The 6 vendored upstream service modules are served through local
    `upstream/*/artifacts/frontend-api/` payloads by `mvp20/adapters/*`;
    `contracts` is an importable schema dependency; and 7 locked modules are
-   explicit replacement or missing-source paths. Run:
+   verified current-MVP replacement paths. Run:
 
-   `python scripts/audit_module_status.py --output-json docs/audit/module_status_2026-06-20.json`
+   `.venv/bin/python scripts/audit_module_status.py --output docs/audit/module_status_2026-06-20.json`
 
    A 200 adapter response with `wire_depth: artifact` is normal current-MVP
    behavior, not proof that the upstream module is a production-normal service.
@@ -111,22 +111,30 @@ specific tickers.
 
 ## Current-MVP Audit Evidence
 
-The 2026-06-20 completion gate is reproducible from five audit inputs:
+The 2026-06-20 completion gate is reproducible from the current audit inputs:
 
 ```bash
+.venv/bin/python scripts/audit_a_share_score_sink_effect.py
 .venv/bin/python scripts/audit_a_share_current_mvp_score_applicability.py
-.venv/bin/python scripts/audit_a_share_approval_materialization_batch_execution_preflight.py --execute
-.venv/bin/python scripts/audit_module_status.py --output-json docs/audit/module_status_2026-06-20.json
+.venv/bin/python scripts/audit_a_share_materialization_execution_review.py
+.venv/bin/python scripts/audit_module_status.py --output docs/audit/module_status_2026-06-20.json
 .venv/bin/python scripts/audit_bff_latency.py --start-server --port 8799 --output docs/audit/bff_latency_2026-06-20.json --repeats 2 --warmups 1 --threshold-ms 1000
 .venv/bin/python scripts/audit_dockcase_csv_quality_impact.py
 .venv/bin/python scripts/audit_completion_deviation.py
 ```
 
+The bounded execution command
+`.venv/bin/python scripts/audit_a_share_approval_materialization_batch_execution_preflight.py --execute`
+is a first-run mutation gate and should not be rerun against the already
+materialized `runtime/hot.sqlite`; use the post-execution review audit above for
+current-state reproduction.
+
 Expected current result: `docs/audit/completion_deviation_2026-06-20.json`
 reports 100.0% completion, 0.0% deviation, A-share current-MVP actionable gap
 0, BFF/API smoke under 1s, and DOCKCASE current-MVP data-quality actionable gap
-0. Production score writes remain disallowed; the materialization execution is
-a bounded runtime-data UPSERT with backup and post-write verification.
+0. Production score writes remain disallowed; the materialization execution was
+a bounded runtime-data UPSERT, and current reproduction is via the read-only
+post-execution value/timestamp review.
 
 ## Phase Z: schema governance + LLM workflow
 

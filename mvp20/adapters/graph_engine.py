@@ -3,7 +3,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from mvp20.adapters._artifacts import artifact_envelope, load_frontend_artifact
+from mvp20.adapters._artifacts import (
+    ArtifactPathError,
+    artifact_envelope,
+    load_frontend_artifact,
+)
 
 try:
     import graph_engine as _vendor  # noqa: F401
@@ -26,10 +30,32 @@ def _fixture(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+GRAPH_ARTIFACT_ALLOWLIST = {"subgraph.json", "paths.json", "impact.json"}
+
+
 def handle_graph_query(cfg, query: dict) -> tuple[int, dict]:
-    payload, artifact_path = load_frontend_artifact(
-        "graph-engine", query.get("artifact", ["subgraph.json"])[0]
-    )
+    artifact = str(query.get("artifact", ["subgraph.json"])[0] or "subgraph.json")
+    if artifact not in GRAPH_ARTIFACT_ALLOWLIST:
+        from mvp20.server import _error_envelope
+        return 400, _error_envelope(
+            "BAD_ARTIFACT_PARAM",
+            "graph-engine artifact must be one of the declared frontend-api graph artifacts",
+            status=400,
+            details={
+                "artifact": artifact,
+                "allowed_artifacts": sorted(GRAPH_ARTIFACT_ALLOWLIST),
+            },
+        )
+    try:
+        payload, artifact_path = load_frontend_artifact("graph-engine", artifact)
+    except (ArtifactPathError, ValueError) as e:
+        from mvp20.server import _error_envelope
+        return 400, _error_envelope(
+            "BAD_ARTIFACT_PARAM",
+            "graph-engine artifact path is not allowed",
+            status=400,
+            details={"artifact": artifact, "reason": str(e)},
+        )
     if payload is not None and artifact_path is not None:
         from mvp20.server import _ok_envelope
         return 200, _ok_envelope(

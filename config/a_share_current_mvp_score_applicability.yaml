@@ -59,3 +59,27 @@ exclusion_policies:
       signals when the A-share valuation peer pool is loaded, so these fields
       are diagnostics rather than separate final-score inputs in the current
       scoring design.
+  score_sink_no_effect_verified:
+    applies_when:
+      dp_id_in:
+        - L10.industry.fund_flow
+        - L10.industry.inventory_orders
+        - L10.industry.pmi
+        - L10.industry.sales_price
+        - L10.val.expansion_compression
+        - L10.val.historical_quantile
+        - L10.val.peer
+        - L6.sens.cashflow
+        - L6.sens.growth_margin
+        - L6.sens.rates
+        - L6.sens.risk_narrative
+        - L7.trade.gamma
+      score_sink_effect_status: no_final_score_delta
+    mvp_applicability: excluded_from_current_mvp_denominator
+    retained_as: scored_runtime_diagnostic_without_current_final_score_sink
+    rationale: >
+      Runtime numeric values exist, but deterministic score_company probes show
+      these targets do not change the current final-score outputs
+      (base/short/medium/long/market-adapter multiplier). They stay in the full
+      spec as diagnostics or dormant design hooks until a reviewed score sink is
+      implemented.

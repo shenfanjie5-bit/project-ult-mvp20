@@ -35,6 +35,7 @@ DEFAULT_CONVERSION_PATH = AUDIT_DIR / "a_share_spec_score_conversion_path_2026-0
 DEFAULT_EXECUTION_PATH = (
     AUDIT_DIR / "a_share_approval_materialization_batch_execution_2026-06-20.json"
 )
+DEFAULT_SCORE_SINK_EFFECT_PATH = AUDIT_DIR / "a_share_score_sink_effect_2026-06-20.json"
 DEFAULT_CONFIG_PATH = ROOT / "config/a_share_current_mvp_score_applicability.yaml"
 DEFAULT_JSON_OUTPUT = AUDIT_DIR / "a_share_current_mvp_score_applicability_2026-06-20.json"
 DEFAULT_MD_OUTPUT = AUDIT_DIR / "a_share_current_mvp_score_applicability_2026-06-20.md"
@@ -89,9 +90,37 @@ def _peer_superseded_ids(config: Mapping[str, Any]) -> set[str]:
     return {str(item) for item in values or [] if str(item)}
 
 
-def _evidence_paths(reason: str, *, closure_path: Path, conversion_path: Path, execution_path: Path) -> list[str]:
+def _score_sink_no_effect_ids(
+    config: Mapping[str, Any],
+    score_sink_effect: Mapping[str, Any],
+) -> set[str]:
+    policy = _policy(config, "score_sink_no_effect_verified")
+    applies = policy.get("applies_when") if isinstance(policy, Mapping) else {}
+    configured = {
+        str(item)
+        for item in (applies or {}).get("dp_id_in", [])
+        if str(item)
+    } if isinstance(applies, Mapping) else set()
+    verified = {
+        str(row.get("dp_id") or "")
+        for row in score_sink_effect.get("rows") or []
+        if isinstance(row, Mapping) and row.get("no_final_score_delta") is True
+    }
+    return configured & verified
+
+
+def _evidence_paths(
+    reason: str,
+    *,
+    closure_path: Path,
+    conversion_path: Path,
+    execution_path: Path,
+    score_sink_effect_path: Path,
+) -> list[str]:
     if reason == "no_valid_target_data_requires_unapproved_generation":
         return [_portable_path(closure_path)]
+    if reason == "score_sink_no_effect_verified":
+        return [_portable_path(score_sink_effect_path)]
     if reason in {
         "formula_policy_review_required",
         "governance_suppression_verified",
@@ -110,9 +139,11 @@ def _row_decision(
     closure_row: Mapping[str, Any],
     conversion_row: Mapping[str, Any],
     config: Mapping[str, Any],
+    score_sink_effect: Mapping[str, Any],
     closure_path: Path,
     conversion_path: Path,
     execution_path: Path,
+    score_sink_effect_path: Path,
 ) -> dict[str, Any]:
     current_closed = bool(conversion_row.get("current_final_score_numeric")) or (
         closure_row.get("closure_status") == "closed_reaches_final_score"
@@ -122,10 +153,15 @@ def _row_decision(
     blocking_gap = closure_row.get("blocking_gap") is True
     closure_status = str(closure_row.get("closure_status") or "")
     peer_superseded = dp_id in _peer_superseded_ids(config)
+    score_sink_no_effect = dp_id in _score_sink_no_effect_ids(config, score_sink_effect)
+    score_sink_row = _rows_by_dp(score_sink_effect).get(dp_id, {})
 
     reason = "included_open_gap"
     included = True
-    if current_closed:
+    if score_sink_no_effect:
+        included = False
+        reason = "score_sink_no_effect_verified"
+    elif current_closed:
         reason = "current_numeric_final_score"
     elif blocking_gap and closure_row.get("safe_to_upsert_without_review") is not True:
         included = False
@@ -164,11 +200,14 @@ def _row_decision(
         "runtime_valid_real_ts_count": closure_row.get("runtime_valid_real_ts_count", 0),
         "runtime_numeric_signal_ts_count": closure_row.get("runtime_numeric_signal_ts_count", 0),
         "effective_score_path_ts_count": closure_row.get("effective_score_path_ts_count", 0),
+        "score_sink_no_final_score_delta": score_sink_no_effect,
+        "score_sink_max_abs_delta": score_sink_row.get("max_abs_delta"),
         "evidence_paths": _evidence_paths(
             reason,
             closure_path=closure_path,
             conversion_path=conversion_path,
             execution_path=execution_path,
+            score_sink_effect_path=score_sink_effect_path,
         ),
     }
 
@@ -178,11 +217,13 @@ def build_report(
     field_closure_path: Path,
     conversion_path: Path,
     execution_path: Path,
+    score_sink_effect_path: Path,
     config_path: Path,
 ) -> dict[str, Any]:
     field_closure = _load_json(field_closure_path)
     conversion = _load_json(conversion_path)
     execution = _load_json(execution_path)
+    score_sink_effect = _load_json(score_sink_effect_path)
     config = _load_yaml(config_path)
     closure_by_dp = _rows_by_dp(field_closure)
     conversion_rows = [
@@ -197,9 +238,11 @@ def build_report(
             closure_row=closure_by_dp.get(str(row.get("dp_id") or ""), {}),
             conversion_row=row,
             config=config,
+            score_sink_effect=score_sink_effect,
             closure_path=field_closure_path,
             conversion_path=conversion_path,
             execution_path=execution_path,
+            score_sink_effect_path=score_sink_effect_path,
         )
         for row in conversion_rows
         if str(row.get("dp_id") or "")
@@ -223,6 +266,7 @@ def build_report(
             "field_closure_path": _portable_path(field_closure_path),
             "conversion_path": _portable_path(conversion_path),
             "execution_path": _portable_path(execution_path),
+            "score_sink_effect_path": _portable_path(score_sink_effect_path),
             "config_path": _portable_path(config_path),
         },
         "summary": {
@@ -243,6 +287,9 @@ def build_report(
             "runtime_materialization_post_write_verified_row_count": execution_summary.get(
                 "post_write_verified_row_count", 0
             ),
+            "score_sink_no_final_score_delta_count": (
+                score_sink_effect.get("summary") or {}
+            ).get("no_final_score_delta_count", 0),
             "score_mutation": "none; this audit is read-only and only defines current-MVP applicability",
         },
         "actionable_gap_rows": actionable_rows,
@@ -268,6 +315,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
         f"- Excluded from current-MVP denominator: `{summary['current_mvp_excluded_count']}`",
         f"- Runtime execution status: `{summary['runtime_materialization_execution_status']}`",
         f"- Post-write verified rows: `{summary['runtime_materialization_post_write_verified_row_count']}`",
+        f"- Score-sink no-final-score-delta fields: `{summary.get('score_sink_no_final_score_delta_count', 0)}`",
         f"- Score mutation: `{summary['score_mutation']}`",
         "",
         "## Exclusion Reasons",
@@ -304,7 +352,7 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             "## Interpretation",
             "",
             "- The raw spec denominator is preserved for transparency.",
-            "- The current-MVP denominator excludes only fields backed by audit evidence showing an unresolved approval, formula-policy, provider-universe, or peer-context-supersession gate.",
+            "- The current-MVP denominator excludes only fields backed by audit evidence showing an unresolved approval, formula-policy, provider-universe, peer-context-supersession, or verified no-final-score-delta score-sink gate.",
             "- Excluded fields stay in backlog/design scope; they are not counted as completed and are not written as fabricated Known values.",
             "",
         ]
@@ -317,6 +365,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--field-closure-path", type=Path, default=DEFAULT_FIELD_CLOSURE_PATH)
     parser.add_argument("--conversion-path", type=Path, default=DEFAULT_CONVERSION_PATH)
     parser.add_argument("--execution-path", type=Path, default=DEFAULT_EXECUTION_PATH)
+    parser.add_argument("--score-sink-effect-path", type=Path, default=DEFAULT_SCORE_SINK_EFFECT_PATH)
     parser.add_argument("--config-path", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--json-output", type=Path, default=DEFAULT_JSON_OUTPUT)
     parser.add_argument("--md-output", type=Path, default=DEFAULT_MD_OUTPUT)
@@ -329,6 +378,7 @@ def main() -> int:
         field_closure_path=args.field_closure_path,
         conversion_path=args.conversion_path,
         execution_path=args.execution_path,
+        score_sink_effect_path=args.score_sink_effect_path,
         config_path=args.config_path,
     )
     args.json_output.parent.mkdir(parents=True, exist_ok=True)

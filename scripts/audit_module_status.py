@@ -51,6 +51,77 @@ ADAPTER_MODULES = {
 
 DEPENDENCY_MODULES = {"contracts"}
 
+REPLACEMENT_MODULES: dict[str, dict[str, Any]] = {
+    "assembly": {
+        "replacement_path": "repo-level manifest/docs/audit assembly",
+        "required_paths": (
+            "README.md",
+            "docs/README.md",
+            "locks/modules.lock.yaml",
+            "docs/audit/completion_deviation_2026-06-20.json",
+        ),
+        "rationale": "current MVP assembly is the repo-level manifest, lock, docs, and generated completion audit bundle",
+    },
+    "frontend-api": {
+        "replacement_path": "mvp20 BFF /api/project-ult/* HTTP contract",
+        "required_paths": (
+            "mvp20/server.py",
+            "tests/test_server.py",
+            "docs/audit/bff_latency_2026-06-20.json",
+        ),
+        "rationale": "current MVP frontend API is served by the local mvp20 BFF contract and smoke-tested latency audit",
+    },
+    "orchestrator": {
+        "replacement_path": "mvp20 CLI plus operator runbook/audit orchestration",
+        "required_paths": (
+            "mvp20/cli.py",
+            "docs/RUNBOOK.md",
+            "scripts/audit_completion_deviation.py",
+            "scripts/audit_module_status.py",
+        ),
+        "rationale": "current MVP orchestration is operator-mediated through the local CLI, runbook, and reproducible audit scripts",
+    },
+    "subsystem-announcement": {
+        "replacement_path": "Tushare disclosure/report routes plus event-source audits",
+        "required_paths": (
+            "mvp20/sources/tushare_source.py",
+            "tests/test_tushare_disclosure.py",
+            "tests/test_tushare_report_rc.py",
+            "docs/audit/a_share_unknown_event_primary_source_confirmation_2026-06-19.json",
+        ),
+        "rationale": "current MVP announcement evidence is sourced through local Tushare disclosure/report adapters and event-source audits",
+    },
+    "subsystem-holdings": {
+        "replacement_path": "Tushare/A-share source readiness and materialization evidence",
+        "required_paths": (
+            "mvp20/sources/tushare_source.py",
+            "tests/test_tushare_core_batch.py",
+            "docs/audit/a_share_l0_source_readiness_2026-06-19.json",
+            "docs/audit/a_share_approval_materialization_plan_2026-06-20.json",
+        ),
+        "rationale": "current MVP holdings/capital-flow coverage is represented by local structured A-share source readiness and runtime materialization audits",
+    },
+    "subsystem-news": {
+        "replacement_path": "AKShare/CLS and local market-document event pipeline",
+        "required_paths": (
+            "mvp20/sources/akshare_source.py",
+            "scripts/collect_trackb_news.py",
+            "tests/test_akshare_cls.py",
+            "docs/audit/a_share_event_text_market_doc_evidence_2026-06-19.json",
+        ),
+        "rationale": "current MVP news/event text path uses local AKShare/CLS collection and market-document event evidence audits",
+    },
+    "subsystem-sdk": {
+        "replacement_path": "local HTTP contract tests and BFF latency smoke",
+        "required_paths": (
+            "tests/test_server.py",
+            "tests/test_audit_bff_latency.py",
+            "docs/audit/bff_latency_2026-06-20.json",
+        ),
+        "rationale": "current MVP SDK contract is the tested local HTTP envelope and latency-smoke interface",
+    },
+}
+
 BUCKET_RUNTIME_STATE = {
     "normal_running": "proven_runnable_or_serviceable",
     "normal_but_not_enabled": "configured_runnable_not_currently_enabled",
@@ -74,7 +145,7 @@ LOCAL_SURFACE_DEFINITIONS: tuple[dict[str, Any], ...] = (
         "surface_type": "http_bff",
         "service_bucket": "normal_running",
         "classification": "local_http_bff_under_1s",
-        "required_paths": ("mvp20/server.py", "docs/audit/bff_latency_2026-06-19.json"),
+        "required_paths": ("mvp20/server.py", "docs/audit/bff_latency_2026-06-20.json"),
         "audit_kind": "bff_latency",
         "evidence": ("BFF latency audit all_ok/all_under_threshold",),
     },
@@ -256,6 +327,32 @@ def _locked_evidence_level(
     return "missing_vendored_source"
 
 
+def _replacement_evidence(
+    repo: Path,
+    module_name: str,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    definition = REPLACEMENT_MODULES.get(module_name)
+    if not definition:
+        return None, []
+    required_paths = tuple(definition.get("required_paths", ()))
+    missing = _missing_paths(repo, required_paths)
+    evidence = [
+        f"current MVP replacement path: {definition['replacement_path']}",
+        f"replacement rationale: {definition['rationale']}",
+    ]
+    if missing:
+        evidence.append(f"missing replacement required paths: {', '.join(missing)}")
+    else:
+        evidence.append("replacement required paths present")
+    return {
+        "current_mvp_replacement_path": definition["replacement_path"],
+        "replacement_required_paths": list(required_paths),
+        "replacement_missing_paths": missing,
+        "replacement_path_verified": not missing,
+        "replacement_rationale": definition["rationale"],
+    }, evidence
+
+
 def load_lock(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
@@ -414,6 +511,7 @@ def classify_modules(
         has_source = upstream_dir.exists()
         evidence: list[str] = []
         route_ok = False
+        replacement, replacement_evidence = _replacement_evidence(repo, name)
 
         if name in DEPENDENCY_MODULES:
             classification = "normal_dependency_not_service"
@@ -453,8 +551,9 @@ def classify_modules(
                 evidence.append("source present but no enabled service proof")
             else:
                 evidence.append("no full vendored source in this checkout")
+        evidence.extend(replacement_evidence)
 
-        rows.append({
+        row = {
             "module": name,
             "commit": modules[name].get("commit"),
             "repo": modules[name].get("repo"),
@@ -473,7 +572,10 @@ def classify_modules(
                 "adapter evidence, not a live process probe"
             ),
             "evidence": evidence,
-        })
+        }
+        if replacement is not None:
+            row.update(replacement)
+        rows.append(row)
 
     counts = {
         "locked_total": len(rows),
@@ -495,6 +597,12 @@ def classify_modules(
         ),
         "missing_or_stub_only": sum(
             1 for r in rows if r["classification"] == "unavailable_as_full_module_here"
+        ),
+        "replacement_path_verified": sum(
+            1 for r in rows if r.get("replacement_path_verified") is True
+        ),
+        "replacement_path_unverified": sum(
+            1 for r in rows if r.get("current_mvp_replacement_path") and not r.get("replacement_path_verified")
         ),
     }
 
@@ -533,6 +641,8 @@ def classify_modules(
             "artifact_200_is_local_contract_surface": True,
             "skeleton_200_is_normal": False,
             "dependency_is_service": False,
+            "missing_source_counts_as_accounted": False,
+            "replacement_path_must_be_verified_to_count": True,
             "normal_but_not_enabled_requires_proof": True,
             "normal_running_bucket_means": (
                 "audit evidence proves the local surface is runnable or serviceable; "
@@ -553,7 +663,7 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo-root", default=".")
     ap.add_argument("--lock", default="locks/modules.lock.yaml")
-    ap.add_argument("--latency-json", default="docs/audit/bff_latency_2026-06-19.json")
+    ap.add_argument("--latency-json", default="docs/audit/bff_latency_2026-06-20.json")
     ap.add_argument(
         "--frontend-shell-latency-json",
         default="docs/audit/frontend_shell_latency_2026-06-19.json",

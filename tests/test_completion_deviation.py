@@ -22,7 +22,18 @@ def test_completion_deviation_report_meets_current_mvp_target(tmp_path):
                 "current_mvp_actionable_gap_count": 0,
                 "raw_current_numeric_final_score_count": 132,
                 "raw_score_relevant_final_target_count": 174,
-                "current_mvp_excluded_count": 42,
+                "current_mvp_excluded_count": 54,
+                "score_sink_no_final_score_delta_count": 12,
+            }
+        },
+    )
+    score_sink = _write_json(
+        tmp_path / "score_sink.json",
+        {
+            "summary": {
+                "candidate_dp_id_count": 12,
+                "no_final_score_delta_count": 12,
+                "effectful_count": 0,
             }
         },
     )
@@ -36,6 +47,15 @@ def test_completion_deviation_report_meets_current_mvp_target(tmp_path):
             }
         },
     )
+    materialization_review = _write_json(
+        tmp_path / "materialization_review.json",
+        {
+            "summary": {
+                "current_value_contract_error_count": 0,
+                "noop_updated_at_changed_count": 0,
+            }
+        },
+    )
     modules = _write_json(
         tmp_path / "modules.json",
         {
@@ -44,6 +64,8 @@ def test_completion_deviation_report_meets_current_mvp_target(tmp_path):
                 "artifact_callable": 6,
                 "normal_dependency_not_service": 1,
                 "missing_or_stub_only": 7,
+                "replacement_path_verified": 7,
+                "replacement_path_unverified": 0,
             }
         },
     )
@@ -62,7 +84,9 @@ def test_completion_deviation_report_meets_current_mvp_target(tmp_path):
 
     report = build_report(
         a_share_applicability_path=a_share,
+        a_share_score_sink_effect_path=score_sink,
         a_share_execution_path=execution,
+        a_share_materialization_review_path=materialization_review,
         module_status_path=modules,
         bff_latency_path=bff,
         dockcase_quality_path=dockcase,

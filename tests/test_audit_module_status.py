@@ -76,8 +76,11 @@ modules:
         == "artifact_adapter_and_route_latency_audit"
     )
     assert result["counts"]["artifact_callable"] == 1
+    assert result["counts"]["replacement_path_verified"] == 0
+    assert result["counts"]["replacement_path_unverified"] == 1
     assert by_name["orchestrator"]["classification"] == "unavailable_as_full_module_here"
     assert by_name["orchestrator"]["evidence_level"] == "missing_vendored_source"
+    assert by_name["orchestrator"]["replacement_path_verified"] is False
     assert (
         result["classification_policy"]["normal_running_bucket_means"]
         .startswith("audit evidence proves")

@@ -259,6 +259,30 @@ def test_adapter_import_fallback_returns_503(running_server, monkeypatch) -> Non
     assert "simulated" in body["error"]["details"]["import_error"]
 
 
+@pytest.mark.parametrize("artifact", [
+    "../../benchmarks/artifacts/lite_target_100k_800k.json",
+    "../../README.md",
+    "/tmp/not-owned.json",
+])
+def test_graph_adapter_rejects_unsafe_artifact_param(running_server, artifact: str) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"artifact": artifact})
+    status, _, body = _get(host, port, f"/api/project-ult/graph/query{qs}")
+    assert status == 400
+    assert body["error"]["code"] == "BAD_ARTIFACT_PARAM"
+
+
+def test_graph_adapter_accepts_declared_artifact_param(running_server) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"artifact": "subgraph.json"})
+    status, _, body = _get(host, port, f"/api/project-ult/graph/query{qs}")
+    assert status == 200
+    assert body["data"]["wire_depth"] == "artifact"
+    assert body["data"]["artifact_path"].endswith(
+        "upstream/graph-engine/artifacts/frontend-api/subgraph.json"
+    )
+
+
 def test_unknown_api_path_returns_404_envelope(running_server) -> None:
     host, port, *_ = running_server
     status, _, body = _get(host, port, "/api/totally/bogus/path")

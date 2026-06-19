@@ -28,20 +28,23 @@ Verified status from the current worktree:
   latency, and DOCKCASE CSV quality impact.
 - A-share score-relevant closure uses a transparent two-denominator policy.
   Raw score-relevant final-score closure is **132 / 174**. The current local MVP
-  denominator is **132 / 132** after excluding 42 fields only when backed by
+  denominator is **120 / 120** after excluding 54 fields only when backed by
   audit evidence: unapproved generation/backlog, policy review, governance
-  suppression, option-universe N/A, or valuation peer-context supersession.
+  suppression, option-universe N/A, valuation peer-context supersession, or
+  verified no-final-score-delta score-sink evidence.
   Current-MVP A-share actionable gap is **0**.
 - The approved A-share materialization batch executed against
-  `runtime/hot.sqlite` with a SQLite backup, `pragma quick_check`, transactional
-  UPSERT, and post-write verification. The execution wrote or verified **11,006**
-  planned rows, created one DB backup, reported **0** post-write verification
-  errors, and still allows **0** production score writes.
+  `runtime/hot.sqlite` with a backup, `pragma quick_check`, transactional
+  UPSERT, and post-write verification. A read-only post-execution review now
+  verifies **11,006** planned rows with **0** value-contract errors, records
+  **1,011** inserts, and explicitly documents the historical **9,995**
+  timestamp-only no-op row refreshes fixed in the execution script for future
+  runs. Production score writes remain disallowed.
 - Module lock validates with **14 modules**.
 - The 2026-06-20 module audit accounts for all 14 locked modules under the
   current MVP contract-surface policy: **6 artifact-backed adapters**,
-  **1 importable dependency** (`contracts`), and **7 explicit replacement or
-  missing-source paths**. It does not claim those 13 non-`contracts` modules are
+  **1 importable dependency** (`contracts`), and **7 verified replacement
+  paths**. It does not claim those 13 non-`contracts` modules are
   production-normal upstream services in this checkout.
 - The 6 adapter-backed upstream route families now serve local
   `upstream/*/artifacts/frontend-api/` payloads through `mvp20/adapters/*` with
@@ -943,15 +946,16 @@ Verified status from the current worktree:
   batch-plan gates, and allows 0 production writes.
 - A-share approval materialization execution-preflight audit in
   `docs/audit/a_share_approval_materialization_batch_execution_preflight_2026-06-20.json`
-  checks the 11 approved batch plans against the current runtime DB. All 11
-  plans are dry-run ready, 0 are blocked, the runtime write set contains 11,006
-  rows, 1,011 are inserts, 0 are updates, 9,995 existing rows are verified for
-  backup/rollback, and 0 production writes are allowed. The paired execution
-  audit in
+  is the first-run mutation gate for the approved runtime DB state. The paired
+  execution audit in
   `docs/audit/a_share_approval_materialization_batch_execution_2026-06-20.json`
   ran `--execute`, created a SQLite backup, inserted 1,011 rows, verified all
   11,006 planned rows after the transaction, and reported 0 verification
-  errors.
+  errors. The current read-only post-execution review in
+  `docs/audit/a_share_materialization_execution_review_2026-06-20.json`
+  rechecks the backup/current DB pair, reports 0 current value-contract errors,
+  and records the historical 9,995 timestamp-only no-op refreshes that are now
+  suppressed by the execution script for future runs.
 - A-share Unknown penetration value-priority audit in
   `docs/audit/a_share_unknown_penetration_value_priority_2026-06-19.json`
   narrows the closest Unknown business-metric blocker (`L0.demand.penetration`).
@@ -1535,9 +1539,10 @@ uses the production path:
 
 The current 2026-06-20 A-share applicability artifact keeps the raw score
 denominator visible while separating current-MVP applicability. Raw score-field
-closure is **132 / 174**; the current-MVP denominator is **132 / 132** with
-**0** actionable gaps after excluding 42 fields only with audit-backed
-non-applicability/backlog reasons. The current score-field closure audit also
+closure is **132 / 174**; the current-MVP denominator is **120 / 120** with
+**0** actionable gaps after excluding 54 fields only with audit-backed
+non-applicability/backlog or verified no-final-score-delta score-sink reasons.
+The current score-field closure audit also
 reports **21** raw candidate-ready blockers before denominator adjustment,
 `direct_structured_tushare_remaining=0`, and
 `safe_to_upsert_without_review_count=0`. Historical candidate dry-run,
@@ -3379,7 +3384,7 @@ write loop for all materialization-ready plans:
 | Codex review approved | 11 | Deterministic batch-review accepted all current ready plans. |
 | approval-gate accepted | 11 | Hash-bound approval records matched all current ready plans. |
 | execution preflight ready | 11 | Dry-run validation found no runtime DB mismatch. |
-| execution status | executed | `--execute` created a backup, ran SQLite `quick_check`, UPSERTed, and verified. |
+| execution status | executed | `--execute` created a backup, ran SQLite `quick_check`, UPSERTed, and verified; current reproduction uses the read-only post-execution review. |
 | planned UPSERT rows | 11,006 | Row-set across the 11 current materialization-ready plans. |
 | rows inserted | 1,011 | New `realtime_current` rows created in this execution. |
 | noop existing rows | 9,995 | Previously materialized rows were already present and hash-compatible. |
@@ -3491,14 +3496,15 @@ local denominator:
 |---|---:|---|
 | raw score-relevant final targets | 174 | Full score-relevant design denominator before current-MVP applicability. |
 | raw numeric final-score fields | 132 | Fields currently proven to reach the final score. |
-| current-MVP denominator | 132 | Fields still applicable to the current local MVP score path. |
-| current-MVP closed fields | 132 | All applicable current-MVP fields reach final score. |
+| current-MVP denominator | 120 | Fields still applicable to the current local MVP score path. |
+| current-MVP closed fields | 120 | All applicable current-MVP fields reach final score. |
 | current-MVP actionable gaps | 0 | No field remains both applicable and unclosed. |
 | formula-policy exclusions | 6 | Require business/formula policy before entering scoring. |
 | governance-suppression exclusions | 8 | Suppressed by canonical/replacement paths or governance rules. |
 | unapproved-generation exclusions | 21 | Need governed LLM/web/human extraction before score use. |
 | option-universe N/A exclusions | 3 | Current A-share universe has no legitimate single-stock option input. |
 | valuation peer-context superseded | 4 | Superseded by the active `L6.state.peer_compare` peer-context path. |
+| score-sink no-effect exclusions | 12 | Runtime numeric diagnostics with verified zero delta on current final-score outputs. |
 
 The broader historical split and queue records remain in
 [`docs/audit/a_share_gap_fill_plan.md`](docs/audit/a_share_gap_fill_plan.md);
@@ -3826,7 +3832,7 @@ done
 .venv/bin/mvp20 validate-overlays
 .venv/bin/mvp20 compile-overlays --db runtime/hot.sqlite
 .venv/bin/mvp20 run-fixture-e2e
-.venv/bin/python scripts/audit_module_status.py --output-json docs/audit/module_status_2026-06-20.json
+.venv/bin/python scripts/audit_module_status.py --output docs/audit/module_status_2026-06-20.json
 .venv/bin/python scripts/audit_completion_deviation.py
 .venv/bin/python -m pytest
 .venv/bin/python -m pytest -q tests/test_field_governance.py tests/test_missing_balance.py tests/test_market_adapter.py tests/test_scoring.py
