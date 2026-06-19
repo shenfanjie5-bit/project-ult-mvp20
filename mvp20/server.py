@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -143,6 +144,18 @@ def _validate_industry_id(value: str | None) -> str | None:
     return value if _INDUSTRY_ID_RE.match(value) else None
 
 
+def _query_flag(query: dict, name: str, *, default: bool) -> bool:
+    raw = (query.get(name) or [None])[0]
+    if raw is None or raw == "":
+        return default
+    value = str(raw).strip().lower()
+    if value in {"0", "false", "no", "off"}:
+        return False
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    return default
+
+
 def _upstream_unavailable(module: str, path: str) -> dict:
     return _error_envelope(
         code="UPSTREAM_NOT_RUNNING",
@@ -158,6 +171,86 @@ def _upstream_unavailable(module: str, path: str) -> dict:
 
 def _request_id() -> str:
     return f"mvp20-{int(time.time() * 1000)}"
+
+
+_YAML_CACHE: dict[str, tuple[int, Any]] = {}
+_DERIVED_RESPONSE_CACHE_TTL_SECONDS = 2.0
+_DERIVED_RESPONSE_CACHE_MAX = 128
+_DERIVED_RESPONSE_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+_DERIVED_RESPONSE_CACHE_LOCK = threading.RLock()
+
+
+def _load_yaml_cached(path: Path) -> Any:
+    key = str(path.resolve())
+    mtime_ns = path.stat().st_mtime_ns
+    hit = _YAML_CACHE.get(key)
+    if hit and hit[0] == mtime_ns:
+        return hit[1]
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    _YAML_CACHE[key] = (mtime_ns, payload)
+    return payload
+
+
+def _file_fingerprint(path: Path | None) -> tuple[str, int | None, int | None]:
+    if path is None:
+        return ("", None, None)
+    try:
+        stat = path.stat()
+    except OSError:
+        return (str(path.resolve()), None, None)
+    return (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+
+
+def _industry_overlay_path(cfg: ServerConfig, industry_id: str | None) -> Path | None:
+    if not industry_id or not _validate_industry_id(industry_id):
+        return None
+    path = cfg.industry_overlays_dir / f"{industry_id}.yaml"
+    return path if path.exists() else None
+
+
+def _derived_cache_key(
+    cfg: ServerConfig,
+    endpoint: str,
+    ts_code: str,
+    industry_id: str | None,
+    *,
+    extra_paths: tuple[Path, ...] = (),
+) -> tuple[Any, ...]:
+    overlay_path = _find_stock_overlay_path(cfg, ts_code, industry_id)
+    industry_path = _industry_overlay_path(cfg, industry_id)
+    return (
+        endpoint,
+        ts_code,
+        industry_id or "",
+        _file_fingerprint(overlay_path),
+        _file_fingerprint(industry_path),
+        _file_fingerprint(cfg.hot_db_path),
+        tuple(_file_fingerprint(path) for path in extra_paths),
+    )
+
+
+def _derived_cache_get(key: tuple[Any, ...]) -> dict[str, Any] | None:
+    now = time.monotonic()
+    with _DERIVED_RESPONSE_CACHE_LOCK:
+        hit = _DERIVED_RESPONSE_CACHE.get(key)
+        if not hit:
+            return None
+        inserted_at, value = hit
+        if now - inserted_at > _DERIVED_RESPONSE_CACHE_TTL_SECONDS:
+            _DERIVED_RESPONSE_CACHE.pop(key, None)
+            return None
+        return value
+
+
+def _derived_cache_set(key: tuple[Any, ...], value: dict[str, Any]) -> None:
+    with _DERIVED_RESPONSE_CACHE_LOCK:
+        if len(_DERIVED_RESPONSE_CACHE) >= _DERIVED_RESPONSE_CACHE_MAX:
+            oldest = min(
+                _DERIVED_RESPONSE_CACHE,
+                key=lambda item: _DERIVED_RESPONSE_CACHE[item][0],
+            )
+            _DERIVED_RESPONSE_CACHE.pop(oldest, None)
+        _DERIVED_RESPONSE_CACHE[key] = (time.monotonic(), value)
 
 
 # ---------------------------------------------------------------------------
@@ -202,8 +295,8 @@ def handle_compat(_: ServerConfig, _q: dict) -> HandlerResult:
 
 
 def handle_manifests_latest(cfg: ServerConfig, _q: dict) -> HandlerResult:
-    universe = yaml.safe_load(cfg.universe_path.read_text(encoding="utf-8"))
-    industries = yaml.safe_load(cfg.industries_path.read_text(encoding="utf-8"))
+    universe = _load_yaml_cached(cfg.universe_path)
+    industries = _load_yaml_cached(cfg.industries_path)
     return 200, _ok_envelope({
         "universe": universe,
         "industries": industries,
@@ -211,12 +304,12 @@ def handle_manifests_latest(cfg: ServerConfig, _q: dict) -> HandlerResult:
 
 
 def handle_modules(cfg: ServerConfig, _q: dict) -> HandlerResult:
-    payload = yaml.safe_load(cfg.lock_path.read_text(encoding="utf-8"))
+    payload = _load_yaml_cached(cfg.lock_path)
     return 200, _ok_envelope(payload)
 
 
 def handle_providers(cfg: ServerConfig, _q: dict) -> HandlerResult:
-    catalog = yaml.safe_load(cfg.providers_path.read_text(encoding="utf-8"))
+    catalog = _load_yaml_cached(cfg.providers_path)
     validation = providers_mod.validate_provider_catalog(
         cfg.providers_path,
         required_markets={"A", "HK", "US"},
@@ -235,7 +328,7 @@ def handle_providers(cfg: ServerConfig, _q: dict) -> HandlerResult:
 
 
 def handle_profiles(cfg: ServerConfig, query: dict) -> HandlerResult:
-    universe = yaml.safe_load(cfg.universe_path.read_text(encoding="utf-8"))
+    universe = _load_yaml_cached(cfg.universe_path)
     constituents = universe.get("constituents", [])
 
     # Optional filtering
@@ -243,9 +336,17 @@ def handle_profiles(cfg: ServerConfig, query: dict) -> HandlerResult:
     role = query.get("role", [None])[0]
     industry = query.get("industry", [None])[0]
     market = query.get("market", [None])[0]
+    ts_code_raw = query.get("ts_code", [None])[0]
+    ts_code = _validate_ts_code(ts_code_raw) if ts_code_raw else None
+    if ts_code_raw and not ts_code:
+        return 400, _error_envelope(
+            "BAD_PARAM", f"invalid ts_code: {ts_code_raw!r}", status=400
+        )
 
     profiles = []
     for c in constituents:
+        if ts_code and c.get("ts_code") != ts_code:
+            continue
         if pool and c.get("pool", "regular") != pool:
             continue
         if role and c.get("role", "target") != role:
@@ -275,7 +376,7 @@ def handle_industry_graph(cfg: ServerConfig, query: dict) -> HandlerResult:
         graphs = []
         for path in sorted(cfg.industry_graphs_dir.glob("*.yaml")):
             try:
-                payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+                payload = _load_yaml_cached(path) or {}
             except yaml.YAMLError:
                 payload = {}
             if payload.get("graph_status") == "pending":
@@ -293,7 +394,7 @@ def handle_industry_graph(cfg: ServerConfig, query: dict) -> HandlerResult:
             f"No industry graph for {industry_id}; check industries.yaml",
             status=404,
         )
-    payload = yaml.safe_load(target.read_text(encoding="utf-8"))
+    payload = _load_yaml_cached(target)
     return 200, _ok_envelope(payload)
 
 
@@ -821,6 +922,8 @@ def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
         )
 
     requested_industry_id = (query.get("industry_id") or [None])[0]
+    include_static = _query_flag(query, "include_static", default=True)
+    response_profile = "full" if include_static else "lean"
 
     # 1. Fast path — compiled SQLite snapshot.
     compiled = read_compiled_graph_snapshot(
@@ -841,7 +944,7 @@ def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
         if not alerts:
             alerts = compiled.get("alerts") or []
         static_overlay = compiled.get("static_overlay") or {}
-        return 200, _ok_envelope({
+        payload = {
             "ts_code": ts_code,
             "industry_id": industry_id,
             "available_industries": available_industries,
@@ -858,11 +961,23 @@ def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
                 "realtime_node_count": len(realtime),
                 "layers": freshness_layers,
             },
-            "static_overlay": static_overlay,
-            # Backward-compatible aliases for the current frontend/tests.
-            "static": static_overlay,
-            "industry_context": _read_industry_overlay(cfg, industry_id),
-        })
+            "response_profile": response_profile,
+        }
+        if include_static:
+            payload.update({
+                "static_overlay": static_overlay,
+                # Backward-compatible aliases for existing clients/tests.
+                "static": static_overlay,
+                "industry_context": _read_industry_overlay(cfg, industry_id),
+            })
+        else:
+            payload.update({
+                "static_overlay": {},
+                "static": {},
+                "industry_context": {},
+                "omitted_fields": ["static_overlay", "static", "industry_context"],
+            })
+        return 200, _ok_envelope(payload)
 
     # 2. Fallback path — YAML authoring files.
     static_path = _find_stock_overlay_path(cfg, ts_code, requested_industry_id)
@@ -897,7 +1012,7 @@ def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
     )
     industry_context = _read_industry_overlay(cfg, industry_id)
 
-    return 200, _ok_envelope({
+    payload = {
         "ts_code": ts_code,
         "industry_id": industry_id,
         "available_industries": available_industries,
@@ -910,9 +1025,6 @@ def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
         "scores": static.get("scores") or {},
         "coverage": static.get("coverage") or {},
         "alerts": [],
-        "static": static,
-        "static_overlay": static,
-        "industry_context": industry_context,
         "realtime": realtime,
         "freshness": {
             "static_period": static.get("period"),
@@ -921,7 +1033,22 @@ def handle_stock_overlay(cfg: ServerConfig, query: dict) -> HandlerResult:
             "realtime_node_count": len(realtime),
             "layers": freshness_layers,
         },
-    })
+        "response_profile": response_profile,
+    }
+    if include_static:
+        payload.update({
+            "static": static,
+            "static_overlay": static,
+            "industry_context": industry_context,
+        })
+    else:
+        payload.update({
+            "static": {},
+            "static_overlay": {},
+            "industry_context": {},
+            "omitted_fields": ["static_overlay", "static", "industry_context"],
+        })
+    return 200, _ok_envelope(payload)
 
 
 def _find_stock_overlay_path(
@@ -947,8 +1074,8 @@ def _find_stock_overlay_path(
         primary = []
         for path in nested:
             try:
-                payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            except yaml.YAMLError:
+                payload = _load_yaml_cached(path) or {}
+            except (OSError, yaml.YAMLError):
                 continue
             if payload.get("primary_industry") is True:
                 primary.append(path)
@@ -993,8 +1120,8 @@ def _load_stock_overlay_payload(
             },
         ), None
     try:
-        overlay = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:
+        overlay = _load_yaml_cached(path) or {}
+    except (OSError, yaml.YAMLError) as exc:
         return None, 500, _error_envelope(
             "OVERLAY_PARSE_ERROR",
             f"failed to parse {path.name}: {exc}",
@@ -1021,12 +1148,12 @@ def _load_industry_overlay_payload(
     # ``industry_overlays_dir``.
     if not _validate_industry_id(industry_id):
         return None
-    path = cfg.industry_overlays_dir / f"{industry_id}.yaml"
-    if not path.exists():
+    path = _industry_overlay_path(cfg, industry_id)
+    if path is None:
         return None
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError:
+        return _load_yaml_cached(path) or {}
+    except (OSError, yaml.YAMLError):
         return None
 
 
@@ -1046,6 +1173,11 @@ def handle_aggregate(cfg: ServerConfig, query: dict) -> HandlerResult:
     )
     if overlay is None:
         return status, err
+
+    cache_key = _derived_cache_key(cfg, "aggregate", ts_code, industry_id)
+    cached = _derived_cache_get(cache_key)
+    if cached is not None:
+        return 200, _ok_envelope(cached)
 
     industry_overlay = _load_industry_overlay_payload(cfg, industry_id)
 
@@ -1070,11 +1202,13 @@ def handle_aggregate(cfg: ServerConfig, query: dict) -> HandlerResult:
             details={"ts_code": ts_code, "industry_id": industry_id},
         )
 
-    return 200, _ok_envelope({
+    data = {
         "ts_code": ts_code,
         "industry_id": industry_id,
         "nodes": nodes,
-    })
+    }
+    _derived_cache_set(cache_key, data)
+    return 200, _ok_envelope(data)
 
 
 def handle_coverage(cfg: ServerConfig, query: dict) -> HandlerResult:
@@ -1094,9 +1228,20 @@ def handle_coverage(cfg: ServerConfig, query: dict) -> HandlerResult:
     if overlay is None:
         return status, err
 
+    spec_path = CONFIG_DIR / "data_point_roles.yaml"
+    cache_key = _derived_cache_key(
+        cfg,
+        "coverage",
+        ts_code,
+        industry_id,
+        extra_paths=(spec_path,),
+    )
+    cached = _derived_cache_get(cache_key)
+    if cached is not None:
+        return 200, _ok_envelope(cached)
+
     try:
         from mvp20.coverage import combined_coverage_summary
-        spec_path = CONFIG_DIR / "data_point_roles.yaml"
         report = combined_coverage_summary(
             overlay,
             ts_code=ts_code,
@@ -1120,7 +1265,7 @@ def handle_coverage(cfg: ServerConfig, query: dict) -> HandlerResult:
             continue
         per_node[str(key)] = entry
 
-    return 200, _ok_envelope({
+    data = {
         "ts_code": report.get("ts_code") or ts_code,
         "industry_id": report.get("industry_id") or industry_id,
         "overall_data_coverage": overall.get("data_coverage", 0.0),
@@ -1137,7 +1282,9 @@ def handle_coverage(cfg: ServerConfig, query: dict) -> HandlerResult:
         "spec_total": overall.get("spec_total", 0),
         "per_node": per_node,
         "alerts": report.get("alerts") or [],
-    })
+    }
+    _derived_cache_set(cache_key, data)
+    return 200, _ok_envelope(data)
 
 
 def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
@@ -1157,6 +1304,20 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
     )
     if overlay is None:
         return status, err
+
+    cache_key = _derived_cache_key(
+        cfg,
+        "score",
+        ts_code,
+        industry_id,
+        extra_paths=(
+            cfg.hot_db_path.parent / "peer_context_A.json",
+            RUNTIME_DIR / "quant_score" / "A_share.json",
+        ),
+    )
+    cached = _derived_cache_get(cache_key)
+    if cached is not None:
+        return 200, _ok_envelope(cached)
 
     industry_overlay = _load_industry_overlay_payload(cfg, industry_id)
 
@@ -1235,7 +1396,7 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
 
     final_score = result.get("final_score") or {}
     top_paths = result.get("top_paths") or {"positive": [], "negative": []}
-    return 200, _ok_envelope({
+    data = {
         "ts_code": result.get("ts_code") or ts_code,
         "industry_id": result.get("industry_id") or industry_id,
         "mode": result.get("mode_display") or result.get("mode"),
@@ -1268,7 +1429,9 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
         # technicals panel does — silent staleness is how a 113h-old picture
         # gets read as current.
         "freshness": _score_freshness(realtime_data),
-    })
+    }
+    _derived_cache_set(cache_key, data)
+    return 200, _ok_envelope(data)
 
 
 def _score_freshness(realtime_data: dict | None) -> dict:
@@ -1618,6 +1781,15 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "mvp20/0.1"
     _config: ServerConfig | None = None  # set by the wrapper class
 
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            # Clients can cancel while BaseHTTPRequestHandler is still reading
+            # the request line. That is the same cancellation class as a
+            # write-side broken pipe, so keep it out of server error logs.
+            return
+
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         # Concise access log — single line per request
         print(f"{self.log_date_time_string()} {self.address_string()} "
@@ -1634,12 +1806,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _write_json(self, status: int, body: dict) -> None:
         encoded = dumps_strict_json(body).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
-        self._set_cors()
-        self.end_headers()
-        self.wfile.write(encoded)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self._set_cors()
+            self.end_headers()
+            self.wfile.write(encoded)
+        except (BrokenPipeError, ConnectionResetError):
+            # Browser navigation and React Query cancellation can close a
+            # socket after the handler has computed a response. Treat that as
+            # client cancellation, not a server error worth logging a traceback.
+            return
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(204)

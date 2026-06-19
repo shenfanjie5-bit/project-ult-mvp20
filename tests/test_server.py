@@ -133,6 +133,17 @@ def test_profiles_filter_by_industry(running_server) -> None:
         assert "AI_COMPUTE" in p["industry_ids"]
 
 
+def test_profiles_filter_by_ts_code(running_server) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"ts_code": "300750.SZ"})
+    status, _, body = _get(host, port, f"/api/project-ult/profiles{qs}")
+    assert status == 200
+    profiles = body["data"]["profiles"]
+    assert len(profiles) == 1
+    assert profiles[0]["ts_code"] == "300750.SZ"
+    assert body["data"]["total"] == 1
+
+
 def test_industry_graphs_index(running_server) -> None:
     host, port, *_ = running_server
     status, _, body = _get(host, port, "/api/project-ult/industry-graphs")
@@ -363,6 +374,21 @@ def test_stock_overlay_merges_static_and_realtime(running_server, tmp_path) -> N
         assert set(data["realtime"].keys()) == {"L7.flow.netbuy", "L7.trade.iv"}
         assert data["freshness"]["realtime_node_count"] == 2
         assert data["freshness"]["static_period"] == "2026-Q1"
+
+        status, _h, body = _get(
+            "127.0.0.1",
+            port,
+            "/api/project-ult/stock-overlay?ts_code=TEST.SZ&include_static=0",
+        )
+        assert status == 200
+        lean = body["data"]
+        assert lean["response_profile"] == "lean"
+        assert lean["static"] == {}
+        assert lean["static_overlay"] == {}
+        assert lean["industry_context"] == {}
+        assert lean["omitted_fields"] == ["static_overlay", "static", "industry_context"]
+        assert set(lean["realtime"].keys()) == {"L7.flow.netbuy", "L7.trade.iv"}
+        assert lean["compiled_graph"]["nodes"] == []
     finally:
         httpd.shutdown(); httpd.server_close(); thread.join(timeout=2)
 
@@ -535,6 +561,7 @@ def test_stock_overlay_endpoint_primary_default_and_industry_switch(tmp_path) ->
         assert data["available_industries"] == ["PRIMARY_IND", "SECONDARY_IND"]
         assert data["compiled_graph"]["nodes"][0]["node_id"] == "p"
         assert set(data["realtime"]) == {"L7.flow.netbuy"}
+        assert data["static_overlay"]["name"] == "主行业"
 
         status, _h, body = _get(
             "127.0.0.1",
@@ -544,6 +571,17 @@ def test_stock_overlay_endpoint_primary_default_and_industry_switch(tmp_path) ->
         assert status == 200
         assert body["data"]["industry_id"] == "SECONDARY_IND"
         assert body["data"]["compiled_graph"]["nodes"][0]["node_id"] == "s"
+
+        status, _h, body = _get(
+            "127.0.0.1",
+            port,
+            "/api/project-ult/stock-overlay?ts_code=SWITCH.SZ&include_static=0",
+        )
+        assert status == 200
+        assert body["data"]["response_profile"] == "lean"
+        assert body["data"]["static_overlay"] == {}
+        assert body["data"]["industry_context"] == {}
+        assert body["data"]["compiled_graph"]["nodes"][0]["node_id"] == "p"
     finally:
         httpd.shutdown(); httpd.server_close(); thread.join(timeout=2)
 
@@ -663,6 +701,62 @@ def test_aggregate_unknown_ts_code_returns_404(running_server) -> None:
     status, _h, body = _get(host, port, f"/api/project-ult/aggregate{qs}")
     assert status == 404
     assert body["error"]["code"] == "OVERLAY_NOT_FOUND"
+
+
+def test_aggregate_endpoint_reuses_short_ttl_cache(tmp_path, monkeypatch) -> None:
+    from mvp20 import server as server_mod
+    from mvp20.server import ServerConfig
+
+    server_mod._DERIVED_RESPONSE_CACHE.clear()
+    overlays_dir = tmp_path / "stock_overlays"
+    industry_dir = tmp_path / "industry_overlays"
+    (overlays_dir / "TEST_IND").mkdir(parents=True)
+    industry_dir.mkdir()
+    (overlays_dir / "TEST_IND" / "TEST.SZ.yaml").write_text(
+        "ts_code: TEST.SZ\nindustry_id: TEST_IND\nindustry_ids: [TEST_IND]\n"
+        "schema_version: 1\nperiod: 2026-Q1\n",
+        encoding="utf-8",
+    )
+    (industry_dir / "TEST_IND.yaml").write_text(
+        "industry_id: TEST_IND\nschema_version: 1\nperiod: 2026-Q1\n",
+        encoding="utf-8",
+    )
+    hot_db = tmp_path / "hot.sqlite"
+    hot_db.write_bytes(b"")
+    cfg = ServerConfig(
+        stock_overlays_dir=overlays_dir,
+        industry_overlays_dir=industry_dir,
+        hot_db_path=hot_db,
+    )
+    calls = {"n": 0}
+
+    def fake_aggregate(*_args, **_kwargs):
+        calls["n"] += 1
+        return {
+            "node": {
+                "score": 0.25,
+                "short_score": 0.2,
+                "medium_score": 0.25,
+                "long_score": 0.3,
+                "confidence": 0.8,
+                "data_coverage": 1.0,
+            }
+        }
+
+    monkeypatch.setattr(
+        "mvp20.aggregator.aggregate_company_graph",
+        fake_aggregate,
+    )
+
+    query = {"ts_code": ["TEST.SZ"], "industry_id": ["TEST_IND"]}
+    first_status, first_body = server_mod.handle_aggregate(cfg, query)
+    second_status, second_body = server_mod.handle_aggregate(cfg, query)
+
+    assert first_status == 200
+    assert second_status == 200
+    assert first_body["data"] == second_body["data"]
+    assert calls["n"] == 1
+    server_mod._DERIVED_RESPONSE_CACHE.clear()
 
 
 def test_coverage_endpoint_returns_overall_and_per_node(running_server) -> None:
