@@ -280,3 +280,5 @@ files, generated manifests, stdout/stderr captures, or exitcode files.
 - M4.7/financial-doc complete.
 - Contracts subtype changes.
 - New relation types.
+- A-share score completion complete.
+- Runtime score writes approved.
