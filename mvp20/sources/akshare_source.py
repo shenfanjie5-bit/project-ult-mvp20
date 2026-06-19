@@ -24,15 +24,18 @@ Market-level catalyst dp_ids (CLS 财联社电报)
 ----------------------------------------------
 
 A single ``ak.stock_info_global_cls()`` call returns the latest 财联社
-electronic telegraph stream. We bucket the result into 3 market-wide
+electronic telegraph stream. We bucket the result into 4 market-wide
 dp_ids — all keyed to the sentinel ``ts_code='MARKET:CN'`` (same
 convention used by ``tushare_source.fetch_macro_china_batch``):
 
-* ``L9.media.report`` — full count + top headlines from the last 24h.
+* ``L9.media.report`` — full count + top headlines from the last 24h,
+  plus conservative positive/negative headline classification.
 * ``L9.industry.policy_change`` — same stream, filtered by policy keywords
   (政策 / 监管 / 牌照 / 反垄断 / 出口管制 / …).
 * ``L9.industry.compete_risk`` — same stream, filtered by risk keywords
   (诉讼 / 调查 / 处罚 / 暴雷 / 退市 / 制裁 / …).
+* ``L9.macro.geo`` — same stream, filtered by high-precision geopolitical
+  keywords (地缘 / 战争 / 冲突 / 制裁 / 出口管制 / …).
 
 Stub Tier-2 / Tier-3 dp_ids (commodity / sector heat) are kept in
 ``SUPPORTED_DP_IDS`` with TODO notes — they need industry-level fan-out
@@ -55,6 +58,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 import os
 import re
 import threading
@@ -147,12 +151,13 @@ TIER1_DP_IDS = {
 }
 
 # Market-level (sentinel ts_code = 'MARKET:CN'), shared 财联社电报 stream.
-# All three dp_ids are emitted from a single ``stock_info_global_cls`` call;
+# All market-level dp_ids are emitted from a single ``stock_info_global_cls`` call;
 # the bucketing logic lives in ``fetch_cls_telegraph_batch``.
 MARKET_LEVEL_DP_IDS = {
     "L9.media.report",
     "L9.industry.policy_change",
     "L9.industry.compete_risk",
+    "L9.macro.geo",
 }
 
 # Tier-2/3: industry / commodity / sector-heat dp_ids. These were MOVED off
@@ -720,11 +725,12 @@ def fetch_social_buzz(a_codes: list[str], now: int) -> list[tuple]:
 #
 # A single ``ak.stock_info_global_cls()`` call produces the 财联社 electronic
 # telegraph list (latest ~20 headlines, ordered most-recent-first). We bucket
-# the result into three MARKET:CN-keyed dp_ids:
+# the result into four MARKET:CN-keyed dp_ids:
 #
-#   * ``L9.media.report``           — overall flow (no keyword filter)
+#   * ``L9.media.report``           — overall flow + conservative media tilt
 #   * ``L9.industry.policy_change`` — policy / regulation keyword bucket
 #   * ``L9.industry.compete_risk``  — risk / incident keyword bucket
+#   * ``L9.macro.geo``              — geopolitical risk keyword bucket
 #
 # The CLS endpoint occasionally 502s and akshare sometimes drops the symbol
 # (older versions called it ``stock_telegraph_cls``). We TTL-cache the
@@ -741,6 +747,16 @@ _CLS_TELEGRAPH_MARKET = "MARKET:CN"
 _CLS_TELEGRAPH_MAX_HEADLINES = 10
 _CLS_TELEGRAPH_TITLE_TRIM = 200
 _CLS_TELEGRAPH_LOOKBACK_S = 24 * 3600  # 24h window
+_CLS_DIRECT_URL = "https://www.cls.cn/v1/roll/get_roll_list"
+_CLS_DIRECT_APP = "CailianpressWeb"
+_CLS_DIRECT_SV = "8.7.9"
+_CLS_DIRECT_RN = 20
+try:
+    _CLS_DIRECT_TIMEOUT_S = float(
+        os.environ.get("AKSHARE_CLS_DIRECT_TIMEOUT_S", "8")
+    )
+except (TypeError, ValueError):
+    _CLS_DIRECT_TIMEOUT_S = 8.0
 
 # Keyword filters. Keep them small and high-precision; we'd rather miss a
 # borderline headline than pollute the bucket. All keywords are 2-4 character
@@ -749,10 +765,136 @@ _POLICY_KEYWORDS = (
     "政策", "补贴", "反垄断", "监管", "牌照", "税收",
     "出口管制", "限制", "通知", "办法", "意见", "规定", "暂行",
 )
+_POLICY_POSITIVE_KEYWORDS = (
+    "补贴", "支持", "鼓励", "促进", "扶持", "减税", "降费",
+    "免税", "放宽", "以旧换新", "专项资金", "利好",
+)
+_POLICY_NEGATIVE_KEYWORDS = (
+    "监管", "反垄断", "限制", "出口管制", "处罚", "禁令",
+    "整治", "约谈", "通报", "核查", "收紧", "暂缓",
+)
 _RISK_KEYWORDS = (
     "诉讼", "调查", "处罚", "退市", "造假", "暴雷", "违约",
     "重大风险", "事故", "突发", "停产", "罢工", "制裁",
 )
+_GEO_KEYWORDS = (
+    "地缘", "战争", "冲突", "军事", "边境", "台海", "海峡",
+    "南海", "中东", "红海", "乌克兰", "俄罗斯", "以色列",
+    "伊朗", "关税", "制裁", "禁运", "出口管制", "贸易摩擦",
+    "贸易争端",
+)
+_MEDIA_POSITIVE_KEYWORDS = (
+    "涨停", "大涨", "强势上涨", "创历史新高", "刷新高", "利好",
+    "业绩预增", "业绩大增", "净利大增", "净利润增长", "扭亏",
+    "中标", "签订重大合同", "订单大增", "回购", "增持", "上调评级",
+    "获批", "突破",
+)
+_MEDIA_NEGATIVE_KEYWORDS = (
+    "跌停", "大跌", "暴跌", "重挫", "跳水", "创新低", "利空",
+    "业绩预亏", "业绩下滑", "净利下降", "亏损", "爆雷", "暴雷",
+    "违约", "立案调查", "被调查", "处罚", "退市", "减持",
+    "下调评级", "重大风险", "停产", "事故",
+)
+
+
+def _cls_sign_params(params: dict[str, object]) -> str:
+    """Mirror the current cls.cn web request signature.
+
+    The Next.js client signs the sorted query string with sha1, then md5 of
+    that sha1 hex digest. Values used here are scalar, so no nested encoding is
+    needed.
+    """
+
+    query = "&".join(
+        f"{key}={params[key]}"
+        for key in sorted(params, key=lambda value: str(value).upper())
+    )
+    sha1_hex = hashlib.sha1(query.encode("utf-8")).hexdigest()
+    return hashlib.md5(sha1_hex.encode("utf-8")).hexdigest()
+
+
+def _fetch_cls_telegraph_records_direct() -> list[dict] | None:
+    """Fetch current CLS roll_data directly from the web endpoint.
+
+    AKShare's ``stock_info_global_cls`` still points at the removed
+    ``/nodeapi/telegraphList`` endpoint. The live web app now calls
+    ``/v1/roll/get_roll_list`` with a signed query. Returning ``None`` tells
+    the caller to try the legacy AKShare wrapper instead.
+    """
+
+    timeout = _CLS_DIRECT_TIMEOUT_S
+    if timeout <= 0:
+        return None
+
+    params: dict[str, object] = {
+        "refresh_type": 1,
+        "rn": _CLS_DIRECT_RN,
+        "last_time": 0,
+        "os": "web",
+        "sv": _CLS_DIRECT_SV,
+        "app": _CLS_DIRECT_APP,
+    }
+    params["sign"] = _cls_sign_params(params)
+    query = urllib.parse.urlencode(params)
+    request = urllib.request.Request(
+        f"{_CLS_DIRECT_URL}?{query}",
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/114.0.0.0 Safari/537.36"
+            ),
+            "Referer": "https://www.cls.cn/telegraph",
+            "Accept": "application/json,text/plain,*/*",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+    data = json.loads(raw)
+    if str(data.get("errno")) not in {"0"}:
+        raise RuntimeError(
+            f"cls_direct_errno={data.get('errno')} msg={data.get('msg')}"
+        )
+    records = (data.get("data") or {}).get("roll_data")
+    if not isinstance(records, list):
+        raise RuntimeError("cls_direct_missing_roll_data")
+
+    converted: list[dict] = []
+    cn_tz = timezone(timedelta(hours=8))
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        ctime = rec.get("ctime")
+        publish_dt: datetime | None = None
+        try:
+            publish_dt = datetime.fromtimestamp(float(ctime), tz=timezone.utc)
+            publish_dt = publish_dt.astimezone(cn_tz)
+        except (TypeError, ValueError, OSError):
+            publish_dt = None
+        title = str(rec.get("title") or "").strip()
+        content = str(rec.get("content") or rec.get("brief") or "").strip()
+        if not title:
+            title = content
+        row = {
+            "标题": title,
+            "内容": content,
+            "等级": rec.get("level"),
+            "url": (
+                rec.get("shareurl")
+                or rec.get("assocArticleUrl")
+                or (
+                    f"https://www.cls.cn/detail/{rec.get('id')}"
+                    if rec.get("id")
+                    else None
+                )
+            ),
+            "source": "cls_roll_web",
+        }
+        if publish_dt is not None:
+            row["发布日期"] = publish_dt.date()
+            row["发布时间"] = publish_dt.time().replace(microsecond=0)
+        converted.append(row)
+    return converted
 
 
 def _parse_cls_publish_epoch(date_val, time_val) -> int | None:
@@ -812,6 +954,42 @@ def _match_any_keyword(text: str, keywords: tuple[str, ...]) -> bool:
     return any(kw in text for kw in keywords)
 
 
+def _policy_tilt_from_text(text: str) -> int:
+    """Return +1 for clearly supportive policy, -1 for restrictive policy.
+
+    Generic policy words such as 通知/办法/意见 are intentionally neutral; they
+    prove an observed policy headline but not a safe score direction.
+    """
+
+    if not text:
+        return 0
+    pos = _match_any_keyword(text, _POLICY_POSITIVE_KEYWORDS)
+    neg = _match_any_keyword(text, _POLICY_NEGATIVE_KEYWORDS)
+    if pos and not neg:
+        return 1
+    if neg and not pos:
+        return -1
+    return 0
+
+
+def _media_tilt_from_text(text: str) -> int:
+    """Return +1/-1 only for high-precision market-news sentiment terms.
+
+    Raw CLS headline volume is attention, not direction. Generic "涨/跌" words
+    are intentionally ignored; only unambiguous terms become score evidence.
+    """
+
+    if not text:
+        return 0
+    pos = _match_any_keyword(text, _MEDIA_POSITIVE_KEYWORDS)
+    neg = _match_any_keyword(text, _MEDIA_NEGATIVE_KEYWORDS)
+    if pos and not neg:
+        return 1
+    if neg and not pos:
+        return -1
+    return 0
+
+
 def _inactive_cls_row(dp_id: str, now: int, reason: str) -> tuple:
     """Build an Inactive 7-tuple for one of the CLS dp_ids."""
 
@@ -828,8 +1006,8 @@ def _inactive_cls_row(dp_id: str, now: int, reason: str) -> tuple:
     )
 
 
-def _emit_inactive_cls_triplet(now: int, reason: str) -> list[tuple]:
-    """Build all three MARKET:CN rows in the Inactive state.
+def _emit_inactive_cls_rows(now: int, reason: str) -> list[tuple]:
+    """Build all MARKET:CN CLS rows in the Inactive state.
 
     Used when akshare is missing, the endpoint 502s, or the DataFrame
     comes back empty. We still emit rows so the freshness panel knows the
@@ -841,7 +1019,7 @@ def _emit_inactive_cls_triplet(now: int, reason: str) -> list[tuple]:
 
 
 def fetch_cls_telegraph_batch(now: int) -> list[tuple]:
-    """One CLS telegraph fetch → three MARKET:CN dp_id rows.
+    """One CLS telegraph fetch → MARKET:CN dp_id rows.
 
     Returns 7-tuple rows in the standard ``upsert_realtime`` shape. The
     upstream call is wrapped in TTL cache (``_CLS_CACHE_TTL_S``) so we
@@ -860,37 +1038,57 @@ def fetch_cls_telegraph_batch(now: int) -> list[tuple]:
                   now - cached_ts, len(cached_rows))
         return list(cached_rows)
 
+    records: list[dict] | None = None
+    direct_error: str | None = None
     try:
-        import akshare as ak  # type: ignore
-    except ImportError as e:
-        log.warning("[akshare] cls telegraph skipped — akshare missing: %s", e)
-        return _emit_inactive_cls_triplet(now, f"akshare_missing: {e}")
+        records = _fetch_cls_telegraph_records_direct()
+    except Exception as e:  # noqa: BLE001 — signed web endpoint can change
+        direct_error = str(e)
+        log.warning("[akshare] cls direct web fetch failed: %s", e)
 
-    # akshare renamed ``stock_telegraph_cls`` → ``stock_info_global_cls``
-    # somewhere around 1.16; we accept either to stay forward/backward
-    # compatible with whatever version the host ships.
-    fn = getattr(ak, "stock_info_global_cls", None) \
-        or getattr(ak, "stock_telegraph_cls", None)
-    if fn is None:
-        log.warning("[akshare] cls telegraph symbol missing on akshare module")
-        return _emit_inactive_cls_triplet(now, "akshare_symbol_missing")
+    if records is None:
+        try:
+            import akshare as ak  # type: ignore
+        except ImportError as e:
+            log.warning(
+                "[akshare] cls telegraph skipped — akshare missing: %s", e
+            )
+            reason = f"akshare_missing: {e}"
+            if direct_error:
+                reason = f"cls_direct_error: {direct_error}; {reason}"
+            return _emit_inactive_cls_rows(now, reason)
 
-    try:
-        df = _ak_call("stock_info_global_cls", fn)
-    except Exception as e:  # noqa: BLE001 — upstream can 502 / drop JSON
-        log.warning("[akshare] stock_info_global_cls failed: %s", e)
-        return _emit_inactive_cls_triplet(now, f"upstream_error: {e}")
+        # akshare renamed ``stock_telegraph_cls`` → ``stock_info_global_cls``
+        # somewhere around 1.16; we accept either to stay forward/backward
+        # compatible with whatever version the host ships.
+        fn = getattr(ak, "stock_info_global_cls", None) \
+            or getattr(ak, "stock_telegraph_cls", None)
+        if fn is None:
+            log.warning("[akshare] cls telegraph symbol missing on akshare module")
+            reason = "akshare_symbol_missing"
+            if direct_error:
+                reason = f"cls_direct_error: {direct_error}; {reason}"
+            return _emit_inactive_cls_rows(now, reason)
 
-    if df is None or len(df) == 0:
-        log.warning("[akshare] cls telegraph returned empty frame")
-        return _emit_inactive_cls_triplet(now, "empty_frame")
+        try:
+            df = _ak_call("stock_info_global_cls", fn)
+        except Exception as e:  # noqa: BLE001 — upstream can 502 / drop JSON
+            log.warning("[akshare] stock_info_global_cls failed: %s", e)
+            reason = f"upstream_error: {e}"
+            if direct_error:
+                reason = f"cls_direct_error: {direct_error}; {reason}"
+            return _emit_inactive_cls_rows(now, reason)
 
-    # Convert to records once; iterate three times for the three buckets.
-    try:
-        records = df.to_dict(orient="records")
-    except Exception as e:  # noqa: BLE001 — defensive against weird DF shape
-        log.warning("[akshare] cls to_dict failed: %s", e)
-        return _emit_inactive_cls_triplet(now, f"frame_decode: {e}")
+        if df is None or len(df) == 0:
+            log.warning("[akshare] cls telegraph returned empty frame")
+            return _emit_inactive_cls_rows(now, "empty_frame")
+
+        # Convert to records once; iterate three times for the three buckets.
+        try:
+            records = df.to_dict(orient="records")
+        except Exception as e:  # noqa: BLE001 — defensive against weird DF shape
+            log.warning("[akshare] cls to_dict failed: %s", e)
+            return _emit_inactive_cls_rows(now, f"frame_decode: {e}")
 
     # Pre-compute headline objects + 24h-window filter once.
     cutoff = now - _CLS_TELEGRAPH_LOOKBACK_S
@@ -915,35 +1113,68 @@ def fetch_cls_telegraph_batch(now: int) -> list[tuple]:
     as_of = _as_of_iso()
     rows: list[tuple] = []
 
-    # ---- L9.media.report — full flow ----
+    # ---- L9.media.report — full flow + conservative media tilt ----
+    # A successful decoded CLS window is valid even when no headline has a safe
+    # direction; count_24h remains descriptive, while net_media_score is the
+    # only field the scorer is allowed to consume.
     report_headlines = [h for h, _ in enriched[:_CLS_TELEGRAPH_MAX_HEADLINES]]
+    media_tilts = [
+        0 if (
+            _match_any_keyword(text, _POLICY_KEYWORDS)
+            or _match_any_keyword(text, _RISK_KEYWORDS)
+        ) else _media_tilt_from_text(text)
+        for _, text in enriched
+    ]
+    media_positive_count = sum(1 for tilt in media_tilts if tilt > 0)
+    media_negative_count = sum(1 for tilt in media_tilts if tilt < 0)
+    media_net_score = media_positive_count - media_negative_count
     rows.append((
         _CLS_TELEGRAPH_MARKET, "L9.media.report",
         json.dumps({
             "count_24h": len(enriched),
+            "event_active": bool(media_positive_count or media_negative_count),
+            "positive_media_count": media_positive_count,
+            "negative_media_count": media_negative_count,
+            "net_media_score": media_net_score,
+            "classified_media_count": media_positive_count + media_negative_count,
             "top_headlines": report_headlines,
             "as_of": as_of,
         }, ensure_ascii=False),
-        "Known" if enriched else "Inactive",
+        "Known",
         0.6, "akshare:stock_info_global_cls", now,
     ))
 
     # ---- L9.industry.policy_change — policy keywords ----
-    policy_hits = [h for h, text in enriched
-                   if _match_any_keyword(text, _POLICY_KEYWORDS)]
+    # Zero policy hits is a decoded no-policy-change observation. Hits are only
+    # directional when high-precision positive/negative policy words classify
+    # cleanly; generic policy/legal wording remains Known-neutral.
+    policy_pairs = [
+        (h, text) for h, text in enriched
+        if _match_any_keyword(text, _POLICY_KEYWORDS)
+    ]
+    policy_hits = [h for h, _ in policy_pairs]
     policy_headlines = policy_hits[:_CLS_TELEGRAPH_MAX_HEADLINES]
+    policy_tilts = [_policy_tilt_from_text(text) for _, text in policy_pairs]
+    policy_positive_count = sum(1 for tilt in policy_tilts if tilt > 0)
+    policy_negative_count = sum(1 for tilt in policy_tilts if tilt < 0)
+    policy_net_score = policy_positive_count - policy_negative_count
     rows.append((
         _CLS_TELEGRAPH_MARKET, "L9.industry.policy_change",
         json.dumps({
             "count_24h": len(policy_hits),
+            "event_active": bool(policy_hits),
+            "positive_policy_count": policy_positive_count,
+            "negative_policy_count": policy_negative_count,
+            "net_policy_score": policy_net_score,
             "top_headlines": policy_headlines,
             "as_of": as_of,
         }, ensure_ascii=False),
-        "Known" if policy_hits else "Inactive",
+        "Known",
         0.55, "akshare:stock_info_global_cls", now,
     ))
 
     # ---- L9.industry.compete_risk — risk keywords ----
+    # Zero keyword hits is a decoded no-risk observation, not missing data.
     risk_hits = [h for h, text in enriched
                  if _match_any_keyword(text, _RISK_KEYWORDS)]
     risk_headlines = risk_hits[:_CLS_TELEGRAPH_MAX_HEADLINES]
@@ -951,18 +1182,39 @@ def fetch_cls_telegraph_batch(now: int) -> list[tuple]:
         _CLS_TELEGRAPH_MARKET, "L9.industry.compete_risk",
         json.dumps({
             "count_24h": len(risk_hits),
+            "event_active": bool(risk_hits),
             "top_headlines": risk_headlines,
             "as_of": as_of,
         }, ensure_ascii=False),
-        "Known" if risk_hits else "Inactive",
+        "Known",
+        0.55, "akshare:stock_info_global_cls", now,
+    ))
+
+    # ---- L9.macro.geo — geopolitical keywords ----
+    # Zero geo hits is a decoded no-geo-event observation. The dp_id is not
+    # score-participating itself; downstream candidate generation uses it as
+    # dependency evidence for black-swan shock classification.
+    geo_hits = [h for h, text in enriched
+                if _match_any_keyword(text, _GEO_KEYWORDS)]
+    geo_headlines = geo_hits[:_CLS_TELEGRAPH_MAX_HEADLINES]
+    rows.append((
+        _CLS_TELEGRAPH_MARKET, "L9.macro.geo",
+        json.dumps({
+            "count_24h": len(geo_hits),
+            "event_active": bool(geo_hits),
+            "top_headlines": geo_headlines,
+            "as_of": as_of,
+        }, ensure_ascii=False),
+        "Known",
         0.55, "akshare:stock_info_global_cls", now,
     ))
 
     _LAST_CLS_FETCH["ts"] = now
     _LAST_CLS_FETCH["rows"] = list(rows)
-    log.info("[akshare] cls telegraph: %d total in 24h, %d policy, %d risk "
-             "→ 3 rows (next fetch in %ds)",
-             len(enriched), len(policy_hits), len(risk_hits),
+    log.info("[akshare] cls telegraph: %d total in 24h, %d policy, %d risk, "
+             "%d geo → %d rows (next fetch in %ds)",
+             len(enriched), len(policy_hits), len(risk_hits), len(geo_hits),
+             len(rows),
              _CLS_CACHE_TTL_S)
     return rows
 
@@ -1628,7 +1880,7 @@ def _fetch_dzjy_events_last5(
     max_trade_days: int = 5,
     max_calendar_days: int = 12,
     reference_date: date | datetime | str | None = None,
-) -> dict[str, list[dict]]:
+) -> tuple[dict[str, list[dict]], bool]:
     """Aggregate last ``max_trade_days`` of 大宗交易 events keyed by
     6-digit 证券代码.
 
@@ -1637,15 +1889,18 @@ def _fetch_dzjy_events_last5(
     surfaces as a ``TypeError`` about subscripting None). We walk back
     calendar days, ignoring days that produce no data, until we have
     accumulated ``max_trade_days`` worth of records OR exceeded
-    ``max_calendar_days`` of look-back.
+    ``max_calendar_days`` of look-back. The boolean marks whether at least one
+    upstream response was successfully decoded, so callers can distinguish
+    "valid zero events" from "all endpoint calls failed".
     """
 
     try:
         import akshare as ak  # type: ignore
     except ImportError:
-        return {}
+        return {}, False
 
     events: dict[str, list[dict]] = {}
+    source_ok = False
     base_date = _normalise_dzjy_reference_date(reference_date)
     trade_days_seen = 0
     for d_back in range(0, max_calendar_days + 1):
@@ -1657,7 +1912,13 @@ def _fetch_dzjy_events_last5(
             # NoneType subscripting on weekends, network errors, or layout
             # drifts all land here — silently skip and keep walking back.
             continue
-        if df is None or len(df) == 0:
+        if df is None:
+            continue
+        source_ok = True
+        if len(df) == 0:
+            trade_days_seen += 1
+            if trade_days_seen >= max_trade_days:
+                break
             continue
         trade_days_seen += 1
         for rec in df.to_dict(orient="records"):
@@ -1681,7 +1942,7 @@ def _fetch_dzjy_events_last5(
             })
         if trade_days_seen >= max_trade_days:
             break
-    return events
+    return events, source_ok
 
 
 def _normalise_dzjy_reference_date(
@@ -1713,9 +1974,10 @@ def fetch_l9_capital_etf_block(
 
     Aggregates daily ``ak.stock_dzjy_mrmx`` snapshots once per cycle
     (10-min TTL cache), then per-stock lookup. Stocks with zero recent
-    events emit ``Inactive``; stocks with at least one event emit
+    events emit ``Known`` neutral; stocks with at least one event emit
     ``Known`` plus a payload that includes total ``成交额`` and a
-    sample of up to 5 events.
+    sample of up to 5 events. If every upstream request fails, rows remain
+    ``Inactive`` with a reason instead of pretending the no-event state is known.
     """
 
     if not a_codes:
@@ -1729,7 +1991,7 @@ def fetch_l9_capital_etf_block(
             and cached_rows and cached_key == cache_key):
         return list(cached_rows)
 
-    block_by_code = _fetch_dzjy_events_last5(reference_date=base_date)
+    block_by_code, source_ok = _fetch_dzjy_events_last5(reference_date=base_date)
     as_of = _as_of_iso()
     rows: list[tuple] = []
     for ts_code in a_codes:
@@ -1738,13 +2000,18 @@ def fetch_l9_capital_etf_block(
             continue
         events = block_by_code.get(sec) or []
         if not events:
+            payload = {
+                "events_count": 0,
+                "event_active": False,
+                "as_of": as_of,
+            }
+            if not source_ok:
+                payload["reason"] = "upstream_no_valid_dzjy_days"
             rows.append((
                 ts_code, "L9.capital.etf_block",
-                json.dumps({
-                    "events_count": 0,
-                    "as_of": as_of,
-                }, ensure_ascii=False),
-                "Inactive", 0.5,
+                json.dumps(payload, ensure_ascii=False),
+                "Known" if source_ok else "Inactive",
+                0.6 if source_ok else 0.5,
                 "akshare:stock_dzjy_mrmx", now,
             ))
             continue
@@ -1760,6 +2027,7 @@ def fetch_l9_capital_etf_block(
             avg_price = round(sum(priced) / len(priced), 4)
         payload = {
             "events_count": len(events),
+            "event_active": True,
             "total_amount_cny": total_amount,
             "total_volume": total_volume,
             "avg_price": avg_price,
@@ -1836,7 +2104,7 @@ def fetch_batch(
                 log.warning("[akshare] %s FAILED: %s", name, exc)
 
     # Market-level CLS telegraph (MARKET:CN sentinel) — runs regardless of
-    # the per-stock universe so the 3 catalyst dp_ids are always populated.
+    # the per-stock universe so the catalyst dp_ids are always populated.
     try:
         cls_rows = fetch_cls_telegraph_batch(now)
         rows.extend(cls_rows)

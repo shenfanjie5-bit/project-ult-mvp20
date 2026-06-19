@@ -24,6 +24,7 @@ from typing import Iterable
 log = logging.getLogger("mvp20.sources.tushare")
 
 DEFAULT_TUSHARE_TIMEOUT_SECONDS = 10.0
+DEFAULT_TUSHARE_EARNINGS_RISK_SAMPLE_SIZE = 256
 
 SUPPORTED_DP_IDS = {
     # L6/L7 daily (from daily_basic / moneyflow / hk_hold)
@@ -113,6 +114,7 @@ SUPPORTED_DP_IDS = {
     # sentinels (not registered in universe.yaml — SQLite PK on (ts_code,
     # dp_id) only needs uniqueness, not FK referential integrity).
     "L10.industry.pmi",           # cn_pmi (manufacturing + non-manuf + composite)
+    "L10.industry.inventory_orders",  # cn_pmi subindices as industry confidence proxy
     "L7.env.rates",               # shibor_lpr — LPR1Y/5Y + Shibor (state)
     "L9.macro.rates",             # same source, event-shaped when LPR moves
     "L7.env.liquidity",           # cn_m M0/M1/M2 (state)
@@ -120,6 +122,7 @@ SUPPORTED_DP_IDS = {
     "L7.env.fx",                  # fx_daily USDCNH — RMB regime tilt (MARKET:CN)
     "L9.macro.fx",                # fx_daily USDCNH — RMB depreciation risk (MARKET:CN)
     "L9.macro.cpi_employment",    # cn_cpi + cn_ppi
+    "L10.industry.sales_price",   # cn_ppi + cn_cpi as industry confidence proxy
     "L7.env.market_trend",         # index_daily market benchmark trend
     "L7.env.style",                # index_daily 成长 vs 价值 regime tilt (MARKET:CN)
     "L10.val.historical_quantile",  # market-wide PE_ttm quantile from daily_basic
@@ -149,7 +152,7 @@ SUPPORTED_DP_IDS = {
     "L8.fin.debt_pressure",       # interest_debt / EBITDA, alert_severity
     "L8.op.inventory_glut",       # inventory yoy vs turnover delta, alert
     # ── X5: text-disclosure dp_ids surfaced to codex prompts ──
-    # These three dp_ids are *not* in spec 250 (data_point_roles.yaml).
+    # These three dp_ids are *not* in the spec 256 (data_point_roles.yaml).
     # They are mvp20-internal facts that codex consumes via prompt injection
     # to fill the 26 new closed-loop slots without hitting external sources.
     # field_governance treats them as unmanaged, which is fine — the SQLite
@@ -162,9 +165,10 @@ SUPPORTED_DP_IDS = {
     "L2.segment.revenue_share",     # 各 bz_item 收入占比
     "L2.segment.gross_margin",      # (bz_sales - bz_cost) / bz_sales
     "L2.segment.growth",            # bz_sales 同比 yoy
-    # Sub-group 2: L5 财报预告/快报变化 (2)
+    # Sub-group 2: L5 财报预告/快报变化 (3)
     "L5.fcst.guidance_change",      # forecast 最近 2 期 type/range delta
     "L5.surprise.beat_miss",        # express 实际 vs forecast 中位
+    "L5.surprise.preprice",         # forecast 公告日前 5/10/20 交易日涨幅
     # Sub-group 3: L8.fin 财报风险 (3)
     "L8.fin.eps_downward",          # forecast EPS 中位数 delta
     "L8.fin.goodwill_impairment",   # balancesheet goodwill 下滑
@@ -233,6 +237,26 @@ _LAST_MACRO_FETCH: dict[str, object] = {
     "ts": 0,        # unix epoch of last real Tushare fetch
     "rows": [],     # cached row list (with original updated_at preserved)
 }
+
+# The two industry validation fields below are confidence multipliers, not
+# directional alpha. Limit broad macro proxies to industries where PMI/PPI
+# signals are materially tied to production, inventory, or input/output prices.
+_PMI_VALIDATION_INDUSTRIES = frozenset({
+    "SEMI_EQUIPMENT",
+    "EXPORT_MFG",
+    "STORAGE_GRID",
+    "CONSUMER_ELECTRONICS",
+    "AI_COMPUTE",
+    "ROBOTICS",
+    "NONFERROUS_METALS",
+    "ANTI_INVOLUTION_CYCLICAL",
+})
+_PRICE_VALIDATION_INDUSTRIES = _PMI_VALIDATION_INDUSTRIES | frozenset({
+    "INNOVATIVE_PHARMA",
+    "DOMESTIC_CONSUMPTION",
+})
+_CN_PMI_LATEST_CACHE: tuple[int, dict[str, object] | None] | None = None
+_CN_PRICE_INDEX_LATEST_CACHE: tuple[int, dict[str, object]] | None = None
 
 # ── FX tilt tuning (L7.env.fx / L9.macro.fx via fx_daily) ──────────────────
 # Window: ~20 trading rows ≈ one trading month of USDCN* close-to-close move.
@@ -415,6 +439,18 @@ def _tushare_timeout_seconds() -> float:
         )
         return DEFAULT_TUSHARE_TIMEOUT_SECONDS
     return timeout
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        log.warning("[tushare] invalid %s=%r; using %d", name, raw, default)
+        return default
+    return max(1, value)
 
 
 def health_check() -> dict:
@@ -1876,6 +1912,86 @@ def fetch_report_rc_constituents_batch(
     )
 
 
+def _fetch_a_share_report_rc_signal_rows(
+    pro,
+    a_codes: list[str],
+    now: int,
+    lookback_days: int = 90,
+) -> list[tuple]:
+    """Pull only report_rc-derived scoring signal rows.
+
+    This keeps the analyst-action/rating/revision refresh independent from the
+    broader Bucket B path, which also touches daily_basic, hot lists, holders,
+    and industry fan-out endpoints.
+    """
+
+    rows: list[tuple] = []
+    for ts_code in a_codes:
+        try:
+            records = _get_report_rc_records(
+                pro, ts_code, now, lookback_days=lookback_days,
+            )
+            rev_payload, rev_status = _derive_analyst_revision(records)
+            rows.append((
+                ts_code, "L6.priced.analyst_revision",
+                json.dumps(rev_payload, ensure_ascii=False),
+                rev_status, 0.75 if rev_status == "Known" else 0.0,
+                "tushare:report_rc", now,
+            ))
+            rating_payload, rating_status = _derive_analyst_rating(records)
+            rows.append((
+                ts_code, "L7.mood.analyst_rating",
+                json.dumps(rating_payload, ensure_ascii=False),
+                rating_status, 0.75 if rating_status == "Known" else 0.0,
+                "tushare:report_rc", now,
+            ))
+            action_payload, action_status = _derive_analyst_action(records)
+            rows.append((
+                ts_code, "L9.media.analyst_action",
+                json.dumps(action_payload, ensure_ascii=False),
+                action_status, 0.7 if action_status == "Known" else 0.0,
+                "tushare:report_rc", now,
+            ))
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] report_rc signals %s failed: %s", ts_code, e)
+            for dp_id in (
+                "L6.priced.analyst_revision",
+                "L7.mood.analyst_rating",
+                "L9.media.analyst_action",
+            ):
+                rows.append((
+                    ts_code, dp_id,
+                    json.dumps({"reason": "report_rc signal endpoint failed"},
+                               ensure_ascii=False),
+                    "Inactive", 0.0, "tushare:report_rc", now,
+                ))
+    return rows
+
+
+def fetch_report_rc_signal_constituents_batch(
+    constituents: Iterable[dict],
+    tick: int,
+    *,
+    lookback_days: int = 90,
+) -> list[tuple]:
+    """Pull only per-stock report_rc-derived score signal rows."""
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping report_rc signal batch")
+        return []
+
+    a_codes = [
+        c["ts_code"] for c in constituents
+        if c.get("ts_code") and is_a_share(c["ts_code"])
+    ]
+    if not a_codes:
+        return []
+    return _fetch_a_share_report_rc_signal_rows(
+        pro, a_codes, int(time.time()), lookback_days=lookback_days,
+    )
+
+
 def fetch_crowding_batch(
     constituents: Iterable[dict],
     tick: int,
@@ -1915,6 +2031,76 @@ def fetch_crowding_batch(
             "tushare:daily_basic.history", now,
         ))
     return rows
+
+
+def fetch_preprice_surprise_constituents_batch(
+    constituents: Iterable[dict],
+    tick: int,
+) -> list[tuple]:
+    """Pull only ``L5.surprise.preprice`` from forecast + daily history."""
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping preprice batch")
+        return []
+
+    a_codes = [
+        c["ts_code"] for c in constituents
+        if c.get("ts_code") and is_a_share(c["ts_code"])
+    ]
+    if not a_codes:
+        return []
+    return fetch_preprice_surprise_batch(pro, a_codes, int(time.time()))
+
+
+def fetch_earnings_risk_constituents_batch(
+    constituents: Iterable[dict],
+    tick: int,
+) -> list[tuple]:
+    """Pull only earnings-surprise and financial-risk event rows."""
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping earnings risk batch")
+        return []
+
+    a_codes = [
+        c["ts_code"] for c in constituents
+        if c.get("ts_code") and is_a_share(c["ts_code"])
+    ]
+    if not a_codes:
+        return []
+    return fetch_earnings_risk_batch(
+        pro,
+        a_codes,
+        int(time.time()),
+        sample_size=_env_positive_int(
+            "TUSHARE_EARNINGS_RISK_SAMPLE_SIZE",
+            DEFAULT_TUSHARE_EARNINGS_RISK_SAMPLE_SIZE,
+        ),
+    )
+
+
+def fetch_industry_valuation_constituents_batch(
+    constituents: Iterable[dict],
+    tick: int,
+) -> list[tuple]:
+    """Pull only industry valuation-compression sentinel rows."""
+
+    pro = _get_pro_api()
+    if pro is None:
+        log.warning("[tushare] TUSHARE_TOKEN not set — skipping industry valuation batch")
+        return []
+
+    a_codes = [
+        c["ts_code"] for c in constituents
+        if c.get("ts_code") and is_a_share(c["ts_code"])
+    ]
+    if not a_codes:
+        return []
+    return fetch_industry_valuation_compression_batch(
+        pro, a_codes, int(time.time()),
+    )
 
 
 def fetch_market_env_batch(
@@ -4075,21 +4261,101 @@ def _safe_num(v) -> float | None:
     return f
 
 
-def _emit_pmi(pro, now: int) -> list[tuple]:
-    """``L10.industry.pmi`` — single MARKET:CN row from ``pro.cn_pmi``."""
+def _casefold_record(rec: dict) -> dict[str, object]:
+    """Normalize Tushare/Pandas record keys so CSV and API casing both work."""
 
+    return {str(k).lower(): v for k, v in rec.items()}
+
+
+def _latest_record(df, sort_key: str) -> dict[str, object] | None:
+    if df is None or len(df) == 0:
+        return None
+    df = df.sort_values(sort_key, ascending=False)
+    return _casefold_record(df.iloc[0].to_dict())
+
+
+def _get_cn_pmi_latest(pro, now: int) -> dict[str, object] | None:
+    """Fetch/cache latest China PMI row for all PMI-backed macro fields."""
+
+    global _CN_PMI_LATEST_CACHE
+    if (
+        _CN_PMI_LATEST_CACHE is not None
+        and (now - _CN_PMI_LATEST_CACHE[0]) < _MACRO_CACHE_TTL_S
+    ):
+        return _CN_PMI_LATEST_CACHE[1]
     try:
         df = pro.cn_pmi(
-            fields=("month,pmi010000,pmi020100,pmi030000"),
+            fields=(
+                "month,pmi010000,pmi010100,pmi010200,pmi010400,"
+                "pmi010500,pmi010900,pmi020100,pmi030000"
+            ),
         )
     except Exception as e:  # noqa: BLE001
         log.warning("[tushare] cn_pmi failed: %s", e)
+        return None
+    rec = _latest_record(df, "month")
+    if rec is not None:
+        _CN_PMI_LATEST_CACHE = (now, rec)
+    return rec
+
+
+def _get_cn_price_index_latest(pro, now: int) -> dict[str, object]:
+    """Fetch/cache latest CPI/PPI rows for macro and industry validation."""
+
+    global _CN_PRICE_INDEX_LATEST_CACHE
+    if (
+        _CN_PRICE_INDEX_LATEST_CACHE is not None
+        and (now - _CN_PRICE_INDEX_LATEST_CACHE[0]) < _MACRO_CACHE_TTL_S
+    ):
+        return dict(_CN_PRICE_INDEX_LATEST_CACHE[1])
+
+    payload: dict[str, object] = {}
+    try:
+        df_cpi = pro.cn_cpi(fields="month,nt_yoy,nt_mom")
+        rec = _latest_record(df_cpi, "month")
+        if rec is not None:
+            payload["cpi_yoy_pct"] = _safe_num(rec.get("nt_yoy"))
+            payload["cpi_mom_pct"] = _safe_num(rec.get("nt_mom"))
+            payload["cpi_month"] = rec.get("month")
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] cn_cpi failed: %s", e)
+
+    try:
+        df_ppi = pro.cn_ppi(
+            fields=(
+                "month,ppi_yoy,ppi_mom,ppi_mp_yoy,ppi_mp_mom,"
+                "ppi_mp_rm_yoy,ppi_mp_rm_mom,ppi_cg_yoy,ppi_cg_mom,"
+                "ppi_cg_adu_yoy,ppi_cg_adu_mom"
+            ),
+        )
+        rec = _latest_record(df_ppi, "month")
+        if rec is not None:
+            for key in (
+                "ppi_yoy", "ppi_mom", "ppi_mp_yoy", "ppi_mp_mom",
+                "ppi_mp_rm_yoy", "ppi_mp_rm_mom", "ppi_cg_yoy",
+                "ppi_cg_mom", "ppi_cg_adu_yoy", "ppi_cg_adu_mom",
+            ):
+                payload[f"{key}_pct"] = _safe_num(rec.get(key))
+            payload["ppi_month"] = rec.get("month")
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] cn_ppi failed: %s", e)
+
+    if payload:
+        _CN_PRICE_INDEX_LATEST_CACHE = (now, dict(payload))
+    return payload
+
+
+def _industry_validation_slugs(allowed: frozenset[str]) -> list[str]:
+    active = _active_industry_ids()
+    return [slug for slug in active if slug in allowed]
+
+
+def _emit_pmi(pro, now: int) -> list[tuple]:
+    """``L10.industry.pmi`` — single MARKET:CN row from ``pro.cn_pmi``."""
+
+    rec = _get_cn_pmi_latest(pro, now)
+    if rec is None:
         return []
-    if df is None or len(df) == 0:
-        return []
-    # Tushare returns months in descending order; defensively sort.
-    df = df.sort_values("month", ascending=False)
-    rec = df.iloc[0].to_dict()
     manuf = _safe_num(rec.get("pmi010000"))           # 制造业 PMI
     non_manuf = _safe_num(rec.get("pmi020100"))        # 非制造业商务活动 PMI
     composite = _safe_num(rec.get("pmi030000"))        # 综合 PMI 产出指数
@@ -4104,6 +4370,63 @@ def _emit_pmi(pro, now: int) -> list[tuple]:
         json.dumps(payload, ensure_ascii=False),
         "Known", 0.85, "tushare:cn_pmi", now,
     )]
+
+
+def _emit_industry_inventory_orders(pro, now: int) -> list[tuple]:
+    """``L10.industry.inventory_orders`` — PMI orders/inventory validator."""
+
+    rec = _get_cn_pmi_latest(pro, now)
+    if rec is None:
+        return []
+    manufacturing = _safe_num(rec.get("pmi010000"))
+    production = _safe_num(rec.get("pmi010100"))
+    new_orders = _safe_num(rec.get("pmi010200"))
+    backlog_orders = _safe_num(rec.get("pmi010400"))
+    finished_inventory = _safe_num(rec.get("pmi010500"))
+    raw_inventory = _safe_num(rec.get("pmi010900"))
+    if all(
+        v is None
+        for v in (new_orders, backlog_orders, finished_inventory, raw_inventory)
+    ):
+        return []
+    orders_minus_finished = (
+        new_orders - finished_inventory
+        if new_orders is not None and finished_inventory is not None else None
+    )
+    orders_minus_raw = (
+        new_orders - raw_inventory
+        if new_orders is not None and raw_inventory is not None else None
+    )
+    rows: list[tuple] = []
+    for slug in _industry_validation_slugs(_PMI_VALIDATION_INDUSTRIES):
+        payload = {
+            "industry_id": slug,
+            "scope": "macro_manufacturing_proxy",
+            "manufacturing_pmi": manufacturing,
+            "production_pmi": production,
+            "new_orders_pmi": new_orders,
+            "backlog_orders_pmi": backlog_orders,
+            "finished_goods_inventory_pmi": finished_inventory,
+            "raw_material_inventory_pmi": raw_inventory,
+            "orders_minus_finished_inventory": orders_minus_finished,
+            "orders_minus_raw_material_inventory": orders_minus_raw,
+            "latest_month": rec.get("month"),
+            "method": "cn_pmi manufacturing orders/inventory validation",
+            "source_fields": {
+                "manufacturing": "pmi010000",
+                "production": "pmi010100",
+                "new_orders": "pmi010200",
+                "backlog_orders": "pmi010400",
+                "finished_goods_inventory": "pmi010500",
+                "raw_material_inventory": "pmi010900",
+            },
+        }
+        rows.append((
+            f"INDUSTRY:{slug}", "L10.industry.inventory_orders",
+            json.dumps(payload, ensure_ascii=False),
+            "Proxy", 0.6, "tushare:cn_pmi.industry_validation", now,
+        ))
+    return rows
 
 
 def _emit_rates(pro, now: int) -> list[tuple]:
@@ -4213,7 +4536,9 @@ def _emit_money_supply(pro, now: int) -> list[tuple]:
         "Known", 0.85, "tushare:cn_m", now,
     )]
 
-    # Event: emit Known iff M2 yoy moved >= 0.3pct vs prior month.
+    # Event: the formula bridge can score material M2 yoy shifts and treat
+    # sub-threshold changes as a valid neutral observation. Only mark Inactive
+    # when the prior month is missing and the delta cannot be measured.
     prev_m2_yoy = _safe_num(df.iloc[1].get("m2_yoy")) if len(df) > 1 else None
     delta_m2 = (m2_yoy - prev_m2_yoy) if (m2_yoy is not None and prev_m2_yoy is not None) else None
     significant = delta_m2 is not None and abs(delta_m2) >= 0.3
@@ -4222,8 +4547,9 @@ def _emit_money_supply(pro, now: int) -> list[tuple]:
         json.dumps({
             "m2_yoy_pct": m2_yoy, "m2_yoy_change_pct": delta_m2,
             "m1_yoy_pct": m1_yoy, "latest_month": latest.get("month"),
+            "event_significant": bool(significant),
         }, ensure_ascii=False),
-        "Known" if significant else "Inactive", 0.8, "tushare:cn_m", now,
+        "Known" if delta_m2 is not None else "Inactive", 0.8, "tushare:cn_m", now,
     ))
     return rows
 
@@ -4251,8 +4577,8 @@ def _emit_fx_cnh(pro, now: int) -> list[tuple]:
 
       * ``L9.macro.fx`` (discount / risk_discount, neutral 0.0). Only RMB
         *depreciation* beyond ``_FX_RISK_THRESHOLD_PCT`` registers as a
-        macro risk — emit Known with direction "negative"; otherwise
-        Inactive (no risk event, so the risk_discount stays neutral 0).
+        macro risk. Other measurable FX windows are still valid Known-neutral
+        observations so the field can enter the scoring path as 0.
 
     Returns ``[]`` when fx_daily is permission-locked / empty so the macro
     batch dispatcher logs it and the freshness panel keeps the field
@@ -4330,11 +4656,13 @@ def _emit_fx_cnh(pro, now: int) -> list[tuple]:
     }
 
     # L9.macro.fx — risk_discount: only RMB depreciation past threshold is a
-    # risk event; otherwise Inactive so the discount stays neutral 0.
+    # risk event; otherwise Known-neutral so the discount stays 0 without
+    # making a real measured no-risk state look like missing data.
     is_depreciation_risk = usdcnh_change_pct > _FX_RISK_THRESHOLD_PCT
     macro_payload = {
         "score": round(magnitude, 4) if is_depreciation_risk else 0.0,
         "direction": "negative" if is_depreciation_risk else "neutral",
+        "risk_event": bool(is_depreciation_risk),
         "symbol": used_symbol,
         "usdcnh_change_pct": round(usdcnh_change_pct, 4),
         "rmb_appreciation_pct": round(rmb_appreciation_pct, 4),
@@ -4352,7 +4680,7 @@ def _emit_fx_cnh(pro, now: int) -> list[tuple]:
         (
             "MARKET:CN", "L9.macro.fx",
             json.dumps(macro_payload, ensure_ascii=False),
-            "Known" if is_depreciation_risk else "Inactive",
+            "Known",
             0.8, "tushare:fx_daily", now,
         ),
     ]
@@ -4366,42 +4694,16 @@ def _emit_cpi_ppi(pro, now: int) -> list[tuple]:
     None / TODO until an alternative source lands).
     """
 
-    cpi_yoy = None
-    cpi_mom = None
-    cpi_month = None
-    try:
-        df_cpi = pro.cn_cpi(
-            fields="month,nt_yoy,nt_mom",
-        )
-        if df_cpi is not None and len(df_cpi) > 0:
-            df_cpi = df_cpi.sort_values("month", ascending=False)
-            rec = df_cpi.iloc[0].to_dict()
-            cpi_yoy = _safe_num(rec.get("nt_yoy"))
-            cpi_mom = _safe_num(rec.get("nt_mom"))
-            cpi_month = rec.get("month")
-    except Exception as e:  # noqa: BLE001
-        log.warning("[tushare] cn_cpi failed: %s", e)
-
-    ppi_yoy = None
-    ppi_month = None
-    try:
-        df_ppi = pro.cn_ppi(
-            fields="month,ppi_yoy",
-        )
-        if df_ppi is not None and len(df_ppi) > 0:
-            df_ppi = df_ppi.sort_values("month", ascending=False)
-            rec = df_ppi.iloc[0].to_dict()
-            ppi_yoy = _safe_num(rec.get("ppi_yoy"))
-            ppi_month = rec.get("month")
-    except Exception as e:  # noqa: BLE001
-        log.warning("[tushare] cn_ppi failed: %s", e)
-
+    price = _get_cn_price_index_latest(pro, now)
+    cpi_yoy = price.get("cpi_yoy_pct")
+    cpi_mom = price.get("cpi_mom_pct")
+    ppi_yoy = price.get("ppi_yoy_pct")
     if cpi_yoy is None and ppi_yoy is None:
         return []
     payload = {
         "cpi_yoy_pct": cpi_yoy, "cpi_mom_pct": cpi_mom,
         "ppi_yoy_pct": ppi_yoy,
-        "latest_month": cpi_month or ppi_month,
+        "latest_month": price.get("cpi_month") or price.get("ppi_month"),
         "employment_unemployment_pct": None,  # TODO: Tushare 无失业率自由接口
     }
     return [(
@@ -4409,6 +4711,56 @@ def _emit_cpi_ppi(pro, now: int) -> list[tuple]:
         json.dumps(payload, ensure_ascii=False),
         "Known", 0.85, "tushare:cn_cpi+cn_ppi", now,
     )]
+
+
+def _emit_industry_sales_price(pro, now: int) -> list[tuple]:
+    """``L10.industry.sales_price`` — CPI/PPI price validator."""
+
+    price = _get_cn_price_index_latest(pro, now)
+    relevant = (
+        "ppi_yoy_pct", "ppi_mom_pct", "ppi_mp_yoy_pct", "ppi_mp_mom_pct",
+        "ppi_mp_rm_yoy_pct", "ppi_mp_rm_mom_pct", "ppi_cg_yoy_pct",
+        "ppi_cg_mom_pct", "ppi_cg_adu_yoy_pct", "ppi_cg_adu_mom_pct",
+        "cpi_yoy_pct", "cpi_mom_pct",
+    )
+    if all(price.get(k) is None for k in relevant):
+        return []
+
+    rows: list[tuple] = []
+    for slug in _industry_validation_slugs(_PRICE_VALIDATION_INDUSTRIES):
+        payload = {
+            "industry_id": slug,
+            "scope": "macro_price_proxy",
+            "proxy_scope": "national_cpi_ppi_proxy_not_industry_asp_or_sales",
+            "ppi_yoy_pct": price.get("ppi_yoy_pct"),
+            "ppi_mom_pct": price.get("ppi_mom_pct"),
+            "means_of_production_yoy_pct": price.get("ppi_mp_yoy_pct"),
+            "means_of_production_mom_pct": price.get("ppi_mp_mom_pct"),
+            "raw_material_yoy_pct": price.get("ppi_mp_rm_yoy_pct"),
+            "raw_material_mom_pct": price.get("ppi_mp_rm_mom_pct"),
+            "consumer_goods_yoy_pct": price.get("ppi_cg_yoy_pct"),
+            "consumer_goods_mom_pct": price.get("ppi_cg_mom_pct"),
+            "durable_consumer_goods_yoy_pct": price.get("ppi_cg_adu_yoy_pct"),
+            "durable_consumer_goods_mom_pct": price.get("ppi_cg_adu_mom_pct"),
+            "cpi_yoy_pct": price.get("cpi_yoy_pct"),
+            "cpi_mom_pct": price.get("cpi_mom_pct"),
+            "latest_month": price.get("ppi_month") or price.get("cpi_month"),
+            "method": "national cn_ppi/cn_cpi macro price validation",
+            "source_fields": {
+                "ppi": "ppi_yoy,ppi_mom",
+                "means_of_production": "ppi_mp_yoy,ppi_mp_mom",
+                "raw_material": "ppi_mp_rm_yoy,ppi_mp_rm_mom",
+                "consumer_goods": "ppi_cg_yoy,ppi_cg_mom",
+                "durable_consumer_goods": "ppi_cg_adu_yoy,ppi_cg_adu_mom",
+                "cpi": "nt_yoy,nt_mom",
+            },
+        }
+        rows.append((
+            f"INDUSTRY:{slug}", "L10.industry.sales_price",
+            json.dumps(payload, ensure_ascii=False),
+            "Proxy", 0.6, "tushare:cn_ppi+cn_cpi.industry_validation", now,
+        ))
+    return rows
 
 
 _CN_MARKET_TREND_INDEXES = (
@@ -4943,10 +5295,12 @@ def fetch_macro_china_batch(now: int) -> list[tuple]:
     rows: list[tuple] = []
     for label, fn in (
         ("cn_pmi",           _emit_pmi),
+        ("industry_inventory_orders", _emit_industry_inventory_orders),
         ("shibor_lpr",       _emit_rates),
         ("cn_m",             _emit_money_supply),
         ("fx_daily",         _emit_fx_cnh),
         ("cn_cpi+cn_ppi",    _emit_cpi_ppi),
+        ("industry_sales_price", _emit_industry_sales_price),
         ("market_trend",     _emit_market_trend),
         ("market_pe_quantile", _emit_market_pe_quantile),
         ("industry_fund_flow", _emit_industry_fund_flow),
@@ -5059,7 +5413,7 @@ def _get_balancesheet_records(pro, ts_code: str, now: int) -> list[dict]:
             ts_code=ts_code, limit=8,
             fields=("ts_code,end_date,inventories,accounts_receiv,accounts_pay,"
                     "lt_borr,st_borr,bond_payable,payroll_payable,"
-                    "total_assets,total_liab"),
+                    "total_assets,total_liab,goodwill"),
         )
         time.sleep(_X3B_RPC_SLEEP_S)
     except Exception as e:  # noqa: BLE001
@@ -6184,7 +6538,7 @@ def fetch_disclosure_batch(
 #
 # Sub-groups:
 #   1. L2.segment.* (3)            — pro.fina_mainbz per A-share
-#   2. L5.fcst/surprise.* (2)      — pro.forecast / pro.express
+#   2. L5.fcst/surprise.* (3)      — pro.forecast / pro.express / pro.daily
 #   3. L8.fin.* (3)                — eps_downward / goodwill / revenue_miss
 #   4. L8.cap.* (3)                — crowdedness / short_increase / liquidity
 #   5. L8.industry / L8.op (2)     — valuation_compression / cost_overrun
@@ -6589,12 +6943,17 @@ def _derive_beat_miss(
     express_records: list[dict],
     forecast_records: list[dict],
 ) -> tuple[dict, str]:
-    """Compare express yoy_sales / actuals to the most recent forecast range.
+    """Compare express actual yoy against the most recent forecast range.
 
     Classification:
       * ``"beat"``     — actual > forecast_range_max
       * ``"miss"``     — actual < forecast_range_min
       * ``"in_range"`` — within range
+
+    Tushare ``forecast.p_change_min/max`` is an earnings-performance forecast
+    range, so prefer express net-profit yoy when available. Older/runtime rows
+    may only have revenue yoy; keep it as a fallback and record which metric was
+    used.
     """
 
     if not express_records:
@@ -6603,15 +6962,58 @@ def _derive_beat_miss(
         return {"reason": "no forecast for comparison"}, "Inactive"
 
     latest_express = express_records[0]
-    actual_yoy = _safe_num(latest_express.get("yoy_sales"))
+    target = latest_express.get("end_date")
+    prior = _find_record(express_records, _yoy_period(str(target or "")))
+    actual_yoy = None
+    actual_metric = None
+    actual_value = None
+    prior_value = None
+    compare_period = None
+
+    # Tushare/DockCase express ``yoy_net_profit`` is not always a percentage;
+    # in the local archive it is frequently the prior-period profit amount.
+    # Compute a true YoY percentage from amount fields whenever the same
+    # period last year is available, then fall back only to plausible raw pct
+    # fields.
+    for key, metric in (
+        ("n_income", "net_profit_yoy"),
+        ("total_profit", "total_profit_yoy"),
+        ("operate_profit", "operating_profit_yoy"),
+        ("revenue", "revenue_yoy"),
+    ):
+        cur_value = _safe_num(latest_express.get(key))
+        old_value = _safe_num(prior.get(key)) if prior else None
+        if cur_value is not None and old_value is not None and old_value != 0:
+            actual_yoy = (cur_value - old_value) / abs(old_value) * 100.0
+            actual_metric = metric
+            actual_value = cur_value
+            prior_value = old_value
+            compare_period = prior.get("end_date") if prior else None
+            break
+
     if actual_yoy is None:
-        # Fallback: revenue + last_parent_net inference is too noisy; bail.
-        return {"reason": "express missing yoy_sales"}, "Inactive"
+        for key, metric in (
+            ("yoy_net_profit", "net_profit_yoy"),
+            ("yoy_tp", "total_profit_yoy"),
+            ("yoy_op", "operating_profit_yoy"),
+            ("yoy_sales", "revenue_yoy"),
+        ):
+            raw_yoy = _safe_num(latest_express.get(key))
+            if raw_yoy is not None and abs(raw_yoy) <= 1000.0:
+                actual_yoy = raw_yoy
+                actual_metric = metric
+                break
+    if actual_yoy is None:
+        return {
+            "reason": (
+                "express missing comparable n_income/total_profit/"
+                "operate_profit/revenue or plausible yoy pct fields"
+            ),
+        }, "Inactive"
 
     # Pick the forecast whose end_date matches the express end_date if any,
     # else fall back to the latest forecast row.
     fcst = None
-    target = latest_express.get("end_date")
     if target:
         for r in forecast_records:
             if r.get("end_date") == target:
@@ -6641,13 +7043,122 @@ def _derive_beat_miss(
         deviation = actual_yoy - midpoint
 
     return ({
-        "actual_revenue_yoy": actual_yoy,
+        "actual_yoy_pct": round(actual_yoy, 4),
+        "actual_yoy_metric": actual_metric,
+        "actual_value": actual_value,
+        "prior_value": prior_value,
+        "yoy_compare_period": compare_period,
+        "actual_revenue_yoy": round(actual_yoy, 4) if actual_metric == "revenue_yoy" else None,
         "forecast_range_min": f_min,
         "forecast_range_max": f_max,
         "deviation_pct": round(deviation, 4),
         "classification": classification,
         "period": target,
         "ann_date": latest_express.get("ann_date"),
+    }, "Known")
+
+
+def _derive_preprice_surprise(
+    forecast_records: list[dict],
+    daily_records: list[dict],
+) -> tuple[dict, str]:
+    """Compute the stock's pre-announcement run-up from forecast + daily bars.
+
+    The payload mirrors the FMP ``L5.surprise.preprice`` shape: ``run_up_*``
+    values are decimal ratios (``0.05`` means +5%). For A-shares the anchor is
+    the trading day at-or-before the forecast announcement date.
+    """
+
+    if not forecast_records:
+        return {"reason": "no forecast"}, "Inactive"
+    if not daily_records:
+        return {"reason": "no daily history"}, "Inactive"
+
+    def _date_str(v) -> str | None:
+        if v is None:
+            return None
+        s = str(v).replace("-", "").strip()
+        if len(s) == 8 and s.isdigit():
+            return s
+        return None
+
+    rec = forecast_records[0]
+    ann_date = _date_str(rec.get("ann_date") or rec.get("first_ann_date"))
+    if ann_date is None:
+        return {"reason": "forecast missing ann_date"}, "Inactive"
+
+    anchor_idx: int | None = None
+    anchor_trade_date: str | None = None
+    for i, row in enumerate(daily_records):
+        trade_date = _date_str(row.get("trade_date"))
+        if trade_date is not None and trade_date <= ann_date:
+            anchor_idx = i
+            anchor_trade_date = trade_date
+            break
+    if anchor_idx is None:
+        return {
+            "reason": "no trading bar at_or_before ann_date",
+            "ann_date": ann_date,
+        }, "Inactive"
+
+    def _close_at(offset: int) -> float | None:
+        if anchor_idx is None:
+            return None
+        j = anchor_idx + offset
+        if j >= len(daily_records):
+            return None
+        close = _safe_num(daily_records[j].get("close"))
+        if close is None or close <= 0:
+            return None
+        return close
+
+    anchor_close = _close_at(0)
+    if anchor_close is None:
+        return {
+            "reason": "anchor_close_unavailable",
+            "ann_date": ann_date,
+            "anchor_trade_date": anchor_trade_date,
+        }, "Inactive"
+
+    def _runup(offset: int) -> float | None:
+        ref_close = _close_at(offset)
+        if ref_close is None:
+            return None
+        return anchor_close / ref_close - 1.0
+
+    run5 = _runup(5)
+    run10 = _runup(10)
+    run20 = _runup(20)
+    if run5 is None and run10 is None and run20 is None:
+        return {
+            "reason": "price_series_too_short",
+            "ann_date": ann_date,
+            "anchor_trade_date": anchor_trade_date,
+        }, "Inactive"
+
+    f_min = _safe_num(rec.get("p_change_min"))
+    f_max = _safe_num(rec.get("p_change_max"))
+    forecast_mid_pct = None
+    if f_min is not None and f_max is not None:
+        forecast_mid_pct = (f_min + f_max) / 2.0
+    elif f_min is not None:
+        forecast_mid_pct = f_min
+    elif f_max is not None:
+        forecast_mid_pct = f_max
+
+    return ({
+        "earnings_date": ann_date,
+        "ann_date": ann_date,
+        "anchor_trade_date": anchor_trade_date,
+        "run_up_5d_pct": run5,
+        "run_up_10d_pct": run10,
+        "run_up_20d_pct": run20,
+        "forecast_type": rec.get("type"),
+        "forecast_range_min": f_min,
+        "forecast_range_max": f_max,
+        "forecast_mid_pct": forecast_mid_pct,
+        "period": rec.get("end_date"),
+        "is_upcoming": False,
     }, "Known")
 
 
@@ -6717,12 +7228,10 @@ def _derive_goodwill_impairment(
 ) -> tuple[dict, str]:
     """Detect goodwill impairment between the latest two balance sheets.
 
-    Balance-sheet records in ``_BALANCESHEET_CACHE`` only include
-    ``inventories, accounts_receiv, accounts_pay, lt_borr, st_borr,
-    bond_payable, payroll_payable, total_assets, total_liab`` — no
-    ``goodwill`` field. To stay aligned with the existing cache (and not
-    re-pull goodwill in a separate RPC), we look for ``goodwill`` on the
-    record but treat missing → Inactive, so the dp_id is always emitted.
+    The Bucket A balancesheet cache requests ``goodwill`` alongside the common
+    balance-sheet fields. If the upstream response omits it or the company has
+    no comparable goodwill history, keep the dp_id emitted as Inactive rather
+    than fabricating an impairment event.
     """
 
     if len(balance_records) < 2:
@@ -6774,6 +7283,8 @@ def _derive_revenue_profit_miss(beat_miss_payload: dict) -> tuple[dict, str]:
     severity = "ERROR" if deviation < -20.0 else "WARN"
 
     return ({
+        "actual_yoy_pct": beat_miss_payload.get("actual_yoy_pct"),
+        "actual_yoy_metric": beat_miss_payload.get("actual_yoy_metric"),
         "actual_revenue": beat_miss_payload.get("actual_revenue_yoy"),
         "forecast_revenue_low": beat_miss_payload.get("forecast_range_min"),
         "miss_pct": abs(deviation),
@@ -6985,7 +7496,7 @@ def _derive_valuation_compression(
         "compression_pct": round(compression_pct, 4),
         "alert_severity": severity,
     }
-    return payload, ("Known" if severity else "Inactive")
+    return payload, "Known"
 
 
 def _derive_cost_overrun(
@@ -7073,13 +7584,235 @@ def _derive_margin_anomaly(
 # ---------------------------------------------------------------------------
 
 
+def fetch_preprice_surprise_batch(
+    pro,
+    a_codes: list[str],
+    now: int | None = None,
+) -> list[tuple]:
+    """Emit only ``L5.surprise.preprice`` for the given A-share codes.
+
+    This is the focused runtime-refresh path for the pre-announcement price
+    run-up field. It avoids the rest of Bucket A's statement, margin, and
+    industry valuation calls while preserving the same payload and source
+    contract as ``fetch_bucket_a_batch``.
+    """
+
+    if now is None:
+        now = int(time.time())
+    rows: list[tuple] = []
+    counts = {"Known": 0, "Inactive": 0}
+
+    for ts_code in a_codes:
+        if not is_a_share(ts_code):
+            continue
+        try:
+            forecast_records = _get_forecast_records(pro, ts_code, now)
+            if forecast_records:
+                daily_history = _get_daily_history(pro, ts_code, now)
+                payload, status = _derive_preprice_surprise(
+                    forecast_records, daily_history,
+                )
+            else:
+                payload, status = {"reason": "no forecast"}, "Inactive"
+            rows.append((
+                ts_code, "L5.surprise.preprice",
+                json.dumps(payload, ensure_ascii=False),
+                status, 0.75 if status == "Known" else 0.0,
+                "tushare:forecast+daily.derived", now,
+            ))
+            counts[status] = counts.get(status, 0) + 1
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] preprice_surprise %s failed: %s", ts_code, e)
+            rows.append((
+                ts_code, "L5.surprise.preprice",
+                json.dumps({"reason": "exception", "error": str(e)[:200]},
+                           ensure_ascii=False),
+                "Inactive", 0.0, "tushare:forecast+daily.derived", now,
+            ))
+            counts["Inactive"] += 1
+
+    log.info(
+        "[tushare] preprice_surprise: %d rows across %d A-shares; %s",
+        len(rows), len([c for c in a_codes if is_a_share(c)]), counts,
+    )
+    return rows
+
+
+def fetch_earnings_risk_batch(
+    pro,
+    a_codes: list[str],
+    now: int | None = None,
+    *,
+    sample_size: int = DEFAULT_TUSHARE_EARNINGS_RISK_SAMPLE_SIZE,
+) -> list[tuple]:
+    """Emit focused earnings-surprise / financial-risk rows.
+
+    This is the low-frequency companion to the full Bucket A dispatcher. It
+    only pulls Tushare ``forecast``, ``express``, and ``balancesheet`` data, so
+    one-shot refreshes can validate the three score-ready event fields without
+    also running segment, daily price, margin, income, and PE-history calls.
+    """
+
+    if now is None:
+        now = int(time.time())
+    sample_codes = [code for code in a_codes if is_a_share(code)][:sample_size]
+    rows: list[tuple] = []
+    counts = {
+        "L5.surprise.beat_miss": {"Known": 0, "Inactive": 0},
+        "L8.fin.revenue_profit_miss": {"Known": 0, "Inactive": 0},
+        "L8.fin.goodwill_impairment": {"Known": 0, "Inactive": 0},
+    }
+
+    def _emit(dp_id: str, ts_code: str, payload: dict, status: str,
+              confidence: float, source: str) -> None:
+        rows.append((
+            ts_code,
+            dp_id,
+            json.dumps(payload, ensure_ascii=False),
+            status,
+            confidence if status == "Known" else 0.0,
+            source,
+            now,
+        ))
+        counts[dp_id][status] += 1
+
+    for ts_code in sample_codes:
+        try:
+            forecast_records = _get_forecast_records(pro, ts_code, now)
+            express_records = _get_express_records(pro, ts_code, now)
+            bm_payload, bm_status = _derive_beat_miss(
+                express_records, forecast_records,
+            )
+            _emit(
+                "L5.surprise.beat_miss", ts_code, bm_payload, bm_status,
+                0.8, "tushare:express+forecast",
+            )
+
+            rpm_payload, rpm_status = _derive_revenue_profit_miss(bm_payload)
+            _emit(
+                "L8.fin.revenue_profit_miss", ts_code, rpm_payload, rpm_status,
+                0.8, "tushare:express+forecast.derived",
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] earnings_risk forecast/express %s failed: %s", ts_code, e)
+            _emit(
+                "L5.surprise.beat_miss", ts_code,
+                {"reason": "exception", "error": str(e)[:200]},
+                "Inactive", 0.0, "tushare:express+forecast",
+            )
+            _emit(
+                "L8.fin.revenue_profit_miss", ts_code,
+                {"reason": "exception", "error": str(e)[:200]},
+                "Inactive", 0.0, "tushare:express+forecast.derived",
+            )
+
+        try:
+            balance = _get_balancesheet_records(pro, ts_code, now)
+            gi_payload, gi_status = _derive_goodwill_impairment(balance)
+            _emit(
+                "L8.fin.goodwill_impairment", ts_code, gi_payload, gi_status,
+                0.75, "tushare:balancesheet",
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("[tushare] earnings_risk goodwill %s failed: %s", ts_code, e)
+            _emit(
+                "L8.fin.goodwill_impairment", ts_code,
+                {"reason": "exception", "error": str(e)[:200]},
+                "Inactive", 0.0, "tushare:balancesheet",
+            )
+
+    log.info(
+        "[tushare] earnings_risk: %d rows across %d sampled A-shares; %s",
+        len(rows), len(sample_codes), counts,
+    )
+    return rows
+
+
+def fetch_industry_valuation_compression_batch(
+    pro,
+    a_codes: list[str],
+    now: int | None = None,
+    *,
+    sample_size: int = 64,
+) -> list[tuple]:
+    """Emit only ``L8.industry.valuation_compression`` sentinel rows.
+
+    The full Bucket A dispatcher computes this field after many slower
+    per-stock financial calls. This focused path only samples daily_basic
+    history, computes the same 30d-vs-90d PE median signal, and fans the
+    resulting industry-context row out to active industry sentinels.
+    """
+
+    if now is None:
+        now = int(time.time())
+    sample_codes = [code for code in a_codes if is_a_share(code)][:sample_size]
+    pe_30d_samples: list[float] = []
+    pe_90d_samples: list[float] = []
+    sampled_codes = 0
+    for ts_code in sample_codes:
+        try:
+            db_hist = _get_daily_basic_history(pro, ts_code, now)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "[tushare] industry valuation daily_basic %s failed: %s",
+                ts_code, e,
+            )
+            continue
+        if not db_hist:
+            continue
+        sampled_codes += 1
+        pes = [_safe_num(r.get("pe_ttm")) for r in db_hist]
+        pes_30 = [v for v in pes[:30] if v is not None and v > 0]
+        pes_90 = [v for v in pes[:90] if v is not None and v > 0]
+        if pes_30:
+            pes_30.sort()
+            pe_30d_samples.append(pes_30[len(pes_30) // 2])
+        if pes_90:
+            pes_90.sort()
+            pe_90d_samples.append(pes_90[len(pes_90) // 2])
+
+    industry_pe_30d = None
+    industry_pe_90d = None
+    if pe_30d_samples:
+        pe_30d_samples.sort()
+        industry_pe_30d = pe_30d_samples[len(pe_30d_samples) // 2]
+    if pe_90d_samples:
+        pe_90d_samples.sort()
+        industry_pe_90d = pe_90d_samples[len(pe_90d_samples) // 2]
+
+    try:
+        industries = _active_industry_ids()
+    except Exception as e:  # noqa: BLE001
+        log.warning("[tushare] industry valuation active industries failed: %s", e)
+        industries = []
+
+    rows: list[tuple] = []
+    for industry_id in industries:
+        payload, status = _derive_valuation_compression(
+            industry_pe_30d, industry_pe_90d,
+        )
+        payload["industry_id"] = industry_id
+        payload["sampled_stock_count"] = sampled_codes
+        payload["sample_size_limit"] = sample_size
+        rows.append((
+            f"INDUSTRY:{industry_id}",
+            "L8.industry.valuation_compression",
+            json.dumps(payload, ensure_ascii=False),
+            status,
+            0.7 if status == "Known" else 0.0,
+            "tushare:daily_basic.industry_pe",
+            now,
+        ))
+    return rows
+
+
 def fetch_bucket_a_batch(
     pro,
     a_codes: list[str],
     now: int | None = None,
     main_net_inflow_by_ts_code: dict[str, float] | None = None,
 ) -> list[tuple]:
-    """Emit all 14 Bucket A dp_ids for the given A-share codes.
+    """Emit all 15 Bucket A dp_ids for the given A-share codes.
 
     ``main_net_inflow_by_ts_code`` is optionally supplied by the caller so
     we can re-use the 5d-window inflow already computed in ``fetch_batch``
@@ -7102,6 +7835,7 @@ def fetch_bucket_a_batch(
         "L2.segment.growth":        {"Known": 0, "Inactive": 0},
         "L5.fcst.guidance_change":  {"Known": 0, "Inactive": 0},
         "L5.surprise.beat_miss":    {"Known": 0, "Inactive": 0},
+        "L5.surprise.preprice":     {"Known": 0, "Inactive": 0},
         "L8.fin.eps_downward":      {"Known": 0, "Inactive": 0},
         "L8.fin.goodwill_impairment": {"Known": 0, "Inactive": 0},
         "L8.fin.revenue_profit_miss": {"Known": 0, "Inactive": 0},
@@ -7162,6 +7896,13 @@ def fetch_bucket_a_batch(
             )
             _emit("L5.surprise.beat_miss", ts_code, bm_payload, bm_status,
                   0.8, "tushare:express+forecast")
+
+            preprice_daily_history = _get_daily_history(pro, ts_code, now)
+            pp_payload, pp_status = _derive_preprice_surprise(
+                forecast_records, preprice_daily_history,
+            )
+            _emit("L5.surprise.preprice", ts_code, pp_payload, pp_status,
+                  0.75, "tushare:forecast+daily.derived")
 
             eps_payload, eps_status = _derive_eps_downward(forecast_records)
             _emit("L8.fin.eps_downward", ts_code, eps_payload, eps_status,
@@ -8364,6 +9105,10 @@ def _derive_analyst_action(records: list[dict]) -> tuple[dict, str]:
     recent_changes: list[dict] = []
     upgrade_count = 0
     downgrade_count = 0
+    parseable_count = 0
+    recent_parseable_count = 0
+    comparable_recent_count = 0
+    latest_report_date: str | None = None
     for broker, lst in by_broker.items():
         last_score: int | None = None
         last_rating: str | None = None
@@ -8372,7 +9117,14 @@ def _derive_analyst_action(records: list[dict]) -> tuple[dict, str]:
             bucket, score = _classify_rating(rating)
             if score is None:
                 continue
+            parseable_count += 1
             rd = r.get("report_date") or ""
+            if latest_report_date is None or rd > latest_report_date:
+                latest_report_date = rd
+            if rd >= cutoff_7d:
+                recent_parseable_count += 1
+                if last_score is not None:
+                    comparable_recent_count += 1
             if last_score is not None and score != last_score and rd >= cutoff_7d:
                 if score > last_score:
                     upgrade_count += 1
@@ -8392,11 +9144,31 @@ def _derive_analyst_action(records: list[dict]) -> tuple[dict, str]:
 
     count_7d = upgrade_count + downgrade_count
     if count_7d == 0:
+        if comparable_recent_count > 0:
+            return ({
+                "recent_changes": [],
+                "count_7d": 0,
+                "upgrade_count": 0,
+                "downgrade_count": 0,
+                "action_type": "none",
+                "lookback_days": 7,
+                "recent_parseable_count": recent_parseable_count,
+                "recent_comparable_count": comparable_recent_count,
+                "latest_report_date": latest_report_date,
+            }, "Known")
         return ({
             "recent_changes": [],
             "count_7d": 0,
             "action_type": "none",
             "lookback_days": 7,
+            "parseable_count": parseable_count,
+            "recent_parseable_count": recent_parseable_count,
+            "recent_comparable_count": comparable_recent_count,
+            "latest_report_date": latest_report_date,
+            "reason": (
+                "no comparable recent rating change"
+                if parseable_count else "no parseable ratings"
+            ),
         }, "Inactive")
     if upgrade_count >= downgrade_count:
         action_type = "upgrade_event"

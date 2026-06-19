@@ -47,6 +47,7 @@ def test_supported_dp_ids_covers_market_level() -> None:
         "L9.media.report",
         "L9.industry.policy_change",
         "L9.industry.compete_risk",
+        "L9.macro.geo",
     }
     assert expected_market.issubset(akshare_source.SUPPORTED_DP_IDS)
     assert expected_market == akshare_source.MARKET_LEVEL_DP_IDS
@@ -156,14 +157,14 @@ def _stub_l8_outflow(a_codes, now):
 def _stub_l9_block(a_codes, now):
     return [
         (ts, "L9.capital.etf_block",
-         json.dumps({"events_count": 0}),
-         "Inactive", 0.5, "akshare:stock_dzjy_mrmx", now)
+         json.dumps({"events_count": 0, "event_active": False}),
+         "Known", 0.6, "akshare:stock_dzjy_mrmx", now)
         for ts in a_codes
     ]
 
 
 def _stub_cls_telegraph(now):
-    """3-row MARKET:CN stub mirroring the real ``fetch_cls_telegraph_batch``."""
+    """MARKET:CN stub mirroring the real ``fetch_cls_telegraph_batch``."""
 
     return [
         ("MARKET:CN", "L9.media.report",
@@ -174,6 +175,9 @@ def _stub_cls_telegraph(now):
          "Known", 0.55, "akshare:stock_info_global_cls", now),
         ("MARKET:CN", "L9.industry.compete_risk",
          json.dumps({"count_24h": 1, "top_headlines": []}),
+         "Known", 0.55, "akshare:stock_info_global_cls", now),
+        ("MARKET:CN", "L9.macro.geo",
+         json.dumps({"count_24h": 0, "top_headlines": []}),
          "Known", 0.55, "akshare:stock_info_global_cls", now),
     ]
 
@@ -214,8 +218,8 @@ def test_fetch_batch_emits_seven_tuples_for_a_share_only(
     rows = akshare_source.fetch_batch(fake_universe, tick=0)
 
     assert rows, "fetch_batch must emit at least one row"
-    # 2 A-share × (news + bucket-A block) + 3 MARKET:CN = 7
-    assert len(rows) == 7
+    # 2 A-share × (news + bucket-A block) + 4 MARKET:CN = 8
+    assert len(rows) == 8
 
     # Every row is a 7-tuple in the expected shape
     valid_keys = {"300750.SZ", "600519.SH", "MARKET:CN"}
@@ -233,7 +237,7 @@ def test_fetch_batch_emits_seven_tuples_for_a_share_only(
         assert source.startswith("akshare:")
         assert isinstance(updated_at, int) and updated_at > 0
         seen_dp_ids.add(dp_id)
-    # All Tier-1 + 3 market-level dp_ids represented
+    # All Tier-1 + market-level dp_ids represented
     assert seen_dp_ids == (akshare_source.TIER1_DP_IDS
                            | akshare_source.MARKET_LEVEL_DP_IDS)
 
@@ -263,8 +267,8 @@ def test_fetch_batch_skips_when_no_a_share_codes(
         [{"ts_code": "AAPL.US"}, {"ts_code": "00700.HK"}], tick=1,
     )
     # No A-share constituents → Tier-1 fetchers skipped, but the
-    # market-level CLS telegraph still emits its 3 MARKET:CN rows.
-    assert len(rows) == 3
+    # market-level CLS telegraph still emits its MARKET:CN rows.
+    assert len(rows) == 4
     assert {r[0] for r in rows} == {"MARKET:CN"}
     assert {r[1] for r in rows} == akshare_source.MARKET_LEVEL_DP_IDS
 

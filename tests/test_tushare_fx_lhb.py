@@ -120,9 +120,9 @@ def test_fx_supported_dp_ids() -> None:
     assert {"L7.env.fx", "L9.macro.fx"}.issubset(ts.SUPPORTED_DP_IDS)
 
 
-def test_fx_rmb_appreciation_positive_l7_inactive_l9() -> None:
+def test_fx_rmb_appreciation_positive_l7_known_neutral_l9() -> None:
     # USDCNH falls 7.25 → 7.10 over the window → RMB appreciates → L7 positive
-    # regime tilt; L9 (depreciation risk) stays Inactive.
+    # regime tilt; L9 (depreciation risk) is a measured Known-neutral no-risk row.
     pro = _StubPro(fx_data={
         "USDCNH.FXCM": _fx_series("USDCNH.FXCM",
                                   [7.25, 7.22, 7.18, 7.14, 7.10]),
@@ -147,11 +147,12 @@ def test_fx_rmb_appreciation_positive_l7_inactive_l9() -> None:
     assert agg._to_scalar(p7) == pytest.approx(p7["score"], abs=1e-9)
     assert agg._direction_sign(p7["direction"]) == 1.0
 
-    # L9 risk does NOT fire on appreciation → Inactive, neutral.
+    # L9 risk does NOT fire on appreciation → Known-neutral.
     _, _, val9, status9, _, _, _ = by_dp["L9.macro.fx"]
-    assert status9 == "Inactive"
+    assert status9 == "Known"
     p9 = json.loads(val9)
     assert p9["direction"] == "neutral"
+    assert p9["risk_event"] is False
     assert p9["score"] == 0.0
     assert agg._direction_sign(p9["direction"]) == 0.0
 
@@ -174,6 +175,7 @@ def test_fx_rmb_depreciation_fires_l9_risk_negative() -> None:
     assert status9 == "Known"                     # risk event fires
     p9 = json.loads(val9)
     assert p9["direction"] == "negative"
+    assert p9["risk_event"] is True
     assert p9["score"] > 0.0
     assert p9["threshold_pct"] == ts._FX_RISK_THRESHOLD_PCT
     assert agg._direction_sign(p9["direction"]) == -1.0

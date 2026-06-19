@@ -329,10 +329,10 @@ def test_block_aggregates_events_across_trade_days(
     assert p2["total_volume"] == pytest.approx(1000 + 800)
 
 
-def test_block_emits_inactive_when_no_events(
+def test_block_emits_known_neutral_when_no_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stock with zero dzjy events in the 5-day window → Inactive."""
+    """Stock with zero dzjy events in a decoded 5-day window → Known neutral."""
 
     import akshare as ak
 
@@ -346,9 +346,11 @@ def test_block_emits_inactive_when_no_events(
         ["300750.SZ"], now=1_700_000_000,
     )
     assert len(rows) == 1
-    assert rows[0][3] == "Inactive"
+    assert rows[0][3] == "Known"
+    assert rows[0][4] == 0.6
     payload = json.loads(rows[0][2])
     assert payload["events_count"] == 0
+    assert payload["event_active"] is False
 
 
 def test_block_swallows_endpoint_exceptions(
@@ -369,6 +371,10 @@ def test_block_swallows_endpoint_exceptions(
     )
     assert len(rows) == 1
     assert rows[0][3] == "Inactive"
+    payload = json.loads(rows[0][2])
+    assert payload["events_count"] == 0
+    assert payload["event_active"] is False
+    assert payload["reason"] == "upstream_no_valid_dzjy_days"
 
 
 def test_block_skips_non_a_share_codes(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -45,8 +45,11 @@ def test_real_batch_uses_focused_tushare_sources(monkeypatch):
     )
     monkeypatch.setattr(collector, "fetch_tushare_core_batch", _fetcher("tushare-core"))
     monkeypatch.setattr(collector, "fetch_tushare_market_env_batch", _fetcher("tushare-market-env"))
+    monkeypatch.setattr(collector, "fetch_tushare_macro_batch", _fetcher("tushare-macro"))
     monkeypatch.setattr(collector, "fetch_tushare_crowding_batch", _fetcher("tushare-crowding"))
     monkeypatch.setattr(collector, "fetch_tushare_report_rc_batch", _fetcher("tushare-report-rc"))
+    monkeypatch.setattr(collector, "fetch_tushare_report_signals_batch", _fetcher("tushare-report-signals"))
+    monkeypatch.setattr(collector, "fetch_tushare_industry_valuation_batch", _fetcher("tushare-industry-valuation"))
     # The akshare-replacement batch (8 dp_ids moved off akshare onto permitted
     # Tushare endpoints) is now part of the real/all dispatch — stub it so the
     # test never hits live Tushare.
@@ -60,14 +63,66 @@ def test_real_batch_uses_focused_tushare_sources(monkeypatch):
     assert calls == [
         "tushare-core",
         "tushare-market-env",
+        "tushare-macro",
         "tushare-crowding",
         "tushare-report-rc",
+        "tushare-report-signals",
+        "tushare-industry-valuation",
         "tushare-akshare-repl",
         "futu",
         "fmp",
         "akshare",
     ]
     assert len(rows) == len(calls)
+
+
+def test_source_dispatch_exposes_focused_preprice_source():
+    collector = _load_collector()
+
+    assert (
+        collector.SOURCE_DISPATCH["tushare-preprice"]
+        is collector.fetch_tushare_preprice_batch
+    )
+
+
+def test_source_dispatch_exposes_report_signal_source():
+    collector = _load_collector()
+
+    assert (
+        collector.SOURCE_DISPATCH["tushare-report-signals"]
+        is collector.fetch_tushare_report_signals_batch
+    )
+
+
+def test_source_dispatch_exposes_earnings_risk_source():
+    collector = _load_collector()
+
+    assert (
+        collector.SOURCE_DISPATCH["tushare-earnings-risk"]
+        is collector.fetch_tushare_earnings_risk_batch
+    )
+
+
+def test_source_dispatch_exposes_industry_valuation_source():
+    collector = _load_collector()
+
+    assert (
+        collector.SOURCE_DISPATCH["tushare-industry-valuation"]
+        is collector.fetch_tushare_industry_valuation_batch
+    )
+
+
+def test_source_dispatch_exposes_focused_akshare_sources():
+    collector = _load_collector()
+
+    assert (
+        collector.SOURCE_DISPATCH["akshare-block-trade"]
+        is collector.fetch_akshare_block_trade_batch
+    )
+    assert (
+        collector.SOURCE_DISPATCH["akshare-cls"]
+        is collector.fetch_akshare_cls_batch
+    )
 
 
 # ---------------------------------------------------------------------------

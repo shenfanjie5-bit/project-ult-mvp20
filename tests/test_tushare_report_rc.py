@@ -137,3 +137,34 @@ def test_fetch_report_rc_permission_error_emits_inactive_rows() -> None:
         assert by_dp[dp_id][5] == "tushare:report_rc"
     payload = json.loads(by_dp["L5.surprise.sell_side"][2])
     assert payload["reason"] == "report_rc permission unavailable"
+
+
+def test_fetch_report_rc_signal_batch_emits_action_rows(monkeypatch) -> None:
+    tushare_source._REPORT_RC_CACHE.clear()
+    today = tushare_source._today_yyyymmdd()
+    two_days_ago = tushare_source._previous_n_days(2)
+    pro = _StubPro(report_rc=_StubDF([
+        {"report_date": two_days_ago, "org_name": "Broker A",
+         "author_name": "Analyst A", "rating": "增持", "quarter": "2026Q4",
+         "eps": 1.5, "op_rt": 50_000},
+        {"report_date": today, "org_name": "Broker A",
+         "author_name": "Analyst A", "rating": "买入", "quarter": "2026Q4",
+         "eps": 1.7, "op_rt": 52_000},
+    ]))
+    monkeypatch.setattr(tushare_source, "_get_pro_api", lambda: pro)
+
+    rows = tushare_source.fetch_report_rc_signal_constituents_batch(
+        [{"ts_code": "300750.SZ"}, {"ts_code": "AAPL.US"}],
+        tick=0,
+    )
+
+    by_dp = {r[1]: r for r in rows}
+    assert set(by_dp) == {
+        "L6.priced.analyst_revision",
+        "L7.mood.analyst_rating",
+        "L9.media.analyst_action",
+    }
+    assert {r[0] for r in rows} == {"300750.SZ"}
+    assert by_dp["L9.media.analyst_action"][3] == "Known"
+    payload = json.loads(by_dp["L9.media.analyst_action"][2])
+    assert payload["action_type"] == "upgrade_event"

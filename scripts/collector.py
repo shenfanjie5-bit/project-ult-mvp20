@@ -10,12 +10,17 @@ Phase-1 wiring: the ``--source mock`` mode generates deterministic mock values
 for every (ts_code in mvp20.universe.yaml, dp_id in REALTIME_DP_IDS) — useful
 for testing the full pipeline before plugging real Tushare/Futu adapters.
 
-Real sources will be added incrementally:
-- ``--source tushare`` (A-share moneyflow / volume) — needs ``tushare`` pkg
+Real sources:
+- ``--source tushare`` (full A-share Tushare refresh) — needs ``tushare`` pkg
+- focused Tushare routes such as ``tushare-core``, ``tushare-macro``,
+  ``tushare-report-rc``, ``tushare-report-signals``,
+  ``tushare-earnings-risk``, ``tushare-industry-valuation`` and
+  ``tushare-preprice``
 - ``--source futu`` (HK/US options / L2 quote) — needs Futu OpenD running
 - ``--source fmp`` (US fundamentals) — needs ``FMP_API_KEY``
 - ``--source akshare`` (A-share news / 公告 / 雪球热度 / 概念板块) — pip pkg only
-- ``--source real`` / ``--source all`` — composes every source above
+- focused AKShare routes such as ``akshare-block-trade`` and ``akshare-cls``
+- ``--source real`` / ``--source all`` — composes focused production sources
 
 Run with::
 
@@ -224,6 +229,13 @@ def fetch_tushare_report_rc_batch(universe: list[dict], tick: int) -> list[tuple
     return tushare_source.fetch_report_rc_constituents_batch(universe, tick)
 
 
+def fetch_tushare_report_signals_batch(universe: list[dict], tick: int) -> list[tuple]:
+    """Pull only A-share report_rc-derived score signal rows from Tushare."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_report_rc_signal_constituents_batch(universe, tick)
+
+
 def fetch_tushare_crowding_batch(universe: list[dict], tick: int) -> list[tuple]:
     """Pull only A-share turnover-history crowdedness rows from Tushare."""
 
@@ -243,6 +255,37 @@ def fetch_tushare_macro_batch(universe: list[dict], tick: int) -> list[tuple]:
 
     from mvp20.sources import tushare_source
     return tushare_source.fetch_macro_china_batch(int(time.time()))
+
+
+def fetch_tushare_preprice_batch(universe: list[dict], tick: int) -> list[tuple]:
+    """Pull only A-share forecast pre-announcement price run-up rows."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_preprice_surprise_constituents_batch(
+        universe, tick,
+    )
+
+
+def fetch_tushare_earnings_risk_batch(
+    universe: list[dict], tick: int,
+) -> list[tuple]:
+    """Pull only A-share earnings surprise / financial-risk event rows."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_earnings_risk_constituents_batch(
+        universe, tick,
+    )
+
+
+def fetch_tushare_industry_valuation_batch(
+    universe: list[dict], tick: int,
+) -> list[tuple]:
+    """Pull only A-share industry valuation compression sentinel rows."""
+
+    from mvp20.sources import tushare_source
+    return tushare_source.fetch_industry_valuation_constituents_batch(
+        universe, tick,
+    )
 
 
 def fetch_tushare_akshare_replacement_batch(
@@ -276,9 +319,30 @@ def fetch_akshare_batch(universe: list[dict], tick: int) -> list[tuple]:
     return akshare_source.fetch_batch(universe, tick)
 
 
+def fetch_akshare_block_trade_batch(
+    universe: list[dict], tick: int,
+) -> list[tuple]:
+    """Pull only A-share block-trade event rows from AKShare."""
+
+    from mvp20.sources import akshare_source
+
+    a_codes = [
+        c["ts_code"] for c in universe
+        if c.get("ts_code") and akshare_source.is_a_share(c["ts_code"])
+    ]
+    return akshare_source.fetch_l9_capital_etf_block(a_codes, int(time.time()))
+
+
+def fetch_akshare_cls_batch(universe: list[dict], tick: int) -> list[tuple]:
+    """Pull only CLS market-level media/policy/risk sentinel rows."""
+
+    from mvp20.sources import akshare_source
+    return akshare_source.fetch_cls_telegraph_batch(int(time.time()))
+
+
 def fetch_real_batch(universe: list[dict], tick: int) -> list[tuple]:
     """Dispatch per market + free aggregator:
-       - A-share → focused Tushare paths (core/market/crowding/report)
+       - A-share → focused Tushare paths (core/market/macro/crowding/report)
        - HK/US   → Futu OpenD (PE/PB/turnover/资金流/L2 quote)
        - US      → FMP (financial statements / valuation multiples)
        - A-share → akshare (news / 公告 / 雪球热度 / 概念板块)
@@ -287,15 +351,19 @@ def fetch_real_batch(universe: list[dict], tick: int) -> list[tuple]:
     and logged; the collector cycle continues so partial outages don't kill the
     whole pipeline. The full ``--source tushare`` path is intentionally kept as
     a separate low-frequency/manual refresh because it calls slower financial
-    and report endpoints.
+    statement endpoints. Low-frequency market/macro rows stay in ``real`` so
+    normal runtime refreshes keep industry/market sentinels current.
     """
 
     rows: list[tuple] = []
     for label, fn in (
         ("tushare-core", fetch_tushare_core_batch),
         ("tushare-market-env", fetch_tushare_market_env_batch),
+        ("tushare-macro", fetch_tushare_macro_batch),
         ("tushare-crowding", fetch_tushare_crowding_batch),
         ("tushare-report-rc", fetch_tushare_report_rc_batch),
+        ("tushare-report-signals", fetch_tushare_report_signals_batch),
+        ("tushare-industry-valuation", fetch_tushare_industry_valuation_batch),
         ("tushare-akshare-repl", fetch_tushare_akshare_replacement_batch),
         ("futu", fetch_futu_batch),
         ("fmp", fetch_fmp_batch),
@@ -315,13 +383,19 @@ SOURCE_DISPATCH = {
     "tushare": fetch_tushare_batch,
     "tushare-core": fetch_tushare_core_batch,
     "tushare-report-rc": fetch_tushare_report_rc_batch,
+    "tushare-report-signals": fetch_tushare_report_signals_batch,
+    "tushare-earnings-risk": fetch_tushare_earnings_risk_batch,
+    "tushare-industry-valuation": fetch_tushare_industry_valuation_batch,
     "tushare-crowding": fetch_tushare_crowding_batch,
     "tushare-market-env": fetch_tushare_market_env_batch,
     "tushare-macro": fetch_tushare_macro_batch,
+    "tushare-preprice": fetch_tushare_preprice_batch,
     "tushare-akshare-repl": fetch_tushare_akshare_replacement_batch,
     "futu": fetch_futu_batch,
     "fmp": fetch_fmp_batch,
     "akshare": fetch_akshare_batch,
+    "akshare-block-trade": fetch_akshare_block_trade_batch,
+    "akshare-cls": fetch_akshare_cls_batch,
     "real": fetch_real_batch,
     "all": fetch_real_batch,  # alias — "all" composes every wired source
 }
