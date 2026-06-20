@@ -1,6 +1,9 @@
 # MVP Docs
 
 - [Runbook](RUNBOOK.md)
+- [Single-stock LLM decision architecture](llm_stock_decision_architecture.md)
+- [Single-stock LLM decision API](llm_stock_decision_api.md)
+- [LLM evidence contract](llm_evidence_contract.md)
 - [Data source coverage audit](data_sources/coverage_audit.md)
 - [LLM-derived overlay slots](data_sources/llm_derived_nodes.md)
 - [Current-MVP completion/deviation audit](audit/completion_deviation_2026-06-20.md)
@@ -20,6 +23,9 @@
 - [A-share absolute up-5d BFF smoke](audit/2026-06-21_a_share_signal_up_5d_bff_smoke.json)
 - [A-share absolute up-5d frontend binding](audit/2026-06-21_a_share_signal_up_5d_frontend_binding.json)
 - [A-share relative 5d utility review](audit/2026-06-21_a_share_signal_5d_utility_review.json)
+- [LLM stock-decision architecture audit](audit/2026-06-21_llm_stock_decision_architecture_audit.json)
+- [LLM stock-context smoke](audit/2026-06-21_llm_stock_context_smoke.json)
+- [LLM decision-validator audit](audit/2026-06-21_llm_decision_validator_audit.json)
 
 This documentation is intentionally scoped to the 13-industry MVP orchestration
 shell. It records how to validate a bounded industry-driven universe, lock
@@ -62,3 +68,7 @@ Current storage split:
   therefore expose shadow/fallback probabilities with `validated=false`; stock
   detail may show them as an over-date preview, while workbench sorting should
   remain based on `signal_5d`.
+- `runtime/llm_contexts/` and `runtime/llm_decisions/` store immutable
+  single-stock LLM decision contexts and validated decision snapshots. The
+  first supported full decision context is A-share single-stock analysis; HK/US
+  requests return explicit `unsupported` payloads.

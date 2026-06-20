@@ -58,6 +58,25 @@ def _get(host: str, port: int, path: str) -> tuple[int, dict, dict]:
     return resp.status, headers, payload
 
 
+def _post(host: str, port: int, path: str, body: dict) -> tuple[int, dict, dict]:
+    conn = HTTPConnection(host, port, timeout=10)
+    conn.request(
+        "POST",
+        path,
+        body=json.dumps(body).encode("utf-8"),
+        headers={
+            "Origin": "http://127.0.0.1:1420",
+            "Content-Type": "application/json",
+        },
+    )
+    resp = conn.getresponse()
+    raw = resp.read().decode("utf-8")
+    headers = {k.lower(): v for k, v in resp.getheaders()}
+    payload = json.loads(raw) if raw else {}
+    conn.close()
+    return resp.status, headers, payload
+
+
 def test_health_envelope(running_server) -> None:
     host, port, *_ = running_server
 
@@ -811,6 +830,70 @@ def test_score_endpoint_returns_mode_and_signal(running_server) -> None:
     top_paths = data["top_paths"]
     assert isinstance(top_paths.get("positive"), list)
     assert isinstance(top_paths.get("negative"), list)
+    assert "llm_decision_summary" in data
+    assert data["llm_decision_summary"]["ts_code"] == "300750.SZ"
+
+
+def test_llm_stock_context_and_decision_routes(running_server) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({
+        "ts_code": "000977.SZ",
+        "horizon": "5d",
+        "market": "A_share",
+        "dry_run": "1",
+        "max_evidence": "30",
+    })
+    status, _h, body = _get(host, port, f"/api/project-ult/llm/stock-context{qs}")
+    assert status == 200, body
+    context = body["data"]
+    assert context["schema_version"] == "single_stock_decision_context.v1"
+    assert context["storage"]["persisted"] is False
+    assert context["model_probabilities"][0]["use_scope"] == "diagnostic_only"
+
+    status, _h, body = _post(
+        host,
+        port,
+        "/api/project-ult/llm/stock-decision",
+        {
+            "ts_code": "000977.SZ",
+            "horizon": "5d",
+            "market": "A_share",
+            "dry_run": True,
+            "max_evidence": 30,
+        },
+    )
+    assert status == 200, body
+    decision = body["data"]["decision"]
+    assert decision["status"] == "inconclusive"
+    assert decision["action_type"] == "inconclusive"
+    assert decision["validation_result"]["passed"] is True
+    assert body["data"]["storage"]["persisted"] is True
+
+    status, _h, body = _get(
+        host,
+        port,
+        "/api/project-ult/llm/stock-decision?ts_code=000977.SZ&horizon=5d",
+    )
+    assert status == 200, body
+    assert body["data"]["available"] is True
+    assert body["data"]["decision"]["decision_id"] == decision["decision_id"]
+
+    status, _h, body = _get(
+        host,
+        port,
+        "/api/project-ult/llm/audit?ts_code=000977.SZ&horizon=5d",
+    )
+    assert status == 200, body
+    assert body["data"]["latest_decision_summary"]["validation_passed"] is True
+
+
+def test_llm_stock_context_rejects_non_a_share_as_unsupported(running_server) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"ts_code": "NVDA.US", "market": "US", "dry_run": "1"})
+    status, _h, body = _get(host, port, f"/api/project-ult/llm/stock-context{qs}")
+    assert status == 200
+    assert body["data"]["status"] == "unsupported"
+    assert body["data"]["context"] is None
 
 
 def test_score_missing_ts_code_returns_400(running_server) -> None:

@@ -1,11 +1,14 @@
 """Stdlib HTTP BFF exposing mvp20 data and upstream adapter routes.
 
-Stdlib-only (no new deps). The server is read-only: every handler is GET,
-while POST/PUT/DELETE return 405.
+Stdlib-only (no new deps). The server is read-mostly: handlers are GET except
+for explicitly whitelisted command endpoints. The LLM stock-decision POST writes
+only immutable runtime/audit snapshots under runtime/llm_*; all other
+POST/PUT/DELETE routes return 405.
 
 Core mvp20 routes include health, compat, manifests, modules, providers,
 profiles, industry graphs, stock overlays, market events, technicals,
-history, aggregate, coverage, score, A-share 5d signals, and the realtime SSE stream. Vendored
+history, aggregate, coverage, score, A-share 5d signals, bounded LLM
+stock-decision snapshots, and the realtime SSE stream. Vendored
 upstream route families are wired through ``mvp20.adapters`` for graph,
 data-platform canonical/raw data, entity-registry, reasoner-runtime,
 main-core cycles/stocks/pool/world-state, and audit/backtest surfaces.
@@ -1320,7 +1323,7 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
     )
     cached = _derived_cache_get(cache_key)
     if cached is not None:
-        return 200, _ok_envelope(cached)
+        return 200, _ok_envelope(_with_llm_decision_summary(cfg, cached, ts_code))
 
     industry_overlay = _load_industry_overlay_payload(cfg, industry_id)
 
@@ -1440,7 +1443,7 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
         "freshness": _score_freshness(realtime_data),
     }
     _derived_cache_set(cache_key, data)
-    return 200, _ok_envelope(data)
+    return 200, _ok_envelope(_with_llm_decision_summary(cfg, data, ts_code))
 
 
 def _score_freshness(realtime_data: dict | None) -> dict:
@@ -1967,6 +1970,307 @@ def handle_ranking(_: ServerConfig, query: dict) -> HandlerResult:
     })
 
 
+def _runtime_dir(cfg: ServerConfig) -> Path:
+    return cfg.hot_db_path.parent
+
+
+def _parse_positive_int(
+    raw: str | None,
+    *,
+    default: int | None,
+    min_value: int = 1,
+    max_value: int = 500,
+) -> int | None:
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(min_value, min(value, max_value))
+
+
+def _context_payload_for_response(context: Any) -> dict[str, Any]:
+    if hasattr(context, "model_dump"):
+        return context.model_dump(mode="json", by_alias=True)
+    return dict(context)
+
+
+def _with_llm_decision_summary(
+    cfg: ServerConfig,
+    data: dict[str, Any],
+    ts_code: str,
+    *,
+    horizon: str = "5d",
+) -> dict[str, Any]:
+    out = dict(data)
+    try:
+        from mvp20.llm_context import market_for_ts_code
+        from mvp20.llm_storage import latest_decision_summary
+        market = market_for_ts_code(ts_code)
+        out["llm_decision_summary"] = latest_decision_summary(
+            _runtime_dir(cfg),
+            market=market,
+            ts_code=ts_code,
+            horizon=horizon,
+        )
+    except Exception as exc:  # noqa: BLE001 — summary is additive only
+        out["llm_decision_summary"] = {
+            "available": False,
+            "reason": f"llm decision summary failed: {exc}",
+            "ts_code": ts_code,
+            "horizon": horizon,
+        }
+    return out
+
+
+def handle_llm_stock_context(cfg: ServerConfig, query: dict) -> HandlerResult:
+    ts_code_raw = str((query.get("ts_code") or [""])[0]).strip().upper()
+    ts_code = _validate_ts_code(ts_code_raw)
+    if ts_code is None:
+        return 400, _error_envelope("BAD_TS_CODE", "invalid or missing ts_code", status=400)
+    horizon_raw = (query.get("horizon") or ["5d"])[0]
+    try:
+        from mvp20.llm_context import build_single_stock_context, normalize_horizon
+        horizon = normalize_horizon(str(horizon_raw))
+    except ValueError as exc:
+        return 400, _error_envelope("BAD_HORIZON", str(exc), status=400)
+    market = (query.get("market") or [None])[0]
+    industry_raw = (query.get("industry_id") or [None])[0]
+    industry_id = _validate_industry_id(industry_raw) if industry_raw else None
+    if industry_raw and industry_id is None:
+        return 400, _error_envelope("BAD_INDUSTRY", "invalid industry_id", status=400)
+    include_raw = _query_flag(query, "include_raw", default=False)
+    include_unusable = _query_flag(query, "include_unusable", default=False)
+    dry_run = _query_flag(query, "dry_run", default=True)
+    persist = _query_flag(query, "persist", default=not dry_run)
+    max_evidence = _parse_positive_int(
+        (query.get("max_evidence") or [None])[0],
+        default=None,
+    )
+    as_of = (query.get("as_of") or [None])[0]
+    context = build_single_stock_context(
+        repo_root=REPO_ROOT,
+        ts_code=ts_code,
+        horizon=horizon,
+        market=str(market) if market else None,
+        industry_id=industry_id,
+        as_of=str(as_of) if as_of else None,
+        include_raw=include_raw,
+        include_unusable=include_unusable,
+        max_evidence=max_evidence,
+    )
+    payload = _context_payload_for_response(context)
+    storage = {"persisted": False, "path": None}
+    if persist and payload.get("context_id"):
+        from mvp20.llm_storage import write_context_snapshot
+        path = write_context_snapshot(_runtime_dir(cfg), payload)
+        storage = {"persisted": True, "path": str(path.relative_to(REPO_ROOT))}
+    payload = dict(payload)
+    payload["storage"] = storage
+    return 200, _ok_envelope(payload)
+
+
+def handle_llm_stock_decision_get(cfg: ServerConfig, query: dict) -> HandlerResult:
+    ts_code_raw = str((query.get("ts_code") or [""])[0]).strip().upper()
+    ts_code = _validate_ts_code(ts_code_raw)
+    if ts_code is None:
+        return 400, _error_envelope("BAD_TS_CODE", "invalid or missing ts_code", status=400)
+    try:
+        from mvp20.llm_context import market_for_ts_code, normalize_horizon, normalize_market
+        horizon = normalize_horizon(str((query.get("horizon") or ["5d"])[0]))
+        market_raw = (query.get("market") or [None])[0]
+        inferred_market = market_for_ts_code(ts_code)
+        market, _supported, _reason = normalize_market(
+            str(market_raw) if market_raw else inferred_market,
+            ts_code,
+        )
+    except ValueError as exc:
+        return 400, _error_envelope("BAD_HORIZON", str(exc), status=400)
+    decision_id = (query.get("decision_id") or [None])[0]
+    from mvp20.llm_storage import read_decision_snapshot
+    snapshot = read_decision_snapshot(
+        _runtime_dir(cfg),
+        market=market,
+        ts_code=ts_code,
+        horizon=horizon,
+        decision_id=str(decision_id) if decision_id else None,
+    )
+    if snapshot is None:
+        return 200, _ok_envelope({
+            "available": False,
+            "reason": "no llm decision snapshot",
+            "market": market,
+            "ts_code": ts_code,
+            "horizon": horizon,
+        })
+    return 200, _ok_envelope({"available": True, "decision": snapshot})
+
+
+def handle_llm_audit(cfg: ServerConfig, query: dict) -> HandlerResult:
+    ts_code_raw = str((query.get("ts_code") or [""])[0]).strip().upper()
+    ts_code = _validate_ts_code(ts_code_raw) if ts_code_raw else None
+    try:
+        from mvp20.llm_context import market_for_ts_code, normalize_horizon
+        horizon = normalize_horizon(str((query.get("horizon") or ["5d"])[0]))
+    except ValueError as exc:
+        return 400, _error_envelope("BAD_HORIZON", str(exc), status=400)
+    from mvp20.llm_storage import (
+        context_dir,
+        decision_dir,
+        latest_decision_summary,
+        list_snapshots,
+        read_context_snapshot,
+        read_decision_snapshot,
+    )
+    runtime_dir = _runtime_dir(cfg)
+    if ts_code:
+        market = market_for_ts_code(ts_code)
+        context = read_context_snapshot(
+            runtime_dir,
+            market=market,
+            ts_code=ts_code,
+            horizon=horizon,
+        )
+        decision = read_decision_snapshot(
+            runtime_dir,
+            market=market,
+            ts_code=ts_code,
+            horizon=horizon,
+        )
+        return 200, _ok_envelope({
+            "market": market,
+            "ts_code": ts_code,
+            "horizon": horizon,
+            "latest_context": context,
+            "latest_decision": decision,
+            "latest_decision_summary": latest_decision_summary(
+                runtime_dir,
+                market=market,
+                ts_code=ts_code,
+                horizon=horizon,
+            ),
+            "context_count": len(list_snapshots(context_dir(runtime_dir, market, ts_code, horizon))),
+            "decision_count": len(list_snapshots(decision_dir(runtime_dir, market, ts_code, horizon))),
+        })
+    return 200, _ok_envelope({
+        "runtime_dir": str(runtime_dir.relative_to(REPO_ROOT)),
+        "context_root": "runtime/llm_contexts",
+        "decision_root": "runtime/llm_decisions",
+        "note": "Pass ts_code=... for latest context/decision details.",
+    })
+
+
+def _load_or_build_llm_context(cfg: ServerConfig, body: dict) -> tuple[int, dict[str, Any]]:
+    if isinstance(body.get("context"), dict):
+        return 200, dict(body["context"])
+    ts_code_raw = str(body.get("ts_code") or "").strip().upper()
+    ts_code = _validate_ts_code(ts_code_raw)
+    if ts_code is None:
+        return 400, {"error": "invalid or missing ts_code"}
+    try:
+        from mvp20.llm_context import (
+            build_single_stock_context,
+            market_for_ts_code,
+            normalize_horizon,
+            normalize_market,
+        )
+        horizon = normalize_horizon(str(body.get("horizon") or "5d"))
+        market_raw = body.get("market")
+        market, _supported, _reason = normalize_market(
+            str(market_raw) if market_raw else market_for_ts_code(ts_code),
+            ts_code,
+        )
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    context_id = body.get("context_id")
+    if context_id:
+        from mvp20.llm_storage import read_context_snapshot
+        snapshot = read_context_snapshot(
+            _runtime_dir(cfg),
+            market=market,
+            ts_code=ts_code,
+            horizon=horizon,
+            context_id=str(context_id),
+        )
+        if snapshot is None:
+            return 404, {"error": f"no context snapshot {context_id}"}
+        expected_hash = body.get("context_hash")
+        if expected_hash and snapshot.get("input_hash") != expected_hash:
+            return 409, {"error": "context_hash does not match stored context"}
+        return 200, snapshot
+    industry_id = body.get("industry_id")
+    context = build_single_stock_context(
+        repo_root=REPO_ROOT,
+        ts_code=ts_code,
+        horizon=horizon,
+        market=market,
+        industry_id=str(industry_id) if industry_id else None,
+        include_raw=bool(body.get("include_raw", False)),
+        include_unusable=bool(body.get("include_unusable", False)),
+        max_evidence=_parse_positive_int(body.get("max_evidence"), default=None),
+    )
+    return 200, _context_payload_for_response(context)
+
+
+def handle_llm_stock_decision_post(cfg: ServerConfig, body: dict) -> HandlerResult:
+    status, context_or_error = _load_or_build_llm_context(cfg, body)
+    if status != 200:
+        return status, _error_envelope(
+            "LLM_CONTEXT_ERROR",
+            str(context_or_error.get("error") or "failed to load context"),
+            status=status,
+        )
+    context_payload = context_or_error
+    dry_run = bool(body.get("dry_run", True))
+    persist = bool(body.get("persist", True))
+    from mvp20.llm_decision import prepare_decision_snapshot, validate_decision_output
+    from mvp20.llm_storage import write_context_snapshot, write_decision_snapshot
+    context_path = None
+    if persist and context_payload.get("context_id"):
+        context_path = write_context_snapshot(_runtime_dir(cfg), context_payload)
+    decision_output = body.get("decision_output")
+    try:
+        decision = prepare_decision_snapshot(
+            context_payload,
+            decision_output if isinstance(decision_output, dict) else None,
+            dry_run=dry_run,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return 422, _error_envelope(
+            "LLM_DECISION_INVALID",
+            f"decision output failed schema validation: {exc}",
+            status=422,
+        )
+    validation = decision.get("validation_result") or validate_decision_output(context_payload, decision)
+    if isinstance(decision_output, dict) and not validation.get("passed"):
+        return 422, _error_envelope(
+            "LLM_DECISION_REJECTED",
+            "decision output failed validation",
+            status=422,
+            details={"validation_result": validation},
+        )
+    decision_path = None
+    if persist:
+        decision_path = write_decision_snapshot(_runtime_dir(cfg), decision)
+    return 200, _ok_envelope({
+        "decision": decision,
+        "provider_status": {
+            "llm_called": False,
+            "reason": (
+                "dry_run"
+                if dry_run
+                else "llm_provider_not_configured; returned deterministic validation snapshot"
+            ),
+        },
+        "storage": {
+            "context_path": str(context_path.relative_to(REPO_ROOT)) if context_path else None,
+            "decision_path": str(decision_path.relative_to(REPO_ROOT)) if decision_path else None,
+            "persisted": bool(decision_path),
+        },
+    })
+
+
 def _read_industry_overlay(cfg: ServerConfig, industry_id: str | None) -> dict:
     if not industry_id:
         return {}
@@ -2087,6 +2391,7 @@ def handle_industries(cfg: ServerConfig, query: dict) -> HandlerResult:
 #: Whitelisted POST command endpoints (handler signature: (cfg, body_dict)).
 def _post_routes() -> list[tuple[re.Pattern[str], Callable[[ServerConfig, dict], HandlerResult]]]:
     return [
+        (re.compile(r"^/api/project-ult/llm/stock-decision$"), handle_llm_stock_decision_post),
         (re.compile(r"^/api/project-ult/recognize$"), handle_recognize),
         (re.compile(r"^/api/project-ult/onboard$"), handle_onboard),
     ]
@@ -2145,6 +2450,9 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/project-ult/aggregate$"), handle_aggregate),
         (re.compile(r"^/api/project-ult/coverage$"), handle_coverage),
         (re.compile(r"^/api/project-ult/score$"), handle_score),
+        (re.compile(r"^/api/project-ult/llm/stock-context$"), handle_llm_stock_context),
+        (re.compile(r"^/api/project-ult/llm/stock-decision$"), handle_llm_stock_decision_get),
+        (re.compile(r"^/api/project-ult/llm/audit$"), handle_llm_audit),
         (re.compile(r"^/api/project-ult/signals/up-5d/top$"), handle_signal_up_5d_top),
         (re.compile(r"^/api/project-ult/signals/up-5d/stock$"), handle_signal_up_5d_stock),
         (re.compile(r"^/api/project-ult/signals/top$"), handle_signal_5d_top),

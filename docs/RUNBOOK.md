@@ -395,6 +395,42 @@ path for malformed entries.
   after each batch — it catches the most common cost-of-not-checking
   failure (codex inventing a URL from memory).
 
+## Single-Stock LLM Decision Checks
+
+Use this workflow when validating the A-share single-stock decision pipeline:
+
+```bash
+# Build a dry-run frozen context without writing it.
+curl "http://127.0.0.1:8701/api/project-ult/llm/stock-context?ts_code=000977.SZ&horizon=5d&dry_run=1"
+
+# Build, validate, and persist a deterministic no-provider decision snapshot.
+curl -X POST "http://127.0.0.1:8701/api/project-ult/llm/stock-decision" \
+  -H "Content-Type: application/json" \
+  -d '{"ts_code":"000977.SZ","horizon":"5d","market":"A_share","dry_run":true}'
+
+# Refresh audit JSONs.
+.venv/bin/python scripts/audit_llm_stock_decision.py \
+  --ts-code 000977.SZ --horizon 5d --as-of 2026-06-21
+```
+
+Expected current behavior:
+
+- HK/US requests return an explicit unsupported context.
+- No provider token is required for the deterministic path.
+- If primary probability evidence is stale, unvalidated, fallback, or shadow,
+  the decision is `inconclusive` with `confidence=null`.
+- `signal_5d` remains relative median-beat evidence, not absolute P(up).
+- `signal_up_5d` is the absolute-up artifact, but current stale/unvalidated
+  rows are diagnostic only.
+- `/api/project-ult/score` may include `llm_decision_summary`; it is additive
+  and must not be interpreted as a score cache input.
+
+Audit files:
+
+- `docs/audit/2026-06-21_llm_stock_decision_architecture_audit.json`
+- `docs/audit/2026-06-21_llm_stock_context_smoke.json`
+- `docs/audit/2026-06-21_llm_decision_validator_audit.json`
+
 ## Evidence Hygiene
 
 Do not commit raw provider payloads, DSNs, tokens, local runtime paths, parquet

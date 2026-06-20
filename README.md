@@ -4166,6 +4166,31 @@ curl http://127.0.0.1:1420/api/health
 curl http://127.0.0.1:1420/api/project-ult/manifests/latest
 ```
 
+### Single-stock LLM decision smoke
+
+The backend now exposes a closed-loop A-share single-stock decision path. It
+builds a frozen `SingleStockDecisionContext`, validates structured decision
+output against local evidence refs, and stores immutable snapshots under
+`runtime/llm_contexts/` and `runtime/llm_decisions/`.
+
+```bash
+curl "http://127.0.0.1:8701/api/project-ult/llm/stock-context?ts_code=000977.SZ&horizon=5d&dry_run=1"
+
+curl -X POST "http://127.0.0.1:8701/api/project-ult/llm/stock-decision" \
+  -H "Content-Type: application/json" \
+  -d '{"ts_code":"000977.SZ","horizon":"5d","market":"A_share","dry_run":true}'
+
+.venv/bin/python scripts/audit_llm_stock_decision.py \
+  --ts-code 000977.SZ --horizon 5d --as-of 2026-06-21
+```
+
+Current 5-day probability artifacts are preserved as diagnostics unless fresh,
+validated, and non-fallback. `signal_5d` is relative to the liquid-universe
+median and must not be interpreted as absolute P(up); `final_score` and
+technical scores are not probabilities. See
+`docs/llm_stock_decision_architecture.md`, `docs/llm_stock_decision_api.md`,
+and `docs/llm_evidence_contract.md`.
+
 The checked-in manifest is the curated 13-industry leader pool (A-share,
 Hong Kong, and US listings; ~328 constituents covering the 12 present
 industries). `live_evidence_blocked: true` remains until per-provider
