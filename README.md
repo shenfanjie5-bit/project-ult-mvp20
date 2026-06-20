@@ -73,6 +73,16 @@ Verified status from the current worktree:
   BFF and adapter route samples with all responses OK and under the 1 second
   threshold; max observed latency was **113.262 ms**. The 2026-06-19 frontend
   hot-path evidence remains valid for the gitignored `FrontEnd/` shell.
+- A-share workbench 5-day signals are now backend-backed by
+  `runtime/signal_5d/A_share.json`, built from DockCase daily/daily_basic data
+  and frozen `factor_research` calibration. The display contract is
+  **5日跑赢同日流动性股票中位数概率**, not absolute 5日上涨概率. Current local
+  artifact coverage is **1,610 rows / 1,100 validated**; as of 2026-06-20 it is
+  correctly marked stale because the mounted DockCase archive latest trade date
+  is 20260605. Evidence:
+  `docs/audit/2026-06-20_a_share_signal_5d_artifact_audit.json`,
+  `docs/audit/2026-06-20_a_share_signal_5d_bff_smoke.json`, and
+  `docs/audit/2026-06-20_a_share_signal_5d_frontend_binding.json`.
 - DOCKCASE CSV quality-impact audit now consumes the completed 160,596-file
   full-row scanner plus all-file evidence. It classifies scoring/backtest/graph
   and BFF-impacting blockers at **0**, while retaining watchlist and
@@ -3975,6 +3985,8 @@ The server is **read-only**. The table below lists the core route examples;
 | `/api/project-ult/market-events` | latest cross-stock realtime event stream payload |
 | `/api/project-ult/technicals?ts_code=X` | MA / MACD / RSI / KDJ / BOLL / VOL / ATR / OBV pack |
 | `/api/project-ult/aggregate`, `/api/project-ult/coverage`, `/api/project-ult/score` | derived layer aggregate, coverage, and score envelopes |
+| `/api/project-ult/signals/top?horizon=5&market=A_share` | A-share 5d relative signal ranking from `runtime/signal_5d/A_share.json`; HK/US return an honest empty envelope until separately calibrated |
+| `/api/project-ult/signals/stock?ts_code=X&horizon=5` | one A-share 5d relative signal block with `validated`, `stale`, `reason`, direction, strength, drivers, and risks |
 | `/api/admin/*`, `/api/alerts/*` | local mvp20 BFF empty-state stubs |
 
 Adapter-backed route families include

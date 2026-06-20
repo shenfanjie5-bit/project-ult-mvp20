@@ -1,0 +1,168 @@
+{
+ "version": 1,
+ "built_at": "2026-06-20 13:24:13",
+ "git_sha": "76d48b05",
+ "panel": {
+  "base_dates": [
+   "20230719",
+   "20260428"
+  ],
+  "n_dates": 67,
+  "n_stocks": 1617
+ },
+ "horizon_days": 5,
+ "target": "P(5d beat same-day liquid median)",
+ "target_kind": "relative_cross_section_median",
+ "liquid_frac": 0.7,
+ "k_bins": 10,
+ "min_feature_coverage": 0.5,
+ "neutralization": "per-date cross-section: winsor->z->residualize[1,ln_mv,industry]->rank-z; NaN->0 post-rank; min feature coverage 0.5",
+ "features": [
+  "ivol_60",
+  "ep_ttm",
+  "strev"
+ ],
+ "method": "ew_signed",
+ "signs": {
+  "ivol_60": -1.0,
+  "ep_ttm": 1.0,
+  "strev": 1.0
+ },
+ "base_rate": 0.5001599693310778,
+ "tilt_shrink": 0.5,
+ "bins": [
+  {
+   "n": 7217,
+   "p_up": 0.45711514479700704,
+   "mean": 0.005845543039132579,
+   "q10": -0.08333157091401518,
+   "q50": -0.0067587054800242186,
+   "q90": 0.10465063368901611
+  },
+  {
+   "n": 7187,
+   "p_up": 0.47836371225824403,
+   "mean": 0.006726043601437421,
+   "q10": -0.06140406569465995,
+   "q50": -0.0021684071980416775,
+   "q90": 0.08157464563846592
+  },
+  {
+   "n": 7194,
+   "p_up": 0.48387545176536,
+   "mean": 0.004887288312343595,
+   "q10": -0.05524484971538186,
+   "q50": -0.0015696901828050613,
+   "q90": 0.06819110112264752
+  },
+  {
+   "n": 7187,
+   "p_up": 0.4922777236677334,
+   "mean": 0.005581791205957958,
+   "q10": -0.05110560543835163,
+   "q50": -0.0007333527319133282,
+   "q90": 0.06657625930383809
+  },
+  {
+   "n": 7178,
+   "p_up": 0.5080802451936473,
+   "mean": 0.006688482825504358,
+   "q10": -0.04690144211053848,
+   "q50": 0.0005530286580324173,
+   "q90": 0.06503383024828509
+  },
+  {
+   "n": 7200,
+   "p_up": 0.5125,
+   "mean": 0.0073651925986021735,
+   "q10": -0.04522169870324433,
+   "q50": 0.0010465221712365746,
+   "q90": 0.06434222203679386
+  },
+  {
+   "n": 7193,
+   "p_up": 0.5134158209370221,
+   "mean": 0.006877215238830442,
+   "q10": -0.041887936927378175,
+   "q50": 0.0012284331023693085,
+   "q90": 0.05976324230432513
+  },
+  {
+   "n": 7188,
+   "p_up": 0.5148859209794101,
+   "mean": 0.006699203174070532,
+   "q10": -0.039402063470333815,
+   "q50": 0.0011142008006572723,
+   "q90": 0.05706176981329918
+  },
+  {
+   "n": 7196,
+   "p_up": 0.5115341856586992,
+   "mean": 0.006042147391584607,
+   "q10": -0.03792394697666168,
+   "q50": 0.0008883358677849174,
+   "q90": 0.05402647308073938
+  },
+  {
+   "n": 7157,
+   "p_up": 0.5295514880536538,
+   "mean": 0.00528270310630953,
+   "q10": -0.03474182020872831,
+   "q50": 0.00175275350920856,
+   "q90": 0.04849910223856571
+  }
+ ],
+ "calibration": {
+  "fit": "full-panel frozen bins over matured fwd5 relative returns",
+  "stage3_oos": {
+   "report": "factor_research/model/reports/prob_sweep_stage3.json",
+   "selected_name": "min_pair_strev__ew_signed",
+   "features": [
+    "ivol_60",
+    "ep_ttm",
+    "strev"
+   ],
+   "method": "ew_signed",
+   "variant": "empirical",
+   "n_test_dates": 42,
+   "n_obs": 46145,
+   "disc_up_pp": {
+    "mean": 2.772,
+    "t": 1.345,
+    "pos_pct": 0.595,
+    "n": 42
+   },
+   "disc_ret_pp": {
+    "mean": -0.218,
+    "t": -0.7,
+    "pos_pct": 0.5,
+    "n": 42
+   },
+   "brier_skill": 0.00038,
+   "coverage_q10_q90": 0.7848,
+   "reliability": {
+    "n_bins": 8,
+    "spearman_pred_real": 0.5476190476190477,
+    "frac_increasing_steps": 0.5714285714285714,
+    "p_real_range": [
+     0.47426278136450883,
+     0.5216942148760331
+    ],
+    "p_pred_range": [
+     0.4628558966756375,
+     0.5252224569985693
+    ]
+   },
+   "note": "H5 edge is real but marginal; production shrinks bin tilt by 50% and surfaces validated/stale flags instead of an absolute P(up)."
+  },
+  "tilt_shrink": 0.5
+ },
+ "caveats": [
+  "validated ONLY on the liquid top-70% by market cap; outside -> validated:false",
+  "target is P(5d beat same-day liquid median), not absolute P(up)",
+  "absolute P(up) is market-dominated and intentionally NOT emitted",
+  "h5 research edge is marginal versus h10/h20; probability tilt is shrunk by 50%",
+  "survivorship: universe frozen from a recent snapshot; reported edges are upper bounds",
+  "A-share only; HK/US require separate history, feature, and calibration artifacts"
+ ]
+}

@@ -1,0 +1,262 @@
+{
+  "audit": "a_share_signal_5d_artifact",
+  "generated_at": "2026-06-20T13:39:27",
+  "today": "20260620",
+  "params_path": "config/signal_5d_params.json",
+  "artifact_path": "runtime/signal_5d/A_share.json",
+  "params_exists": true,
+  "artifact_exists": true,
+  "target_contract": {
+    "target": "P(5d beat same-day liquid median)",
+    "target_display": "5日跑赢同日流动性股票中位数概率",
+    "absolute_p_up_emitted": false,
+    "not_absolute_p_up_reason": "REPORT_PROB.md / prob_sweep evidence treats absolute P(up) as market-dominated; production emits relative P(beat median)."
+  },
+  "artifact": {
+    "market": "A_share",
+    "asof": "20260605",
+    "stale": true,
+    "stale_after_days": 10,
+    "n_rows": 1610,
+    "n_available": 1575,
+    "n_validated": 1100,
+    "coverage": {
+      "row_count": 1610,
+      "available_count": 1575,
+      "validated_count": 1100,
+      "validated_ratio": 0.6832,
+      "liquid_frac": 0.7,
+      "min_feature_coverage": 0.5
+    },
+    "probability_range_validated": [
+      0.479,
+      0.515
+    ],
+    "caveats": [
+      "validated ONLY on the liquid top-70% by market cap; outside -> validated:false",
+      "target is P(5d beat same-day liquid median), not absolute P(up)",
+      "absolute P(up) is market-dominated and intentionally NOT emitted",
+      "h5 research edge is marginal versus h10/h20; probability tilt is shrunk by 50%",
+      "survivorship: universe frozen from a recent snapshot; reported edges are upper bounds",
+      "A-share only; HK/US require separate history, feature, and calibration artifacts"
+    ]
+  },
+  "calibration": {
+    "fit": "full-panel frozen bins over matured fwd5 relative returns",
+    "stage3_oos": {
+      "report": "factor_research/model/reports/prob_sweep_stage3.json",
+      "selected_name": "min_pair_strev__ew_signed",
+      "features": [
+        "ivol_60",
+        "ep_ttm",
+        "strev"
+      ],
+      "method": "ew_signed",
+      "variant": "empirical",
+      "n_test_dates": 42,
+      "n_obs": 46145,
+      "disc_up_pp": {
+        "mean": 2.772,
+        "t": 1.345,
+        "pos_pct": 0.595,
+        "n": 42
+      },
+      "disc_ret_pp": {
+        "mean": -0.218,
+        "t": -0.7,
+        "pos_pct": 0.5,
+        "n": 42
+      },
+      "brier_skill": 0.00038,
+      "coverage_q10_q90": 0.7848,
+      "reliability": {
+        "n_bins": 8,
+        "spearman_pred_real": 0.5476190476190477,
+        "frac_increasing_steps": 0.5714285714285714,
+        "p_real_range": [
+          0.47426278136450883,
+          0.5216942148760331
+        ],
+        "p_pred_range": [
+          0.4628558966756375,
+          0.5252224569985693
+        ]
+      },
+      "note": "H5 edge is real but marginal; production shrinks bin tilt by 50% and surfaces validated/stale flags instead of an absolute P(up)."
+    },
+    "tilt_shrink": 0.5
+  },
+  "example_lookups": {
+    "002236.SZ": {
+      "available": true,
+      "validated": false,
+      "reason": "artifact asof 20260605 older than 10d",
+      "market": "A_share",
+      "horizon_days": 5,
+      "target": "P(5d beat same-day liquid median)",
+      "target_display": "5日跑赢同日流动性股票中位数概率",
+      "probability": 0.515,
+      "p_beat_median": 0.515,
+      "raw_bin_probability": 0.53,
+      "base_rate": 0.5,
+      "tilt_pp": 1.5,
+      "direction": "震荡",
+      "signal_strength": "中",
+      "signal_grade": "B",
+      "score_pct": 96.4,
+      "score": 3.3276,
+      "bin": 9,
+      "drivers": [
+        {
+          "factor_id": "ivol_60",
+          "factor_label": "低特质波动",
+          "contribution": 0.995,
+          "source_node_id": "signal_5d.ivol_60"
+        },
+        {
+          "factor_id": "ep_ttm",
+          "factor_label": "估值收益率",
+          "contribution": 0.896,
+          "source_node_id": "signal_5d.ep_ttm"
+        },
+        {
+          "factor_id": "strev",
+          "factor_label": "短期反转",
+          "contribution": 0.03,
+          "source_node_id": "signal_5d.strev"
+        }
+      ],
+      "risks": [],
+      "asof": "20260605",
+      "source_artifact": "runtime/signal_5d/A_share.json",
+      "params_version": 1,
+      "params_built_at": "2026-06-20 13:24:13",
+      "stale": true,
+      "caveats": [
+        "validated ONLY on the liquid top-70% by market cap; outside -> validated:false",
+        "target is P(5d beat same-day liquid median), not absolute P(up)",
+        "absolute P(up) is market-dominated and intentionally NOT emitted",
+        "h5 research edge is marginal versus h10/h20; probability tilt is shrunk by 50%",
+        "survivorship: universe frozen from a recent snapshot; reported edges are upper bounds",
+        "A-share only; HK/US require separate history, feature, and calibration artifacts"
+      ]
+    },
+    "000066.SZ": {
+      "available": true,
+      "validated": false,
+      "reason": "artifact asof 20260605 older than 10d",
+      "market": "A_share",
+      "horizon_days": 5,
+      "target": "P(5d beat same-day liquid median)",
+      "target_display": "5日跑赢同日流动性股票中位数概率",
+      "probability": 0.506,
+      "p_beat_median": 0.506,
+      "raw_bin_probability": 0.512,
+      "base_rate": 0.5,
+      "tilt_pp": 0.6,
+      "direction": "震荡",
+      "signal_strength": "弱",
+      "signal_grade": "C",
+      "score_pct": 51.7,
+      "score": 0.1518,
+      "bin": 5,
+      "drivers": [
+        {
+          "factor_id": "strev",
+          "factor_label": "短期反转",
+          "contribution": 0.954,
+          "source_node_id": "signal_5d.strev"
+        }
+      ],
+      "risks": [
+        {
+          "factor_id": "ep_ttm",
+          "factor_label": "估值收益率",
+          "contribution": -0.528,
+          "source_node_id": "signal_5d.ep_ttm"
+        },
+        {
+          "factor_id": "ivol_60",
+          "factor_label": "低特质波动",
+          "contribution": -0.339,
+          "source_node_id": "signal_5d.ivol_60"
+        }
+      ],
+      "asof": "20260605",
+      "source_artifact": "runtime/signal_5d/A_share.json",
+      "params_version": 1,
+      "params_built_at": "2026-06-20 13:24:13",
+      "stale": true,
+      "caveats": [
+        "validated ONLY on the liquid top-70% by market cap; outside -> validated:false",
+        "target is P(5d beat same-day liquid median), not absolute P(up)",
+        "absolute P(up) is market-dominated and intentionally NOT emitted",
+        "h5 research edge is marginal versus h10/h20; probability tilt is shrunk by 50%",
+        "survivorship: universe frozen from a recent snapshot; reported edges are upper bounds",
+        "A-share only; HK/US require separate history, feature, and calibration artifacts"
+      ]
+    },
+    "300750.SZ": {
+      "available": true,
+      "validated": false,
+      "reason": "artifact asof 20260605 older than 10d",
+      "market": "A_share",
+      "horizon_days": 5,
+      "target": "P(5d beat same-day liquid median)",
+      "target_display": "5日跑赢同日流动性股票中位数概率",
+      "probability": 0.507,
+      "p_beat_median": 0.507,
+      "raw_bin_probability": 0.513,
+      "base_rate": 0.5,
+      "tilt_pp": 0.7,
+      "direction": "震荡",
+      "signal_strength": "弱",
+      "signal_grade": "C",
+      "score_pct": 63.0,
+      "score": 0.8175,
+      "bin": 6,
+      "drivers": [
+        {
+          "factor_id": "ivol_60",
+          "factor_label": "低特质波动",
+          "contribution": 0.452,
+          "source_node_id": "signal_5d.ivol_60"
+        },
+        {
+          "factor_id": "strev",
+          "factor_label": "短期反转",
+          "contribution": 0.311,
+          "source_node_id": "signal_5d.strev"
+        }
+      ],
+      "risks": [
+        {
+          "factor_id": "ep_ttm",
+          "factor_label": "估值收益率",
+          "contribution": -0.291,
+          "source_node_id": "signal_5d.ep_ttm"
+        }
+      ],
+      "asof": "20260605",
+      "source_artifact": "runtime/signal_5d/A_share.json",
+      "params_version": 1,
+      "params_built_at": "2026-06-20 13:24:13",
+      "stale": true,
+      "caveats": [
+        "validated ONLY on the liquid top-70% by market cap; outside -> validated:false",
+        "target is P(5d beat same-day liquid median), not absolute P(up)",
+        "absolute P(up) is market-dominated and intentionally NOT emitted",
+        "h5 research edge is marginal versus h10/h20; probability tilt is shrunk by 50%",
+        "survivorship: universe frozen from a recent snapshot; reported edges are upper bounds",
+        "A-share only; HK/US require separate history, feature, and calibration artifacts"
+      ]
+    }
+  },
+  "requirements": {
+    "a_share_artifact_built": true,
+    "validated_reason_present": true,
+    "stale_explicit": true,
+    "no_absolute_p_up": true,
+    "direction_strength_present": true
+  }
+}

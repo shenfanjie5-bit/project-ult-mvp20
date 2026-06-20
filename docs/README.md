@@ -6,6 +6,9 @@
 - [Current-MVP completion/deviation audit](audit/completion_deviation_2026-06-20.md)
 - [A-share current-MVP score applicability](audit/a_share_current_mvp_score_applicability_2026-06-20.md)
 - [DOCKCASE CSV quality impact](audit/dockcase_csv_quality_impact_2026-06-20.md)
+- [A-share 5d signal artifact audit](audit/2026-06-20_a_share_signal_5d_artifact_audit.json)
+- [A-share 5d signal BFF smoke](audit/2026-06-20_a_share_signal_5d_bff_smoke.json)
+- [A-share 5d signal frontend binding](audit/2026-06-20_a_share_signal_5d_frontend_binding.json)
 
 This documentation is intentionally scoped to the 13-industry MVP orchestration
 shell. It records how to validate a bounded industry-driven universe, lock
@@ -28,3 +31,7 @@ Current storage split:
   freshness metadata, and the current minute-level value per `(ts_code, dp_id)`.
 - Parquet under `runtime/history/` stores minute-level history for replay and
   analysis when collector history is enabled.
+- `runtime/signal_5d/A_share.json` stores the backend A-share 5-day relative
+  signal artifact used by the workbench. Its target is 5d probability of
+  beating the same-day liquid-universe median, not absolute P(up); stale and
+  unvalidated rows must remain explicit in API/UI evidence.

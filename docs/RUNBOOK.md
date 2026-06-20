@@ -107,7 +107,33 @@ specific tickers.
 
     Daily compaction (cron, 01:00):
     `python scripts/compact_history.py`
-12. Run fixture and live evidence only through explicit gates.
+12. **A-share 5d signal build** — the workbench "今日重点信号" probability
+    must come from the backend `signal_5d` artifact, not frontend industry-prior
+    fallback. The production display target is relative:
+    `P(5d return beats same-day liquid-universe median)`.
+
+    ```bash
+    .venv/bin/python factor_research/model/export_signal_5d_params.py
+    .venv/bin/python scripts/build_signal_5d.py
+    .venv/bin/mvp20 serve --port 8701
+    curl 'http://127.0.0.1:8701/api/project-ult/signals/stock?ts_code=002236.SZ&horizon=5' | jq '.data'
+    curl 'http://127.0.0.1:8701/api/project-ult/signals/top?horizon=5&market=A_share&limit=5' | jq '.data.artifact'
+    ```
+
+    Expected contract:
+
+    | Field | Meaning |
+    |---|---|
+    | `probability` / `p_beat_median` | 5d relative probability, not absolute P(up) |
+    | `validated` | true only inside the liquid top-70% model gate with enough feature coverage |
+    | `stale` | true when artifact `asof` is older than 10 calendar days |
+    | `reason` | explicit reason for stale/unvalidated/unavailable rows |
+    | `direction` / `signal_strength` | derived from relative probability tilt around base rate |
+
+    HK/US are intentionally not emitted by this artifact. They need separate
+    history feeds, feature pipelines, and calibration evidence before the same
+    endpoint can return validated rows.
+13. Run fixture and live evidence only through explicit gates.
 
 ## Current-MVP Audit Evidence
 
@@ -120,6 +146,7 @@ The 2026-06-20 completion gate is reproducible from the current audit inputs:
 .venv/bin/python scripts/audit_module_status.py --output docs/audit/module_status_2026-06-20.json
 .venv/bin/python scripts/audit_bff_latency.py --start-server --port 8799 --output docs/audit/bff_latency_2026-06-20.json --repeats 2 --warmups 1 --threshold-ms 1000
 .venv/bin/python scripts/audit_dockcase_csv_quality_impact.py
+.venv/bin/python scripts/audit_signal_5d.py --date 2026-06-20 --base-url http://127.0.0.1:8701
 .venv/bin/python scripts/audit_completion_deviation.py
 ```
 

@@ -5,7 +5,7 @@ while POST/PUT/DELETE return 405.
 
 Core mvp20 routes include health, compat, manifests, modules, providers,
 profiles, industry graphs, stock overlays, market events, technicals,
-history, aggregate, coverage, score, and the realtime SSE stream. Vendored
+history, aggregate, coverage, score, A-share 5d signals, and the realtime SSE stream. Vendored
 upstream route families are wired through ``mvp20.adapters`` for graph,
 data-platform canonical/raw data, entity-registry, reasoner-runtime,
 main-core cycles/stocks/pool/world-state, and audit/backtest surfaces.
@@ -1314,6 +1314,7 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
         extra_paths=(
             cfg.hot_db_path.parent / "peer_context_A.json",
             RUNTIME_DIR / "quant_score" / "A_share.json",
+            RUNTIME_DIR / "signal_5d" / "A_share.json",
         ),
     )
     cached = _derived_cache_get(cache_key)
@@ -1425,6 +1426,9 @@ def handle_score(cfg: ServerConfig, query: dict) -> HandlerResult:
         # factor_research/model/REPORT_PROB.md §5.4). Best-effort: absent
         # artifact -> honest available:false block.
         "quant": _quant_block(ts_code),
+        # Workbench "今日重点信号" A-share layer. This is a 5 trading-day
+        # RELATIVE probability (beat same-day liquid median), not absolute P(up).
+        "signal_5d": _signal_5d_block(ts_code),
         # data-freshness of the realtime rows this score consumed (mock rows
         # excluded). The score panel must show its own "Xh 未更新" like the
         # technicals panel does — silent staleness is how a 113h-old picture
@@ -1473,6 +1477,212 @@ def _quant_block(ts_code: str) -> dict:
         return lookup(ts_code)
     except Exception as exc:  # noqa: BLE001 — shadow output must never break /score
         return {"available": False, "reason": f"quant lookup failed: {exc}"}
+
+
+def _signal_5d_block(ts_code: str) -> dict:
+    try:
+        from mvp20.peer_context import market_of
+        if market_of(ts_code) != "A":
+            return {
+                "available": False,
+                "reason": "A-share only (5d signal unvalidated for HK/US)",
+            }
+        from mvp20.signal_5d import lookup
+        return lookup(ts_code)
+    except Exception as exc:  # noqa: BLE001 — signal block must never break /score
+        return {"available": False, "reason": f"signal_5d lookup failed: {exc}"}
+
+
+def _profile_index(cfg: ServerConfig) -> dict[str, dict[str, Any]]:
+    universe = _load_yaml_cached(cfg.universe_path) or {}
+    return {
+        str(c.get("ts_code")): c
+        for c in universe.get("constituents", [])
+        if c.get("ts_code")
+    }
+
+
+def _market_from_query(raw: str | None) -> tuple[bool, str]:
+    value = (raw or "A_share").strip()
+    if value in {"A", "A_share", "ALL", ""}:
+        return True, "A_share"
+    if value in {"HK", "HK_share", "US"}:
+        return False, value
+    return False, value
+
+
+def _signal_5d_artifact_envelope(artifact: dict | None) -> dict[str, Any]:
+    if not artifact:
+        return {
+            "available": False,
+            "stale": True,
+            "source_artifact": "runtime/signal_5d/A_share.json",
+            "reason": "signal_5d artifact not built (scripts/build_signal_5d.py)",
+        }
+    try:
+        from mvp20 import signal_5d
+        stale = signal_5d.is_stale(artifact)
+    except Exception:  # noqa: BLE001
+        stale = True
+    return {
+        "available": True,
+        "market": artifact.get("market"),
+        "asof": artifact.get("asof"),
+        "horizon_days": artifact.get("horizon_days"),
+        "target": artifact.get("target"),
+        "target_display": artifact.get("target_display"),
+        "stale": stale,
+        "source_artifact": "runtime/signal_5d/A_share.json",
+        "n_rows": artifact.get("n_rows", 0),
+        "n_available": artifact.get("n_available", 0),
+        "n_validated": artifact.get("n_validated", 0),
+        "coverage": artifact.get("coverage") or {},
+        "calibration": artifact.get("calibration") or {},
+        "caveats": artifact.get("caveats") or [],
+    }
+
+
+def _enrich_signal_row(
+    cfg: ServerConfig,
+    ts_code: str,
+    block: dict[str, Any],
+    profiles: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    profile = profiles.get(ts_code) or {}
+    industry_ids = list(profile.get("industry_ids") or [])
+    primary_industry = industry_ids[0] if industry_ids else None
+    row = {
+        "ts_code": ts_code,
+        "name": profile.get("name") or ts_code,
+        "market": "A_share" if ts_code.endswith((".SH", ".SZ", ".BJ")) else "UNKNOWN",
+        "industry_id": primary_industry,
+        "industry_ids": industry_ids,
+        "role": profile.get("role"),
+        "pool": profile.get("pool"),
+        **block,
+    }
+    if primary_industry:
+        path = cfg.industry_graphs_dir / f"{primary_industry}.yaml"
+        try:
+            graph = _load_yaml_cached(path) or {}
+            row["industry_name"] = graph.get("industry_name_cn") or graph.get("industry_name")
+        except Exception:  # noqa: BLE001
+            row["industry_name"] = None
+    return row
+
+
+def handle_signal_5d_stock(cfg: ServerConfig, query: dict) -> HandlerResult:
+    horizon = (query.get("horizon") or ["5"])[0]
+    if str(horizon) != "5":
+        return 400, _error_envelope(
+            "BAD_PARAM", "only horizon=5 is supported by signal_5d", status=400
+        )
+    ts_code_raw = (query.get("ts_code") or [None])[0]
+    ts_code = _validate_ts_code(ts_code_raw) if ts_code_raw else None
+    if not ts_code:
+        return 400, _error_envelope(
+            "MISSING_PARAM" if not ts_code_raw else "BAD_PARAM",
+            "valid ts_code query parameter required",
+            status=400,
+        )
+    block = _signal_5d_block(ts_code)
+    profiles = _profile_index(cfg)
+    return 200, _ok_envelope(_enrich_signal_row(cfg, ts_code, block, profiles))
+
+
+def handle_signal_5d_top(cfg: ServerConfig, query: dict) -> HandlerResult:
+    horizon = (query.get("horizon") or ["5"])[0]
+    if str(horizon) != "5":
+        return 400, _error_envelope(
+            "BAD_PARAM", "only horizon=5 is supported by signal_5d", status=400
+        )
+    market_ok, market = _market_from_query((query.get("market") or [None])[0])
+    try:
+        limit = max(1, min(200, int((query.get("limit") or ["12"])[0])))
+    except ValueError:
+        limit = 12
+    industry_raw = (query.get("industry_id") or query.get("industry") or [None])[0]
+    industry_id = _validate_industry_id(industry_raw) if industry_raw and industry_raw != "ALL" else None
+    if industry_raw and industry_raw != "ALL" and not industry_id:
+        return 400, _error_envelope(
+            "BAD_PARAM", f"invalid industry_id: {industry_raw!r}", status=400
+        )
+    role = (query.get("role") or [None])[0]
+    if role in {"", "ALL"}:
+        role = None
+    if role and role not in {"target", "customer", "both"}:
+        return 400, _error_envelope(
+            "BAD_PARAM", "role must be target|customer|both", status=400
+        )
+
+    if not market_ok:
+        return 200, _ok_envelope({
+            "module": "mvp20-signal-5d",
+            "market": market,
+            "horizon_days": 5,
+            "rows": [],
+            "total": 0,
+            "returned": 0,
+            "artifact": {"available": False, "stale": True},
+            "reason": "A-share only; HK/US require separate history, feature, and calibration artifacts",
+        })
+
+    try:
+        from mvp20 import signal_5d
+        artifact = signal_5d.load_artifact("A_share")
+    except Exception as exc:  # noqa: BLE001
+        artifact = None
+        load_error = str(exc)
+    else:
+        load_error = None
+
+    artifact_info = _signal_5d_artifact_envelope(artifact)
+    if not artifact:
+        if load_error:
+            artifact_info["reason"] = f"signal_5d artifact unreadable: {load_error}"
+        return 200, _ok_envelope({
+            "module": "mvp20-signal-5d",
+            "market": "A_share",
+            "horizon_days": 5,
+            "rows": [],
+            "total": 0,
+            "returned": 0,
+            "artifact": artifact_info,
+        })
+
+    profiles = _profile_index(cfg)
+    candidates: list[dict[str, Any]] = []
+    for ts_code, profile in profiles.items():
+        if not ts_code.endswith((".SH", ".SZ", ".BJ")):
+            continue
+        if industry_id and industry_id not in (profile.get("industry_ids") or []):
+            continue
+        if role and profile.get("role") != role:
+            continue
+        block = signal_5d.lookup(ts_code)
+        if not block.get("available"):
+            continue
+        row = _enrich_signal_row(cfg, ts_code, block, profiles)
+        candidates.append(row)
+
+    def _sort_key(row: dict[str, Any]) -> tuple[float, float]:
+        validated = 1.0 if row.get("validated") else 0.0
+        probability = row.get("probability")
+        return (validated, float(probability) if isinstance(probability, (int, float)) else -1.0)
+
+    candidates.sort(key=_sort_key, reverse=True)
+    rows = candidates[:limit]
+    return 200, _ok_envelope({
+        "module": "mvp20-signal-5d",
+        "market": "A_share",
+        "horizon_days": 5,
+        "target": artifact.get("target"),
+        "target_display": artifact.get("target_display"),
+        "rows": rows,
+        "total": len(candidates),
+        "returned": len(rows),
+        "artifact": artifact_info,
+    })
 
 
 _RANKING_SORTS = ("quant_mag", "quant_prob", "base_score")
@@ -1764,6 +1974,8 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/project-ult/aggregate$"), handle_aggregate),
         (re.compile(r"^/api/project-ult/coverage$"), handle_coverage),
         (re.compile(r"^/api/project-ult/score$"), handle_score),
+        (re.compile(r"^/api/project-ult/signals/top$"), handle_signal_5d_top),
+        (re.compile(r"^/api/project-ult/signals/stock$"), handle_signal_5d_stock),
         # G9 cross-sectional ranking (latest snapshot x quant artifact)
         (re.compile(r"^/api/project-ult/ranking$"), handle_ranking),
         # Add-stock onboarding (P1): industries dropdown + job-status poll.
