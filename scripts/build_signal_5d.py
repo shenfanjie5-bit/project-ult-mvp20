@@ -58,8 +58,24 @@ def main() -> int:
         (1.0 / pe_last[ts]) if (pe_last.get(ts) not in (None, 0)) else np.nan
         for ts in cols
     ])
-    feat_names = ["ivol_60", "ep_ttm", "strev"]
-    feat = np.column_stack([pfeat["ivol_60"][0], ep, pfeat["strev"][0]])
+    feat_names = [
+        "ivol_60",
+        "ep_ttm",
+        "strev",
+        "max5",
+        "turnover_20",
+        "rvol_20",
+        "mom_6_1",
+    ]
+    feat = np.column_stack([
+        pfeat["ivol_60"][0],
+        ep,
+        pfeat["strev"][0],
+        pfeat["max5"][0],
+        pfeat["turnover_20"][0],
+        pfeat["rvol_20"][0],
+        pfeat["mom_6_1"][0],
+    ])
     lnmv = lnmv_raw[0]
 
     ind_map = puni.primary_industry_map()

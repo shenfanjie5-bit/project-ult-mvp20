@@ -43,7 +43,11 @@ _FEATURE_LABELS = {
     "max5": "彩票型冲高约束",
     "turnover_20": "换手拥挤约束",
     "rvol_20": "低波动",
+    "mom_6_1": "中期动量",
 }
+
+LOGISTIC_METHOD = "logistic_multifeature_7f"
+FALLBACK_METHOD = "score_pct_linear_bin10"
 
 
 def load_params(path: Path | None = None) -> dict[str, Any] | None:
@@ -192,6 +196,211 @@ def _weights(params: Mapping[str, Any]) -> dict[str, float]:
     raise ValueError(f"unsupported signal_5d method: {method}")
 
 
+def sigmoid(value: float) -> float:
+    x = max(-30.0, min(30.0, float(value)))
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def fit_ridge_logistic(
+    X: "Any",
+    y: "Any",
+    l2: float = 0.2,
+    max_iter: int = 35,
+) -> list[float]:
+    """Small numpy-only ridge logistic fitter used by export/backtest.
+
+    Returns ``[intercept, beta_1, ...]``. Callers own PIT train/test slicing;
+    this helper is intentionally stateless.
+    """
+    import numpy as np
+
+    Xd = np.column_stack([np.ones(X.shape[0]), X.astype(float)])
+    yy = y.astype(float)
+    beta = np.zeros(Xd.shape[1], dtype=float)
+    reg = np.eye(Xd.shape[1], dtype=float) * float(l2)
+    reg[0, 0] = 0.0
+    for _ in range(max_iter):
+        eta = np.clip(Xd @ beta, -30.0, 30.0)
+        p = 1.0 / (1.0 + np.exp(-eta))
+        w = np.clip(p * (1.0 - p), 1e-5, None)
+        grad = Xd.T @ (p - yy) + reg @ beta
+        hess = (Xd.T * w) @ Xd + reg
+        try:
+            step = np.linalg.solve(hess, grad)
+        except np.linalg.LinAlgError:
+            step = np.linalg.lstsq(hess, grad, rcond=None)[0]
+        beta -= step
+        if float(np.max(np.abs(step))) < 1e-5:
+            break
+    return [float(x) for x in beta]
+
+
+def standardize_matrix(
+    X: "Any",
+    means: Sequence[float],
+    stds: Sequence[float],
+) -> "Any":
+    import numpy as np
+
+    mu = np.array([float(x) for x in means], dtype=float)
+    sd = np.array([float(x) if float(x) > 1e-8 else 1.0 for x in stds], dtype=float)
+    out = (X.astype(float) - mu) / sd
+    return np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def predict_ridge_logistic(
+    X: "Any",
+    model: Mapping[str, Any],
+) -> "Any":
+    import numpy as np
+
+    beta = np.array([float(x) for x in model.get("coefficients", [])], dtype=float)
+    intercept = float(model.get("intercept", beta[0] if beta.size else 0.0))
+    if beta.size == X.shape[1] + 1:
+        intercept = float(beta[0])
+        beta = beta[1:]
+    if beta.size != X.shape[1]:
+        raise ValueError(
+            f"logistic coefficient count {beta.size} does not match features {X.shape[1]}"
+        )
+    Xs = standardize_matrix(
+        X,
+        model.get("feature_means") or [0.0] * X.shape[1],
+        model.get("feature_stds") or [1.0] * X.shape[1],
+    )
+    eta = np.clip(intercept + Xs @ beta, -30.0, 30.0)
+    return 1.0 / (1.0 + np.exp(-eta))
+
+
+def _legacy_calibration(params: Mapping[str, Any]) -> Mapping[str, Any]:
+    legacy = params.get("legacy_bin_calibration")
+    return legacy if isinstance(legacy, Mapping) else params
+
+
+def _score_percentiles(score: "Any", eligible: "Any") -> "Any":
+    import numpy as np
+
+    out = np.full(score.shape, np.nan, dtype=float)
+    ok = np.isfinite(score) & eligible
+    if int(ok.sum()) > 10:
+        ranks = np.argsort(np.argsort(score[ok]))
+        out[ok] = 100.0 * ranks / max(int(ok.sum()) - 1, 1)
+    return out
+
+
+def _composite_score(
+    z_all: "Any",
+    name_idx: Mapping[str, int],
+    features: Sequence[str],
+    weights: Mapping[str, float],
+    min_cov: float,
+) -> tuple["Any", "Any"]:
+    import numpy as np
+
+    idx = [name_idx[f] for f in features]
+    z = z_all[:, idx]
+    cov = np.isfinite(z).mean(axis=1)
+    xi = np.where(np.isfinite(z), z, 0.0)
+    w = np.array([float(weights[f]) for f in features], dtype=float)
+    score = xi @ w
+    score[cov < min_cov] = np.nan
+    return score, cov
+
+
+def _legacy_probability_arrays(
+    score: "Any",
+    eligible: "Any",
+    params: Mapping[str, Any],
+) -> tuple["Any", "Any", "Any", "Any", "Any"]:
+    import numpy as np
+
+    k = int(params.get("k_bins") or 10)
+    bins = _bin_of(score, eligible, k)
+    score_pct = _score_percentiles(score, eligible)
+    base_rate = float(params["base_rate"])
+    tilt_shrink = float(params.get("tilt_shrink", 1.0))
+    bin_stats = list(params["bins"])
+    legacy_bin = np.full(score.shape, np.nan, dtype=float)
+    raw_bin = np.full(score.shape, np.nan, dtype=float)
+    for bi in range(k):
+        sel = bins == bi
+        if not sel.any():
+            continue
+        p_bin = float(bin_stats[bi]["p_up"])
+        raw_bin[sel] = float(bin_stats[bi].get("p_up_raw", p_bin))
+        legacy_bin[sel] = base_rate + tilt_shrink * (p_bin - base_rate)
+
+    centers = (np.arange(k, dtype=float) + 0.5) * (100.0 / k)
+    p_by_center = np.array([
+        base_rate + tilt_shrink * (float(stat["p_up"]) - base_rate)
+        for stat in bin_stats
+    ], dtype=float)
+    fallback = np.interp(score_pct, centers, p_by_center, left=p_by_center[0], right=p_by_center[-1])
+    fallback[~np.isfinite(score_pct)] = np.nan
+    return legacy_bin, raw_bin, fallback, bins, score_pct
+
+
+def _model_primary_enabled(params: Mapping[str, Any]) -> bool:
+    model = params.get("model")
+    if not isinstance(model, Mapping):
+        return False
+    if model.get("primary_enabled") is False:
+        return False
+    validation = model.get("validation") or {}
+    gates = validation.get("gates") if isinstance(validation, Mapping) else None
+    if isinstance(gates, Mapping) and gates:
+        return all(bool(v) for v in gates.values())
+    return True
+
+
+def _logistic_feature_arrays(
+    z_all: "Any",
+    name_idx: Mapping[str, int],
+    params: Mapping[str, Any],
+) -> tuple["Any", "Any"] | None:
+    import numpy as np
+
+    if str(params.get("method") or "") != LOGISTIC_METHOD:
+        return None
+    model = params.get("model")
+    if not isinstance(model, Mapping):
+        return None
+    features = [str(f) for f in params.get("features") or []]
+    idx = [name_idx[f] for f in features]
+    X = z_all[:, idx]
+    cov = np.isfinite(X).mean(axis=1)
+    p = predict_ridge_logistic(X, model)
+    return p, cov
+
+
+def _logistic_contributions(
+    z_row: "Any",
+    features: Sequence[str],
+    model: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    import numpy as np
+
+    Xs = standardize_matrix(
+        np.array([z_row], dtype=float),
+        model.get("feature_means") or [0.0] * len(features),
+        model.get("feature_stds") or [1.0] * len(features),
+    )[0]
+    coeffs = list(model.get("coefficients") or [])
+    if len(coeffs) == len(features) + 1:
+        coeffs = coeffs[1:]
+    rows = []
+    for feature, value, coef in zip(features, Xs, coeffs, strict=True):
+        contribution = float(value) * float(coef)
+        rows.append({
+            "factor_id": feature,
+            "factor_label": _feature_label(feature),
+            "contribution": round(contribution, 3),
+            "source_node_id": f"signal_5d.{feature}",
+        })
+    rows.sort(key=lambda r: abs(float(r["contribution"])), reverse=True)
+    return [r for r in rows if r["contribution"] > 0][:5], [r for r in rows if r["contribution"] < 0][:5]
+
+
 def _feature_contributions(
     z_row: "Any",
     features: Sequence[str],
@@ -228,27 +437,27 @@ def build_rows(
     """Score one current A-share cross-section through frozen 5d params."""
     import numpy as np
 
-    k = int(params.get("k_bins") or 10)
+    method = str(params.get("method") or "ew_signed")
+    legacy_params = _legacy_calibration(params)
+    k = int(legacy_params.get("k_bins") or params.get("k_bins") or 10)
     liquid_frac = float(params.get("liquid_frac") or 0.7)
     min_cov = float(params.get("min_feature_coverage") or MIN_FEATURE_COV)
-    features = [str(f) for f in params["features"]]
-    weights = _weights(params)
+    legacy_features = [str(f) for f in legacy_params["features"]]
+    legacy_weights = _weights(legacy_params)
+    model_features = [str(f) for f in params.get("features") or legacy_features]
+    all_features = list(dict.fromkeys([*legacy_features, *model_features]))
     name_idx = {f: i for i, f in enumerate(feat_names)}
-    missing = [f for f in features if f not in name_idx]
+    missing = [f for f in all_features if f not in name_idx]
     if missing:
         raise ValueError(f"signal_5d feature(s) missing from builder output: {missing}")
-    for f in features:
-        if f not in weights:
-            raise ValueError(f"signal_5d weight/sign missing for feature: {f}")
+    for f in legacy_features:
+        if f not in legacy_weights:
+            raise ValueError(f"signal_5d legacy weight/sign missing for feature: {f}")
 
     z_all = quant_score.neutralize_cross_section(feat, lnmv, industry)
-    idx = [name_idx[f] for f in features]
-    z = z_all[:, idx]
-    cov = np.isfinite(z).mean(axis=1)
-    xi = np.where(np.isfinite(z), z, 0.0)
-    w = np.array([weights[f] for f in features], dtype=float)
-    score = xi @ w
-    score[cov < min_cov] = np.nan
+    legacy_score, legacy_cov = _composite_score(
+        z_all, name_idx, legacy_features, legacy_weights, min_cov,
+    )
 
     ok_mv = np.isfinite(lnmv)
     eligible = np.zeros(len(codes), bool)
@@ -256,27 +465,43 @@ def build_rows(
         threshold = np.percentile(lnmv[ok_mv], 100 * (1 - liquid_frac))
         eligible = ok_mv & (lnmv >= threshold)
 
-    bins = _bin_of(score, eligible, k)
-    score_pct = np.full(len(codes), np.nan)
-    oks = np.isfinite(score) & eligible
-    if oks.sum() > 10:
-        ranks = np.argsort(np.argsort(score[oks]))
-        score_pct[oks] = 100.0 * ranks / max(int(oks.sum()) - 1, 1)
-
-    base_rate = float(params["base_rate"])
-    tilt_shrink = float(params.get("tilt_shrink", 1.0))
+    legacy_bin_probability, raw_bin_probability, fallback_probability, bins, score_pct = (
+        _legacy_probability_arrays(legacy_score, eligible, legacy_params)
+    )
+    base_rate = float(legacy_params["base_rate"])
     target = str(params.get("target") or TARGET_LABEL)
     horizon = int(params.get("horizon_days") or 5)
-    bin_stats = list(params["bins"])
-    base_norm = math.sqrt(max(len(features), 1))
+    base_norm = math.sqrt(max(len(legacy_features), 1))
+
+    model_probability = np.full(len(codes), np.nan, dtype=float)
+    model_cov = np.full(len(codes), np.nan, dtype=float)
+    model_enabled = method == LOGISTIC_METHOD
+    model_primary = model_enabled and _model_primary_enabled(params)
+    model = params.get("model") if isinstance(params.get("model"), Mapping) else {}
+    model_arrays = _logistic_feature_arrays(z_all, name_idx, params)
+    if model_arrays is not None:
+        model_probability, model_cov = model_arrays
+    probability_source = LOGISTIC_METHOD if model_primary else FALLBACK_METHOD
+    probability_semantics = (
+        "P(5d return beats same-day liquid-universe median); not absolute P(up)"
+    )
 
     rows: dict[str, dict[str, Any]] = {}
     for j, ts in enumerate(codes):
+        feature_coverage = (
+            float(model_cov[j]) if model_enabled and np.isfinite(model_cov[j])
+            else float(legacy_cov[j]) if np.isfinite(legacy_cov[j])
+            else None
+        )
         if not bool(ok_mv[j]):
             rows[ts] = {
                 "available": False,
                 "validated": False,
                 "reason": "missing market-cap feature; cannot apply liquid gate",
+                "model_method": method,
+                "probability_semantics": probability_semantics,
+                "probability_source": probability_source,
+                "feature_coverage": feature_coverage,
             }
             continue
         if not bool(eligible[j]):
@@ -285,20 +510,42 @@ def build_rows(
                 "validated": False,
                 "reason": "outside liquid top-%d%% gate (5d signal unvalidated there)"
                           % round(liquid_frac * 100),
+                "model_method": method,
+                "probability_semantics": probability_semantics,
+                "probability_source": probability_source,
+                "feature_coverage": feature_coverage,
             }
             continue
-        if int(bins[j]) < 0 or not np.isfinite(score[j]):
+        if int(bins[j]) < 0 or not np.isfinite(legacy_score[j]) or feature_coverage is None or feature_coverage < min_cov:
             rows[ts] = {
                 "available": True,
                 "validated": False,
                 "reason": "insufficient feature coverage",
+                "model_method": method,
+                "probability_semantics": probability_semantics,
+                "probability_source": probability_source,
+                "feature_coverage": feature_coverage,
             }
             continue
 
-        stat = bin_stats[int(bins[j])]
-        raw_p = float(stat["p_up"])
-        probability = base_rate + tilt_shrink * (raw_p - base_rate)
-        drivers, risks = _feature_contributions(z[j], features, weights, base_norm)
+        fallback_p = float(fallback_probability[j])
+        legacy_bin_p = float(legacy_bin_probability[j])
+        raw_p = float(raw_bin_probability[j])
+        model_p = float(model_probability[j]) if np.isfinite(model_probability[j]) else None
+        if model_primary and model_p is not None:
+            probability = model_p
+        else:
+            probability = fallback_p if np.isfinite(fallback_p) else legacy_bin_p
+
+        if model_enabled:
+            model_idx = [name_idx[f] for f in model_features]
+            drivers, risks = _logistic_contributions(z_all[j, model_idx], model_features, model)
+        else:
+            legacy_idx = [name_idx[f] for f in legacy_features]
+            drivers, risks = _feature_contributions(
+                z_all[j, legacy_idx], legacy_features, legacy_weights, base_norm,
+            )
+
         rows[ts] = {
             "available": True,
             "validated": True,
@@ -307,16 +554,29 @@ def build_rows(
             "horizon_days": horizon,
             "target": target,
             "target_display": TARGET_DISPLAY,
-            "probability": round(probability, 3),
-            "p_beat_median": round(probability, 3),
-            "raw_bin_probability": round(raw_p, 3),
-            "base_rate": round(base_rate, 3),
-            "tilt_pp": round(100.0 * (probability - base_rate), 1),
+            "target_kind": params.get("target_kind") or "relative_cross_section_median",
+            "model_method": method,
+            "probability_semantics": probability_semantics,
+            "probability_source": probability_source,
+            "feature_coverage": round(float(feature_coverage), 3),
+            "probability": round(probability, 4),
+            "p_beat_median": round(probability, 4),
+            "model_probability": round(model_p, 4) if model_p is not None else None,
+            "model_probability_shadow": (
+                round(model_p, 4)
+                if model_enabled and not model_primary and model_p is not None
+                else None
+            ),
+            "legacy_bin_probability": round(legacy_bin_p, 4),
+            "fallback_probability": round(fallback_p, 4) if np.isfinite(fallback_p) else None,
+            "raw_bin_probability": round(raw_p, 4),
+            "base_rate": round(base_rate, 4),
+            "tilt_pp": round(100.0 * (probability - base_rate), 2),
             "direction": direction_from_probability(probability, base_rate),
             "signal_strength": strength_from_probability(probability, base_rate),
             "signal_grade": grade_from_probability(probability, base_rate),
-            "score_pct": round(float(score_pct[j]), 1) if np.isfinite(score_pct[j]) else None,
-            "score": round(float(score[j]), 4),
+            "score_pct": round(float(score_pct[j]), 2) if np.isfinite(score_pct[j]) else None,
+            "score": round(float(legacy_score[j]), 4),
             "bin": int(bins[j]),
             "drivers": drivers,
             "risks": risks,
@@ -347,6 +607,15 @@ def build_artifact(
         "params_version": params.get("version"),
         "params_built_at": params.get("built_at"),
         "params_git_sha": params.get("git_sha"),
+        "model_method": params.get("method"),
+        "probability_source": (
+            LOGISTIC_METHOD
+            if str(params.get("method") or "") == LOGISTIC_METHOD and _model_primary_enabled(params)
+            else FALLBACK_METHOD
+        ),
+        "probability_semantics": (
+            "P(5d return beats same-day liquid-universe median); not absolute P(up)"
+        ),
         "horizon_days": int(params.get("horizon_days") or 5),
         "target": params.get("target") or TARGET_LABEL,
         "target_display": TARGET_DISPLAY,
@@ -362,6 +631,12 @@ def build_artifact(
             "min_feature_coverage": params.get("min_feature_coverage"),
         },
         "calibration": params.get("calibration") or {},
+        "model": {
+            "type": (params.get("model") or {}).get("type") if isinstance(params.get("model"), Mapping) else None,
+            "primary_enabled": _model_primary_enabled(params),
+            "validation": (params.get("model") or {}).get("validation") if isinstance(params.get("model"), Mapping) else None,
+            "fallback_method": FALLBACK_METHOD,
+        },
         "caveats": params.get("caveats") or [],
         "rows": rows,
     }
@@ -420,6 +695,11 @@ def lookup(
         out["source_artifact"] = str(path)
     out["params_version"] = artifact.get("params_version")
     out["params_built_at"] = artifact.get("params_built_at")
+    out["model_method"] = out.get("model_method") or artifact.get("model_method")
+    out["probability_source"] = out.get("probability_source") or artifact.get("probability_source")
+    out["probability_semantics"] = (
+        out.get("probability_semantics") or artifact.get("probability_semantics")
+    )
     out["stale"] = is_stale(artifact, today)
     if out["stale"]:
         out["validated"] = False

@@ -108,8 +108,17 @@ export interface Signal5dBlock {
   horizon_days?: number
   target?: string
   target_display?: string
+  target_kind?: string
+  model_method?: string
+  probability_semantics?: string
+  probability_source?: string
+  feature_coverage?: number | null
   probability?: number
   p_beat_median?: number
+  model_probability?: number | null
+  model_probability_shadow?: number | null
+  legacy_bin_probability?: number | null
+  fallback_probability?: number | null
   base_rate?: number
   tilt_pp?: number
   direction?: '上涨' | '下跌' | '震荡'

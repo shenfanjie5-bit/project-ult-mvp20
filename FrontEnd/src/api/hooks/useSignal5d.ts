@@ -16,6 +16,9 @@ export interface Signal5dArtifactInfo {
   horizon_days?: number
   target?: string
   target_display?: string
+  model_method?: string
+  probability_source?: string
+  probability_semantics?: string
   stale?: boolean
   source_artifact?: string
   n_rows?: number
@@ -53,6 +56,14 @@ export interface Signal5dRow {
   target_display?: string
   probability?: number
   p_beat_median?: number
+  model_method?: string
+  probability_semantics?: string
+  feature_coverage?: number | null
+  model_probability?: number | null
+  model_probability_shadow?: number | null
+  legacy_bin_probability?: number | null
+  fallback_probability?: number | null
+  probability_source?: string
   base_rate?: number
   tilt_pp?: number
   direction?: SignalDirection

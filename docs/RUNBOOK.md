@@ -115,6 +115,8 @@ specific tickers.
     ```bash
     .venv/bin/python factor_research/model/export_signal_5d_params.py
     .venv/bin/python scripts/build_signal_5d.py
+    .venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 12 --top-n 20
+    .venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 42 --top-n 20 --out docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json
     .venv/bin/python scripts/backtest_signal_5d.py --date 2026-06-20 --n-dates 12 --top-n 20
     .venv/bin/mvp20 serve --port 8701
     curl 'http://127.0.0.1:8701/api/project-ult/signals/stock?ts_code=002236.SZ&horizon=5' | jq '.data'
@@ -125,20 +127,33 @@ specific tickers.
 
     | Field | Meaning |
     |---|---|
-    | `probability` / `p_beat_median` | 5d relative probability, not absolute P(up); frozen bins are isotonic-smoothed |
-    | `raw_bin_probability` / `p_up_raw` | empirical bin probability before monotone smoothing |
+    | `probability` / `p_beat_median` | selected 5d relative probability, not absolute P(up); logistic if gates pass, otherwise per-stock continuous fallback |
+    | `model_method` | candidate model family, currently `logistic_multifeature_7f` |
+    | `probability_source` | active production source, currently `score_pct_linear_bin10` because the 42-date logistic gate failed |
+    | `probability_semantics` | explicit target text: `P(5d return beats same-day liquid-universe median)` |
+    | `model_probability` | 7-feature ridge-logistic probability when feature coverage is sufficient |
+    | `model_probability_shadow` | logistic probability retained for audit when it is not the production source |
+    | `legacy_bin_probability` | frozen legacy 10-bin probability retained as fallback/audit comparator |
+    | `raw_bin_probability` / `p_up_raw` | empirical legacy-bin probability before monotone smoothing |
+    | `feature_coverage` | fraction of the 7 model features available for that row |
     | `validated` | true only inside the liquid top-70% model gate with enough feature coverage |
     | `stale` | true when artifact `asof` is older than 10 calendar days |
     | `reason` | explicit reason for stale/unvalidated/unavailable rows |
     | `direction` / `signal_strength` | derived from relative probability tilt around base rate |
 
-    The 2026-06-20 review/backtest gate is intentionally conservative. It uses
-    walk-forward calibration for every historical asof date instead of reusing
-    today's frozen bins, so the evidence has no future calibration leak. Current
-    12-date evidence: avg rank IC 0.0245, avg Brier skill 0.00034, avg
-    top-bucket hit rate 51.36%, avg top-20 excess -0.24pp. This means the H5
-    layer is a weak relative ranking hint; stale or unvalidated rows must render
-    as `-- / 无有效信号`.
+    The 2026-06-20 model gate is deliberately split into a 12-date fast gate and
+    a 42-date stability gate. The 12-date run passes for
+    `logistic_multifeature_7f` (avg Brier skill 0.00282, avg rank IC 0.0576,
+    avg top-20 excess +0.77pp, avg unique 1dp probabilities 160.9), but the
+    42-date run fails Brier skill and rank-IC-vs-fallback. The frozen
+    `config/signal_5d_params.json` therefore sets `model.primary_enabled=false`
+    and production artifacts use `score_pct_linear_bin10` while exposing the
+    logistic value as shadow. Current artifact evidence: asof 20260605, 1,610
+    rows, 1,100 validated rows, 364 distinct 4-decimal validated probabilities,
+    and 37 distinct 1-decimal validated probabilities. Stale rows may render a
+    gray `过期预览` value for inspection, but must remain `validated=false` and
+    must not be counted as effective signals. Rows without previewable
+    probability still render as `-- / 无有效信号`.
 
     HK/US are intentionally not emitted by this artifact. They need separate
     history feeds, feature pipelines, and calibration evidence before the same
@@ -157,6 +172,8 @@ The 2026-06-20 completion gate is reproducible from the current audit inputs:
 .venv/bin/python scripts/audit_bff_latency.py --start-server --port 8799 --output docs/audit/bff_latency_2026-06-20.json --repeats 2 --warmups 1 --threshold-ms 1000
 .venv/bin/python scripts/audit_dockcase_csv_quality_impact.py
 .venv/bin/python scripts/audit_signal_5d.py --date 2026-06-20 --base-url http://127.0.0.1:8701
+.venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 12 --top-n 20
+.venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 42 --top-n 20 --out docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json
 .venv/bin/python scripts/backtest_signal_5d.py --date 2026-06-20 --n-dates 12 --top-n 20 --base-url http://127.0.0.1:8701
 .venv/bin/python scripts/audit_completion_deviation.py
 ```

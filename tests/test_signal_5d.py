@@ -13,17 +13,46 @@ def _fake_params() -> dict:
     bins = [{"n": 1000, "p_up": 0.46 + 0.008 * i, "mean": 0.0,
              "q10": -0.08, "q50": 0.0, "q90": 0.08}
             for i in range(10)]
+    legacy = {
+        "method": "ew_signed",
+        "features": ["ivol_60", "ep_ttm", "strev"],
+        "signs": {"ivol_60": -1, "ep_ttm": 1, "strev": 1},
+        "base_rate": 0.5,
+        "tilt_shrink": 0.5,
+        "k_bins": 10,
+        "bins": bins,
+    }
     return {
-        "version": 1,
+        "version": 2,
         "built_at": "2026-06-20 00:00:00",
         "horizon_days": 5,
         "target": signal_5d.TARGET_LABEL,
+        "target_kind": "relative_cross_section_median",
+        "probability_semantics": "P(5d return beats same-day liquid-universe median); not absolute P(up)",
         "liquid_frac": 0.70,
         "k_bins": 10,
         "min_feature_coverage": 0.5,
-        "features": ["ivol_60", "ep_ttm", "strev"],
-        "method": "ew_signed",
-        "signs": {"ivol_60": -1, "ep_ttm": 1, "strev": 1},
+        "features": ["ivol_60", "ep_ttm", "strev", "max5", "turnover_20", "rvol_20", "mom_6_1"],
+        "method": "logistic_multifeature_7f",
+        "model": {
+            "type": "ridge_logistic",
+            "l2": 0.2,
+            "features": ["ivol_60", "ep_ttm", "strev", "max5", "turnover_20", "rvol_20", "mom_6_1"],
+            "intercept": 0.0,
+            "coefficients": [-0.18, 0.16, 0.22, -0.12, -0.10, -0.14, 0.20],
+            "feature_means": [0.0] * 7,
+            "feature_stds": [1.0] * 7,
+            "primary_enabled": True,
+            "validation": {
+                "gates": {
+                    "avg_unique_1dp_ge_50": True,
+                    "avg_brier_skill_gt_0": True,
+                    "avg_rank_ic_gt_fallback": True,
+                    "avg_top_excess_gt_fallback": True,
+                }
+            },
+        },
+        "legacy_bin_calibration": legacy,
         "base_rate": 0.5,
         "tilt_shrink": 0.5,
         "bins": bins,
@@ -35,7 +64,7 @@ def _fake_params() -> dict:
 def _fake_cross_section(n=360, seed=9):
     rng = np.random.default_rng(seed)
     codes = [f"{i:06d}.SZ" for i in range(1, n + 1)]
-    names = ["ivol_60", "ep_ttm", "strev"]
+    names = ["ivol_60", "ep_ttm", "strev", "max5", "turnover_20", "rvol_20", "mom_6_1"]
     feat = rng.normal(size=(n, len(names)))
     # More liquid names should include both high and low scores.
     lnmv = np.linspace(12.0, 18.0, n) + rng.normal(scale=0.1, size=n)
@@ -55,10 +84,18 @@ def test_build_rows_contract_is_relative_and_validated():
     assert row["target"] == signal_5d.TARGET_LABEL
     assert "p_up" not in json.dumps(row)
     assert row["target_display"] == signal_5d.TARGET_DISPLAY
+    assert row["model_method"] == "logistic_multifeature_7f"
+    assert row["probability_source"] == "logistic_multifeature_7f"
+    assert row["probability_semantics"].startswith("P(5d return beats")
+    assert isinstance(row["feature_coverage"], float)
+    assert isinstance(row["model_probability"], float)
+    assert isinstance(row["legacy_bin_probability"], float)
     assert row["direction"] in {"上涨", "下跌", "震荡"}
     assert row["signal_strength"] in {"强", "中", "弱"}
     assert isinstance(row["drivers"], list)
     assert isinstance(row["risks"], list)
+    unique_probs = {r["probability"] for r in valid}
+    assert len(unique_probs) > 10
 
 
 def test_artifact_roundtrip_lookup_and_stale(tmp_path):
@@ -107,10 +144,31 @@ def test_isotonic_probability_smoothing_preserves_raw_bins():
     assert round(smoothed[2]["p_up"], 4) == 0.5275
 
 
+def test_raw_bin_probability_prefers_unsmoothed_raw_value():
+    params = _fake_params()
+    params["model"]["primary_enabled"] = False
+    bins = params["legacy_bin_calibration"]["bins"]
+    for i, stat in enumerate(bins):
+        stat["p_up_raw"] = 0.40 + 0.01 * i
+    codes, feat, names, lnmv, industry = _fake_cross_section()
+    rows = signal_5d.build_rows(codes, feat, names, lnmv, industry, params)
+    valid = [r for r in rows.values() if r.get("validated")]
+
+    assert valid
+    for row in valid[:20]:
+        expected = bins[row["bin"]]["p_up_raw"]
+        assert row["raw_bin_probability"] == round(expected, 4)
+        assert row["probability_source"] == "score_pct_linear_bin10"
+
+
 def test_frozen_signal_5d_params_are_relative_and_monotone():
     root = Path(__file__).resolve().parents[1]
     params = json.loads((root / "config/signal_5d_params.json").read_text(encoding="utf-8"))
     probs = [float(b["p_up"]) for b in params["bins"]]
+    assert params["version"] == 2
+    assert params["method"] == "logistic_multifeature_7f"
+    assert params["model"]["type"] == "ridge_logistic"
+    assert params["model"]["fallback_method"] == "score_pct_linear_bin10"
     assert params["target_kind"] == "relative_cross_section_median"
     assert params["calibration"]["p_up_isotonic"] is True
     assert probs == sorted(probs)
@@ -125,4 +183,7 @@ def test_workbench_frontend_no_client_side_5d_signal_fallback():
     assert "deriveStockSignal" not in page
     assert "upside_probability" not in page
     assert "5 日相对胜率" in page
+    assert "模型:" in page
+    assert "旧桶" in page
+    assert "过期预览，不作为有效信号" in page
     assert "无有效信号" in page

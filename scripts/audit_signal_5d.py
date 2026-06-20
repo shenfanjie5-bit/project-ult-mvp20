@@ -41,6 +41,11 @@ def _artifact_audit(today: str) -> dict[str, Any]:
         for ts in EXAMPLES
     }
     validated = [r for r in rows.values() if r.get("validated")]
+    validated_probabilities = [
+        round(float(r.get("probability")), 3)
+        for r in validated
+        if isinstance(r.get("probability"), (int, float))
+    ]
     emitted_keys = sorted({k for r in rows.values() for k in r.keys()})
     return {
         "audit": "a_share_signal_5d_artifact",
@@ -62,6 +67,9 @@ def _artifact_audit(today: str) -> dict[str, Any]:
         "artifact": {
             "market": (artifact or {}).get("market"),
             "asof": (artifact or {}).get("asof"),
+            "model_method": (artifact or {}).get("model_method"),
+            "probability_source": (artifact or {}).get("probability_source"),
+            "probability_semantics": (artifact or {}).get("probability_semantics"),
             "stale": signal_5d.is_stale(artifact or {}, today=today),
             "stale_after_days": signal_5d.STALE_AFTER_DAYS,
             "n_rows": (artifact or {}).get("n_rows", 0),
@@ -72,12 +80,19 @@ def _artifact_audit(today: str) -> dict[str, Any]:
                 min((r.get("probability") for r in validated), default=None),
                 max((r.get("probability") for r in validated), default=None),
             ],
+            "unique_probability_1dp_validated": len(set(validated_probabilities)),
             "caveats": (artifact or {}).get("caveats") or [],
         },
+        "model": (artifact or {}).get("model") or {},
         "calibration": (artifact or {}).get("calibration") or (params or {}).get("calibration") or {},
         "example_lookups": examples,
         "requirements": {
             "a_share_artifact_built": artifact is not None and (artifact or {}).get("n_rows", 0) > 0,
+            "model_method_present": (artifact or {}).get("model_method") == "logistic_multifeature_7f",
+            "probability_source_present": (artifact or {}).get("probability_source") in {
+                "logistic_multifeature_7f", "score_pct_linear_bin10",
+            },
+            "per_stock_probability_not_10_bucket_only": len(set(validated_probabilities)) > 10,
             "validated_reason_present": all("reason" in r for r in examples.values()),
             "stale_explicit": all("stale" in r for r in examples.values() if r.get("available")),
             "no_absolute_p_up": not any(k == "p_up" for k in emitted_keys),
@@ -161,8 +176,25 @@ def _bff_smoke(base_url: str | None) -> dict[str, Any]:
             "all_http_ok": all(c.get("ok") for c in checks),
             "stock_endpoint_has_required_fields": all(
                 isinstance(_data(c), dict)
-                and {"ts_code", "horizon_days", "target", "validated", "stale", "reason"} <= set(_data(c))
+                and {
+                    "ts_code",
+                    "horizon_days",
+                    "target",
+                    "validated",
+                    "stale",
+                    "reason",
+                    "model_method",
+                    "probability_source",
+                    "probability_semantics",
+                } <= set(_data(c))
                 for c in stock_checks
+            ),
+            "top_endpoint_exposes_model_contract": bool(
+                isinstance(_data(top_check or {}), dict)
+                and _data(top_check or {}).get("model_method") == "logistic_multifeature_7f"
+                and _data(top_check or {}).get("probability_source") in {
+                    "logistic_multifeature_7f", "score_pct_linear_bin10",
+                }
             ),
             "top_endpoint_returns_rows": bool(
                 isinstance(_data(top_check or {}), dict)
@@ -196,12 +228,18 @@ def _frontend_binding_audit() -> dict[str, Any]:
             "market_overview_no_derive_stock_signal": "deriveStockSignal" not in page_text,
             "market_overview_no_score_fanout": "/project-ult/score?" not in page_text,
             "market_overview_no_upside_probability": "upside_probability" not in page_text,
-            "stale_or_invalid_hides_probability": bool(
-                "renderable ? `${((signal.probability" in page_text
-                and ": '--'" in page_text
+            "stale_preview_displays_probability_but_not_valid": bool(
+                "stalePreview" in page_text
+                and "过期预览，不作为有效信号" in page_text
+                and "signal.stale === true" in page_text
+                and "signalIsRenderable" in page_text
+            ),
+            "invalid_without_preview_hides_probability": bool(
+                ": '--'" in page_text
                 and "无有效信号" in page_text
             ),
             "label_uses_relative_probability": "5 日相对胜率" in page_text,
+            "model_debug_line_present": "模型:" in page_text and "旧桶" in page_text,
         },
     }
 

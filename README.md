@@ -79,19 +79,29 @@ Verified status from the current worktree:
   **5日跑赢同日流动性股票中位数概率**, not absolute 5日上涨概率. Current local
   artifact coverage is **1,610 rows / 1,100 validated**; as of 2026-06-20 it is
   correctly marked stale because the mounted DockCase archive latest trade date
-  is 20260605. The frozen bin probabilities are isotonic-smoothed for monotone
-  direction/strength mapping while preserving raw empirical `p_up_raw`. A
-  12-date walk-forward calibration backtest shows the H5 edge is weak but
-  auditable: avg rank IC **0.0245**, avg Brier skill **0.00034**, avg top-bucket
-  hit rate **51.36%**, and avg top-20 excess **-0.24pp**; UI/API must therefore
-  treat this as a relative ranking hint, not a high-conviction forecast.
+  is 20260605. The v2 calibration trains a 7-feature ridge-logistic candidate
+  (`ivol_60`, `ep_ttm`, `strev`, `max5`, `turnover_20`, `rvol_20`, `mom_6_1`)
+  and keeps the legacy 10-bin calibration as audit/fallback evidence. The
+  12-date walk-forward test passed the aggressive model gates (avg Brier skill
+  **0.00282**, avg rank IC **0.0576**, avg top-20 excess **+0.77pp**, avg unique
+  1dp probabilities **160.9**), but the stricter 42-date gate failed Brier skill
+  and rank-IC-vs-fallback. Production therefore uses the per-stock continuous
+  `score_pct_linear_bin10` probability source, with the logistic value emitted
+  as `model_probability_shadow`; the current validated artifact has **364**
+  distinct 4-decimal probabilities and **37** distinct 1-decimal probabilities,
+  so it is no longer a 10 reused-value display. UI/API must still treat this as
+  a relative ranking hint, not a high-conviction forecast. Stale rows can be
+  shown as gray `过期预览` values for inspection, but they remain
+  `validated=false` and are not counted as effective signals.
   Evidence:
   `docs/audit/2026-06-20_a_share_signal_5d_artifact_audit.json`,
   `docs/audit/2026-06-20_a_share_signal_5d_bff_smoke.json`, and
   `docs/audit/2026-06-20_a_share_signal_5d_frontend_binding.json`,
   `docs/audit/2026-06-20_a_share_signal_5d_review_audit.json`,
   `docs/audit/2026-06-20_a_share_signal_5d_backtest_10_dates.json`, and
-  `docs/audit/2026-06-20_a_share_signal_5d_contract_smoke.json`.
+  `docs/audit/2026-06-20_a_share_signal_5d_contract_smoke.json`,
+  `docs/audit/2026-06-20_a_share_signal_5d_model_backtest.json`, and
+  `docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json`.
 - DOCKCASE CSV quality-impact audit now consumes the completed 160,596-file
   full-row scanner plus all-file evidence. It classifies scoring/backtest/graph
   and BFF-impacting blockers at **0**, while retaining watchlist and
@@ -3994,8 +4004,8 @@ The server is **read-only**. The table below lists the core route examples;
 | `/api/project-ult/market-events` | latest cross-stock realtime event stream payload |
 | `/api/project-ult/technicals?ts_code=X` | MA / MACD / RSI / KDJ / BOLL / VOL / ATR / OBV pack |
 | `/api/project-ult/aggregate`, `/api/project-ult/coverage`, `/api/project-ult/score` | derived layer aggregate, coverage, and score envelopes |
-| `/api/project-ult/signals/top?horizon=5&market=A_share` | A-share 5d relative signal ranking from `runtime/signal_5d/A_share.json`; probability bins are isotonic-smoothed; HK/US return an honest empty envelope until separately calibrated |
-| `/api/project-ult/signals/stock?ts_code=X&horizon=5` | one A-share 5d relative signal block with `validated`, `stale`, `reason`, direction, strength, drivers, and risks |
+| `/api/project-ult/signals/top?horizon=5&market=A_share` | A-share 5d relative signal ranking from `runtime/signal_5d/A_share.json`; `probability` is the selected per-stock source (`logistic_multifeature_7f` only if gates pass, otherwise `score_pct_linear_bin10`), with model/fallback/legacy fields exposed; HK/US return an honest empty envelope until separately calibrated |
+| `/api/project-ult/signals/stock?ts_code=X&horizon=5` | one A-share 5d relative signal block with `validated`, `stale`, `reason`, direction, strength, drivers, risks, `model_method`, `probability_source`, `feature_coverage`, `model_probability`, `model_probability_shadow`, and `legacy_bin_probability` |
 | `/api/admin/*`, `/api/alerts/*` | local mvp20 BFF empty-state stubs |
 
 Adapter-backed route families include

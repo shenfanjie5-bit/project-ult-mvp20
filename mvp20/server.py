@@ -1531,6 +1531,9 @@ def _signal_5d_artifact_envelope(artifact: dict | None) -> dict[str, Any]:
         "horizon_days": artifact.get("horizon_days"),
         "target": artifact.get("target"),
         "target_display": artifact.get("target_display"),
+        "model_method": artifact.get("model_method"),
+        "probability_source": artifact.get("probability_source"),
+        "probability_semantics": artifact.get("probability_semantics"),
         "stale": stale,
         "source_artifact": "runtime/signal_5d/A_share.json",
         "n_rows": artifact.get("n_rows", 0),
@@ -1538,6 +1541,7 @@ def _signal_5d_artifact_envelope(artifact: dict | None) -> dict[str, Any]:
         "n_validated": artifact.get("n_validated", 0),
         "coverage": artifact.get("coverage") or {},
         "calibration": artifact.get("calibration") or {},
+        "model": artifact.get("model") or {},
         "caveats": artifact.get("caveats") or [],
     }
 
@@ -1678,6 +1682,9 @@ def handle_signal_5d_top(cfg: ServerConfig, query: dict) -> HandlerResult:
         "horizon_days": 5,
         "target": artifact.get("target"),
         "target_display": artifact.get("target_display"),
+        "model_method": artifact.get("model_method"),
+        "probability_source": artifact.get("probability_source"),
+        "probability_semantics": artifact.get("probability_semantics"),
         "rows": rows,
         "total": len(candidates),
         "returned": len(rows),

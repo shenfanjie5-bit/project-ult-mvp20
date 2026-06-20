@@ -839,10 +839,14 @@ def test_signal_5d_stock_endpoint_returns_honest_block(monkeypatch, tmp_path, ru
         "horizon_days": 5,
         "target": signal_5d.TARGET_LABEL,
         "target_display": signal_5d.TARGET_DISPLAY,
+        "model_method": "logistic_multifeature_7f",
+        "probability_source": "logistic_multifeature_7f",
+        "probability_semantics": "P(5d return beats same-day liquid-universe median); not absolute P(up)",
         "n_rows": 1,
         "n_available": 1,
         "n_validated": 1,
         "coverage": {"validated_ratio": 1.0},
+        "model": {"type": "ridge_logistic", "primary_enabled": True},
         "calibration": {"stage3_oos": {"brier_skill": 0.00038}},
         "caveats": ["relative target only"],
         "rows": {
@@ -854,6 +858,12 @@ def test_signal_5d_stock_endpoint_returns_honest_block(monkeypatch, tmp_path, ru
                 "horizon_days": 5,
                 "target": signal_5d.TARGET_LABEL,
                 "target_display": signal_5d.TARGET_DISPLAY,
+                "model_method": "logistic_multifeature_7f",
+                "probability_source": "logistic_multifeature_7f",
+                "probability_semantics": "P(5d return beats same-day liquid-universe median); not absolute P(up)",
+                "feature_coverage": 1.0,
+                "model_probability": 0.523,
+                "legacy_bin_probability": 0.515,
                 "probability": 0.523,
                 "p_beat_median": 0.523,
                 "base_rate": 0.5,
@@ -878,6 +888,9 @@ def test_signal_5d_stock_endpoint_returns_honest_block(monkeypatch, tmp_path, ru
     assert data["validated"] is True
     assert data["stale"] is False
     assert data["target_display"] == signal_5d.TARGET_DISPLAY
+    assert data["model_method"] == "logistic_multifeature_7f"
+    assert data["probability_source"] == "logistic_multifeature_7f"
+    assert data["feature_coverage"] == 1.0
 
 
 def test_signal_5d_top_endpoint_is_a_share_only(monkeypatch, tmp_path, running_server) -> None:
@@ -891,10 +904,14 @@ def test_signal_5d_top_endpoint_is_a_share_only(monkeypatch, tmp_path, running_s
         "horizon_days": 5,
         "target": signal_5d.TARGET_LABEL,
         "target_display": signal_5d.TARGET_DISPLAY,
+        "model_method": "logistic_multifeature_7f",
+        "probability_source": "logistic_multifeature_7f",
+        "probability_semantics": "P(5d return beats same-day liquid-universe median); not absolute P(up)",
         "n_rows": 2,
         "n_available": 2,
         "n_validated": 2,
         "coverage": {"validated_ratio": 1.0},
+        "model": {"type": "ridge_logistic", "primary_enabled": True},
         "calibration": {},
         "caveats": [],
         "rows": {
@@ -902,6 +919,11 @@ def test_signal_5d_top_endpoint_is_a_share_only(monkeypatch, tmp_path, running_s
                 "available": True,
                 "validated": True,
                 "probability": 0.523,
+                "model_method": "logistic_multifeature_7f",
+                "probability_source": "logistic_multifeature_7f",
+                "feature_coverage": 1.0,
+                "model_probability": 0.523,
+                "legacy_bin_probability": 0.515,
                 "direction": "上涨",
                 "signal_strength": "中",
                 "signal_grade": "B",
@@ -912,6 +934,11 @@ def test_signal_5d_top_endpoint_is_a_share_only(monkeypatch, tmp_path, running_s
                 "available": True,
                 "validated": True,
                 "probability": 0.515,
+                "model_method": "logistic_multifeature_7f",
+                "probability_source": "logistic_multifeature_7f",
+                "feature_coverage": 1.0,
+                "model_probability": 0.515,
+                "legacy_bin_probability": 0.51,
                 "direction": "震荡",
                 "signal_strength": "中",
                 "signal_grade": "B",
@@ -928,6 +955,8 @@ def test_signal_5d_top_endpoint_is_a_share_only(monkeypatch, tmp_path, running_s
     data = body["data"]
     assert data["artifact"]["available"] is True
     assert data["artifact"]["stale"] is False
+    assert data["artifact"]["model_method"] == "logistic_multifeature_7f"
+    assert data["probability_source"] == "logistic_multifeature_7f"
     assert [r["ts_code"] for r in data["rows"]] == ["300750.SZ", "002236.SZ"]
 
     status, _h, body = _get(host, port, "/api/project-ult/signals/top?market=US")

@@ -12,6 +12,8 @@
 - [A-share 5d signal review audit](audit/2026-06-20_a_share_signal_5d_review_audit.json)
 - [A-share 5d signal 12-date backtest](audit/2026-06-20_a_share_signal_5d_backtest_10_dates.json)
 - [A-share 5d signal contract smoke](audit/2026-06-20_a_share_signal_5d_contract_smoke.json)
+- [A-share 5d model 12-date backtest](audit/2026-06-20_a_share_signal_5d_model_backtest.json)
+- [A-share 5d model 42-date backtest](audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json)
 
 This documentation is intentionally scoped to the 13-industry MVP orchestration
 shell. It records how to validate a bounded industry-driven universe, lock
@@ -37,7 +39,12 @@ Current storage split:
 - `runtime/signal_5d/A_share.json` stores the backend A-share 5-day relative
   signal artifact used by the workbench. Its target is 5d probability of
   beating the same-day liquid-universe median, not absolute P(up); stale and
-  unvalidated rows must remain explicit in API/UI evidence. Historical evidence
-  is in `audit/2026-06-20_a_share_signal_5d_backtest_10_dates.json`: 12
-  walk-forward dates, no future calibration bins, avg rank IC 0.0245, avg Brier
-  skill 0.00034, and avg top-20 excess -0.24pp.
+  unvalidated rows must remain explicit in API/UI evidence. The v2 calibration
+  exports a 7-feature ridge-logistic candidate and a legacy-bin fallback. The
+  12-date model evidence passes the aggressive gate, but the required 42-date
+  evidence fails Brier-skill and rank-IC-vs-fallback, so the current production
+  `probability_source` is `score_pct_linear_bin10` and the logistic output is
+  retained as `model_probability_shadow`. Current artifact evidence shows 1,610
+  rows, 1,100 validated rows, and 37 distinct 1-decimal validated
+  probabilities. Stale rows may show gray `过期预览` values for inspection, but
+  they remain invalid for signal counts.

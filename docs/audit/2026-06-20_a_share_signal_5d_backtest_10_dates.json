@@ -1,6 +1,6 @@
 {
   "audit": "a_share_signal_5d_backtest_10_dates",
-  "generated_at": "2026-06-20T21:24:33",
+  "generated_at": "2026-06-20T23:48:46",
   "panel": {
     "path": "factor_research/model/panel.npz",
     "base_dates": [
@@ -13,7 +13,9 @@
       "ivol_60",
       "ep_ttm",
       "strev"
-    ]
+    ],
+    "production_method": "logistic_multifeature_7f",
+    "production_probability_source": "score_pct_linear_bin10"
   },
   "methodology": {
     "target": "P(5d beat same-day liquid median)",
@@ -23,7 +25,7 @@
     "train_rule": "for asof date t, fit score-bin P(beat median) on base dates strictly < t",
     "feature_rule": "features are same-date PIT panel features; forward returns are labels only",
     "liquid_benchmark_rule": "same as production: top liquid fraction by date ln_mv, then median fwd5 return",
-    "probability_rule": "base_rate + tilt_shrink * (isotonic_bin_p - base_rate)",
+    "probability_rule": "legacy walk-forward bins: base_rate + tilt_shrink * (isotonic_bin_p - base_rate); model/fallback comparison is reported by scripts/evaluate_signal_5d_schemes.py",
     "direction_strength_rule": "mvp20.signal_5d direction/strength thresholds applied to relative probability tilt",
     "fixture_or_local_data_mode": "local panel only; no external API required"
   },

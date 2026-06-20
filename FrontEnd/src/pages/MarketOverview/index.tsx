@@ -199,6 +199,10 @@ export function MarketOverviewPage() {
     )
   }
 
+  function signalHasPreview(row: Signal5dRow): boolean {
+    return row.available !== false && typeof row.probability === 'number'
+  }
+
   function openStock(row: Signal5dRow): void {
     const cachedProfile =
       universe.find((profile) => profile.ts_code === row.ts_code) ??
@@ -230,6 +234,9 @@ export function MarketOverviewPage() {
   // signal_5d endpoint; no options/fallback mock is included.
   const coreSummary = (() => {
     const active = topSignals.filter((s) => signalIsRenderable(s))
+    const stalePreview = topSignals.filter(
+      (s) => !signalIsRenderable(s) && s.stale === true && signalHasPreview(s),
+    )
     const strongUp = active.filter(
       (s) => s.direction === '上涨' && s.signal_strength === '强',
     ).length
@@ -241,7 +248,8 @@ export function MarketOverviewPage() {
       strongUp,
       strongDown,
       validated: active.length,
-      invalid: topSignals.length - active.length,
+      stalePreview: stalePreview.length,
+      invalid: topSignals.length - active.length - stalePreview.length,
     }
   })()
 
@@ -350,6 +358,8 @@ export function MarketOverviewPage() {
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {topSignals.map((signal) => {
                 const renderable = signalIsRenderable(signal)
+                const previewable = signalHasPreview(signal)
+                const stalePreview = !renderable && signal.stale === true && previewable
                 const isUp = signal.direction === '上涨'
                 const isDown = signal.direction === '下跌'
                 const directionColor = isUp
@@ -357,6 +367,19 @@ export function MarketOverviewPage() {
                   : isDown
                     ? 'var(--success)'
                     : 'var(--text-secondary)'
+                const displayColor = renderable ? directionColor : 'var(--text-secondary)'
+                const modelLabel =
+                  signal.model_method === 'logistic_multifeature_7f'
+                    ? '7f logistic'
+                    : (signal.model_method ?? 'legacy')
+                const legacyProbabilityLabel =
+                  typeof signal.legacy_bin_probability === 'number'
+                    ? `${(signal.legacy_bin_probability * 100).toFixed(2)}%`
+                    : '--'
+                const featureCoverageLabel =
+                  typeof signal.feature_coverage === 'number'
+                    ? `${Math.round(signal.feature_coverage * 100)}%`
+                    : '--'
                 return (
                   <div
                     key={signal.ts_code}
@@ -374,8 +397,12 @@ export function MarketOverviewPage() {
                       <span
                         className="flex h-7 w-7 items-center justify-center rounded-md text-[13px] font-semibold"
                         style={{
-                          background: gradeBg(signal.signal_grade),
-                          color: gradeColor(signal.signal_grade),
+                          background: renderable
+                            ? gradeBg(signal.signal_grade)
+                            : 'var(--bg-secondary)',
+                          color: renderable
+                            ? gradeColor(signal.signal_grade)
+                            : 'var(--text-secondary)',
                         }}
                       >
                         {signal.signal_grade}
@@ -397,7 +424,8 @@ export function MarketOverviewPage() {
                                   : (signal.pool ?? '常规')
                         }
                       />
-                      {signal.stale ? <TagBadge label="陈旧" /> : null}
+                      {stalePreview ? <TagBadge label="过期预览" /> : null}
+                      {signal.stale && !stalePreview ? <TagBadge label="陈旧" /> : null}
                       {signal.validated === false ? <TagBadge label="未验证" /> : null}
                     </div>
 
@@ -406,21 +434,31 @@ export function MarketOverviewPage() {
                         <div className="text-[10px] text-[var(--text-tertiary)]">5 日相对胜率</div>
                         <div
                           className="text-[16px] font-semibold tabular-nums"
-                          style={{ color: directionColor }}
+                          style={{ color: displayColor }}
                         >
-                          {renderable ? `${((signal.probability ?? 0) * 100).toFixed(1)}%` : '--'}
+                          {renderable || stalePreview
+                            ? `${((signal.probability ?? 0) * 100).toFixed(2)}%`
+                            : '--'}
                         </div>
+                        {stalePreview ? (
+                          <div className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
+                            过期预览
+                          </div>
+                        ) : null}
                       </div>
                       <div>
                         <div className="text-[10px] text-[var(--text-tertiary)]">方向 / 强度</div>
                         <div
-                          className="text-[13px] font-medium"
-                          style={{ color: directionColor }}
-                        >
-                          {renderable
+	                          className="text-[13px] font-medium"
+	                          style={{ color: displayColor }}
+	                        >
+	                          {renderable || stalePreview
                             ? `${signal.direction ?? '震荡'} · ${signal.signal_strength ?? '弱'}`
                             : '无有效信号'}
                         </div>
+                      </div>
+                      <div className="col-span-2 truncate text-[10px] text-[var(--text-tertiary)]">
+                        模型: {modelLabel} · 旧桶 {legacyProbabilityLabel} · 覆盖 {featureCoverageLabel}
                       </div>
                     </div>
 
@@ -472,7 +510,9 @@ export function MarketOverviewPage() {
 
                     {!renderable ? (
                       <div className="rounded-md bg-[var(--bg-secondary)] px-3 py-2 text-[11px] text-[var(--text-secondary)]">
-                        {signal.reason ?? 'signal_5d 当前未通过有效性检查。'}
+                        {stalePreview
+                          ? `过期预览，不作为有效信号：${signal.reason ?? 'artifact 已陈旧。'}`
+                          : (signal.reason ?? 'signal_5d 当前未通过有效性检查。')}
                       </div>
                     ) : null}
 
@@ -604,9 +644,9 @@ export function MarketOverviewPage() {
             hint="validated=true 且 artifact 未陈旧"
           />
           <MetricCard
-            label="暂停展示"
-            value={String(coreSummary.invalid)}
-            hint="stale 或 validated=false"
+            label="过期预览"
+            value={String(coreSummary.stalePreview)}
+            hint="stale=true，仅灰色预览，不计入有效信号"
           />
         </div>
       </ContentCard>

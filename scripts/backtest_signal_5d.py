@@ -117,12 +117,13 @@ def _http_json(base_url: str, path: str) -> dict[str, Any]:
 def _score_matrix(z: Any, meta: dict[str, Any], params: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     z_neutral = H.neutralize(z, meta)
     names = meta["feat_names"]
-    features = [str(f) for f in params["features"]]
+    legacy = params.get("legacy_bin_calibration") or params
+    features = [str(f) for f in legacy["features"]]
     idx = [names.index(f) for f in features]
     sub = z_neutral[:, :, idx]
-    if str(params.get("method")) != "ew_signed":
-        raise ValueError(f"backtest currently expects ew_signed params, got {params.get('method')}")
-    signs = params.get("signs") or {}
+    if str(legacy.get("method")) != "ew_signed":
+        raise ValueError(f"backtest currently expects ew_signed legacy params, got {legacy.get('method')}")
+    signs = legacy.get("signs") or {}
     w = np.array([float(signs[f]) for f in features], dtype=float)
     cov = np.isfinite(sub).mean(axis=2)
     score = np.where(np.isfinite(sub), sub, 0.0) @ w
@@ -175,13 +176,14 @@ def _date_record(
     audit_today: str,
     top_n: int,
 ) -> dict[str, Any] | None:
-    k = int(params.get("k_bins") or 10)
+    legacy = params.get("legacy_bin_calibration") or params
+    k = int(legacy.get("k_bins") or params.get("k_bins") or 10)
     stats_raw, _ = fit_bins(scores, fwd_rel, liquid, train_idx, k=k)
     if any(s is None for s in stats_raw):
         return None
     stats = signal_5d.apply_isotonic_p_up(stats_raw)
     base_rate = float(np.nanmean([s["p_up"] for s in stats]))
-    tilt_shrink = float(params.get("tilt_shrink", 1.0))
+    tilt_shrink = float(legacy.get("tilt_shrink", params.get("tilt_shrink", 1.0)))
 
     b = score_bins(scores[t], liquid[t], k=k)
     pct = _score_percentiles(scores[t], b >= 0)
@@ -440,7 +442,12 @@ def run_backtest(
             "base_dates": [meta["base_dates"][0], meta["base_dates"][-1]],
             "n_dates": len(meta["base_dates"]),
             "n_stocks": len(meta["cols"]),
-            "features": list(params["features"]),
+            "features": list((params.get("legacy_bin_calibration") or params)["features"]),
+            "production_method": params.get("method"),
+            "production_probability_source": (
+                params.get("calibration", {}).get("primary_probability_source")
+                or params.get("probability_source")
+            ),
         },
         "methodology": {
             "target": signal_5d.TARGET_LABEL,
@@ -450,7 +457,11 @@ def run_backtest(
             "train_rule": "for asof date t, fit score-bin P(beat median) on base dates strictly < t",
             "feature_rule": "features are same-date PIT panel features; forward returns are labels only",
             "liquid_benchmark_rule": "same as production: top liquid fraction by date ln_mv, then median fwd5 return",
-            "probability_rule": "base_rate + tilt_shrink * (isotonic_bin_p - base_rate)",
+            "probability_rule": (
+                "legacy walk-forward bins: base_rate + tilt_shrink * "
+                "(isotonic_bin_p - base_rate); model/fallback comparison is "
+                "reported by scripts/evaluate_signal_5d_schemes.py"
+            ),
             "direction_strength_rule": "mvp20.signal_5d direction/strength thresholds applied to relative probability tilt",
             "fixture_or_local_data_mode": "local panel only; no external API required",
         },
