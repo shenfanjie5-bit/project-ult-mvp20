@@ -963,3 +963,116 @@ def test_signal_5d_top_endpoint_is_a_share_only(monkeypatch, tmp_path, running_s
     assert status == 200
     assert body["data"]["rows"] == []
     assert "A-share only" in body["data"]["reason"]
+
+
+def test_signal_up_5d_stock_top_and_score_embed(monkeypatch, tmp_path, running_server) -> None:
+    from mvp20 import server as server_mod
+    from mvp20 import signal_up_5d
+
+    signal_up_5d._artifact_cache.clear()
+    server_mod._DERIVED_RESPONSE_CACHE.clear()
+    monkeypatch.setattr(signal_up_5d, "ARTIFACT_DIR", tmp_path)
+    artifact = {
+        "market": "A_share",
+        "asof": "20260619",
+        "horizon_days": 5,
+        "target": signal_up_5d.TARGET_LABEL,
+        "target_display": signal_up_5d.TARGET_DISPLAY,
+        "target_kind": signal_up_5d.TARGET_KIND,
+        "model_method": signal_up_5d.MODEL_METHOD,
+        "probability_source": signal_up_5d.MODEL_METHOD,
+        "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+        "n_rows": 2,
+        "n_available": 2,
+        "n_validated": 2,
+        "coverage": {"validated_ratio": 1.0},
+        "model": {"type": "ridge_logistic", "primary_enabled": True},
+        "baseline": {"method": signal_up_5d.BASELINE_METHOD},
+        "fallback": {"method": signal_up_5d.FALLBACK_METHOD, "probability": 0.459},
+        "calibration": {},
+        "caveats": ["absolute target only"],
+        "rows": {
+            "300750.SZ": {
+                "available": True,
+                "validated": True,
+                "reason": "validated",
+                "market": "A_share",
+                "horizon_days": 5,
+                "target": signal_up_5d.TARGET_LABEL,
+                "target_display": signal_up_5d.TARGET_DISPLAY,
+                "target_kind": signal_up_5d.TARGET_KIND,
+                "model_method": signal_up_5d.MODEL_METHOD,
+                "probability_source": signal_up_5d.MODEL_METHOD,
+                "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+                "feature_coverage": 1.0,
+                "model_probability": 0.571,
+                "fallback_probability": 0.459,
+                "baseline_probability": 0.53,
+                "probability": 0.571,
+                "p_up_5d": 0.571,
+                "direction": "上涨",
+                "signal_strength": "中",
+                "signal_grade": "A",
+                "drivers": [],
+                "risks": [],
+            },
+            "002236.SZ": {
+                "available": True,
+                "validated": True,
+                "reason": "validated",
+                "market": "A_share",
+                "horizon_days": 5,
+                "target": signal_up_5d.TARGET_LABEL,
+                "target_display": signal_up_5d.TARGET_DISPLAY,
+                "target_kind": signal_up_5d.TARGET_KIND,
+                "model_method": signal_up_5d.MODEL_METHOD,
+                "probability_source": signal_up_5d.MODEL_METHOD,
+                "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+                "feature_coverage": 1.0,
+                "model_probability": 0.522,
+                "fallback_probability": 0.459,
+                "baseline_probability": 0.50,
+                "probability": 0.522,
+                "p_up_5d": 0.522,
+                "direction": "震荡",
+                "signal_strength": "弱",
+                "signal_grade": "B",
+                "drivers": [],
+                "risks": [],
+            },
+        },
+    }
+    signal_up_5d.save_artifact(artifact, root=tmp_path)
+    host, port, *_ = running_server
+
+    qs = "?" + urlencode({"ts_code": "300750.SZ"})
+    status, _h, body = _get(host, port, f"/api/project-ult/signals/up-5d/stock{qs}")
+    assert status == 200, body
+    data = body["data"]
+    assert data["ts_code"] == "300750.SZ"
+    assert data["name"] == "宁德时代"
+    assert data["target_kind"] == "absolute_up_5d"
+    assert data["probability"] == 0.571
+    assert data["p_up_5d"] == 0.571
+    assert data["validated"] is True
+    assert data["stale"] is False
+    assert "beat same-day" not in data["probability_semantics"]
+
+    status, _h, body = _get(host, port, "/api/project-ult/signals/up-5d/top?market=A_share&limit=2")
+    assert status == 200, body
+    top = body["data"]
+    assert top["artifact"]["available"] is True
+    assert top["artifact"]["stale"] is False
+    assert top["target_kind"] == "absolute_up_5d"
+    assert [r["ts_code"] for r in top["rows"]] == ["300750.SZ", "002236.SZ"]
+
+    status, _h, body = _get(host, port, "/api/project-ult/signals/up-5d/top?market=US")
+    assert status == 200
+    assert body["data"]["rows"] == []
+    assert "A-share only" in body["data"]["reason"]
+
+    qs = "?" + urlencode({"ts_code": "300750.SZ"})
+    status, _h, body = _get(host, port, f"/api/project-ult/score{qs}")
+    assert status == 200, body
+    assert body["data"]["signal_up_5d"]["target_kind"] == "absolute_up_5d"
+    assert body["data"]["signal_up_5d"]["p_up_5d"] == 0.571

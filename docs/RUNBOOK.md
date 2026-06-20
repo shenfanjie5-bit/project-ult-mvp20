@@ -158,7 +158,47 @@ specific tickers.
     HK/US are intentionally not emitted by this artifact. They need separate
     history feeds, feature pipelines, and calibration evidence before the same
     endpoint can return validated rows.
-13. Run fixture and live evidence only through explicit gates.
+13. **A-share absolute 5d upside signal build** — this is a parallel signal,
+    not a replacement for `signal_5d`. The target is absolute:
+    `P(5d return > 0)` / `target_kind=absolute_up_5d`.
+
+    ```bash
+    .venv/bin/python factor_research/model/export_signal_up_5d_params.py
+    .venv/bin/python scripts/build_signal_up_5d.py
+    .venv/bin/python scripts/evaluate_signal_up_5d.py --date 2026-06-21 --n-dates 12 --top-n 20
+    .venv/bin/python scripts/evaluate_signal_up_5d.py --date 2026-06-21 --n-dates 42 --top-n 20 --out docs/audit/2026-06-21_a_share_signal_up_5d_model_backtest_42_dates.json
+    .venv/bin/mvp20 serve --port 8701
+    curl 'http://127.0.0.1:8701/api/project-ult/signals/up-5d/stock?ts_code=002236.SZ' | jq '.data'
+    curl 'http://127.0.0.1:8701/api/project-ult/signals/up-5d/top?market=A_share&limit=5' | jq '.data.artifact'
+    ```
+
+    Expected contract:
+
+    | Field | Meaning |
+    |---|---|
+    | `probability` / `p_up_5d` | selected absolute `P(5d return > 0)` preview/probability |
+    | `target_kind` | `absolute_up_5d` |
+    | `probability_semantics` | explicit absolute-up text; not relative win rate |
+    | `model_probability` | ridge-logistic absolute-up estimate when feature coverage is sufficient |
+    | `model_probability_shadow` | logistic estimate retained when 42-date production gates fail |
+    | `fallback_probability` | train base-rate fallback; transparent but not a stock-specific validated signal |
+    | `baseline_probability` | score-derived shadow comparator; never `final_score.base_score` linear mapping |
+    | `validated` | true only if the 42-date gates pass, artifact is fresh, row is liquid-gated, and features are covered |
+    | `reason` | explicit reason for failed gate, stale artifact, unsupported market, or insufficient coverage |
+
+    The 2026-06-21 evidence is intentionally conservative. The 12-date fast
+    run passed for the market/industry regime adjusted logistic candidate, but
+    the 42-date stability run failed Brier/logloss/AUC/top-decile gates. Current
+    artifact rows are therefore `validated=false` and use
+    `train_base_rate_unvalidated` as the selected source while retaining the
+    logistic value as shadow. Use this only as a stock-detail directional
+    explanation until a future 42-date gate passes. Keep MarketOverview primary
+    sorting on the relative `signal_5d` signal.
+
+    HK/US are intentionally not emitted by this artifact. They need separate
+    history feeds, feature pipelines, and calibration evidence before the same
+    endpoint can return validated rows.
+14. Run fixture and live evidence only through explicit gates.
 
 ## Current-MVP Audit Evidence
 
@@ -174,6 +214,11 @@ The 2026-06-20 completion gate is reproducible from the current audit inputs:
 .venv/bin/python scripts/audit_signal_5d.py --date 2026-06-20 --base-url http://127.0.0.1:8701
 .venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 12 --top-n 20
 .venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 42 --top-n 20 --out docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json
+.venv/bin/python factor_research/model/export_signal_up_5d_params.py
+.venv/bin/python scripts/build_signal_up_5d.py
+.venv/bin/python scripts/evaluate_signal_up_5d.py --date 2026-06-21 --n-dates 12 --top-n 20
+.venv/bin/python scripts/evaluate_signal_up_5d.py --date 2026-06-21 --n-dates 42 --top-n 20 --out docs/audit/2026-06-21_a_share_signal_up_5d_model_backtest_42_dates.json
+.venv/bin/python scripts/audit_signal_up_5d.py --date 2026-06-21 --base-url http://127.0.0.1:8701
 .venv/bin/python scripts/backtest_signal_5d.py --date 2026-06-20 --n-dates 12 --top-n 20 --base-url http://127.0.0.1:8701
 .venv/bin/python scripts/audit_completion_deviation.py
 ```

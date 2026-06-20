@@ -14,6 +14,12 @@
 - [A-share 5d signal contract smoke](audit/2026-06-20_a_share_signal_5d_contract_smoke.json)
 - [A-share 5d model 12-date backtest](audit/2026-06-20_a_share_signal_5d_model_backtest.json)
 - [A-share 5d model 42-date backtest](audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json)
+- [A-share absolute up-5d artifact audit](audit/2026-06-21_a_share_signal_up_5d_artifact_audit.json)
+- [A-share absolute up-5d 12-date backtest](audit/2026-06-21_a_share_signal_up_5d_model_backtest_12_dates.json)
+- [A-share absolute up-5d 42-date backtest](audit/2026-06-21_a_share_signal_up_5d_model_backtest_42_dates.json)
+- [A-share absolute up-5d BFF smoke](audit/2026-06-21_a_share_signal_up_5d_bff_smoke.json)
+- [A-share absolute up-5d frontend binding](audit/2026-06-21_a_share_signal_up_5d_frontend_binding.json)
+- [A-share relative 5d utility review](audit/2026-06-21_a_share_signal_5d_utility_review.json)
 
 This documentation is intentionally scoped to the 13-industry MVP orchestration
 shell. It records how to validate a bounded industry-driven universe, lock
@@ -48,3 +54,11 @@ Current storage split:
   rows, 1,100 validated rows, and 37 distinct 1-decimal validated
   probabilities. Stale rows may show gray `过期预览` values for inspection, but
   they remain invalid for signal counts.
+- `runtime/signal_up_5d/A_share.json` stores the parallel absolute A-share
+  5-day upside artifact. Its target is `P(5d return > 0)` with
+  `target_kind=absolute_up_5d`; it is not the relative win-rate signal and does
+  not reuse `final_score.base_score` as a probability. The 2026-06-21 12-date
+  run passed the fast gate, but the 42-date stability gate failed. Current rows
+  therefore expose shadow/fallback probabilities with `validated=false`; stock
+  detail may show them as an over-date preview, while workbench sorting should
+  remain based on `signal_5d`.

@@ -124,6 +124,60 @@ export interface Signal5dBlock {
   direction?: '上涨' | '下跌' | '震荡'
   signal_strength?: '强' | '中' | '弱'
   signal_grade?: 'S' | 'A' | 'B' | 'C' | 'D'
+  drivers?: Array<{
+    factor_id: string
+    factor_label: string
+    contribution: number
+    source_node_id: string
+  }>
+  risks?: Array<{
+    factor_id: string
+    factor_label: string
+    contribution: number
+    source_node_id: string
+  }>
+  source_artifact?: string
+  caveats?: string[]
+}
+
+/** A-share absolute 5d upside probability. This is P(5d return > 0), not the
+ * relative signal and not a derived base_score preview. */
+export interface SignalUp5dBlock {
+  available: boolean
+  validated?: boolean
+  stale?: boolean
+  reason?: string
+  asof?: string
+  horizon_days?: number
+  target?: string
+  target_display?: string
+  target_kind?: 'absolute_up_5d' | string
+  model_method?: string
+  probability_semantics?: string
+  probability_source?: string
+  feature_coverage?: number | null
+  probability?: number
+  p_up_5d?: number
+  model_probability?: number | null
+  model_probability_shadow?: number | null
+  fallback_probability?: number | null
+  baseline_probability?: number | null
+  base_rate?: number
+  direction?: '上涨' | '下跌' | '震荡'
+  signal_strength?: '强' | '中' | '弱'
+  signal_grade?: 'S' | 'A' | 'B' | 'C' | 'D'
+  drivers?: Array<{
+    factor_id: string
+    factor_label: string
+    contribution: number
+    source_node_id: string
+  }>
+  risks?: Array<{
+    factor_id: string
+    factor_label: string
+    contribution: number
+    source_node_id: string
+  }>
   source_artifact?: string
   caveats?: string[]
 }
@@ -172,6 +226,8 @@ export interface StockScoreResponse {
   quant?: QuantBlock
   /** A-share 5d relative signal — parallel shadow output. */
   signal_5d?: Signal5dBlock
+  /** A-share absolute 5d upside probability — separate from signal_5d. */
+  signal_up_5d?: SignalUp5dBlock
   /** RD-A dual-axis (parallel v2; headline stays trading_signal until the
    * P&L loop's matured comparison promotes it). merit+timing == core base. */
   merit?: number

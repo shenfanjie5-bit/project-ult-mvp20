@@ -102,6 +102,28 @@ Verified status from the current worktree:
   `docs/audit/2026-06-20_a_share_signal_5d_contract_smoke.json`,
   `docs/audit/2026-06-20_a_share_signal_5d_model_backtest.json`, and
   `docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json`.
+- A separate A-share absolute 5-day upside layer now lives beside, not inside,
+  the relative signal: `signal_up_5d` targets **P(5d return > 0)** and writes
+  `config/signal_up_5d_params.json` plus `runtime/signal_up_5d/A_share.json`.
+  It excludes `final_score.base_score` from production probability mapping.
+  The 2026-06-21 12-date run looked promising for the regime-adjusted ridge
+  logistic candidate (avg Brier skill **0.00478**, avg logloss skill
+  **0.00103**, avg AUC **0.5276**, top-decile up-rate **46.05%** vs universe
+  **43.44%**, avg unique 1dp probabilities **272.6**), but the required
+  42-date stability gate failed (avg Brier skill **-0.05931**, avg logloss
+  skill **-0.04838**, avg AUC **0.5056**, top-decile up-rate **46.05%** vs
+  universe **46.84%**). Therefore absolute up is not promoted as a validated
+  production stock-specific probability in this checkout: API rows expose
+  `model_probability_shadow`, `fallback_probability`, `baseline_probability`,
+  and `validated=false` with an explicit failed-gate reason. Use it on the
+  individual stock page as a directional/shadow explanation only; keep the
+  home/workbench ranking anchored on the relative `signal_5d` signal. Evidence:
+  `docs/audit/2026-06-21_a_share_signal_up_5d_artifact_audit.json`,
+  `docs/audit/2026-06-21_a_share_signal_up_5d_model_backtest_12_dates.json`,
+  `docs/audit/2026-06-21_a_share_signal_up_5d_model_backtest_42_dates.json`,
+  `docs/audit/2026-06-21_a_share_signal_up_5d_bff_smoke.json`,
+  `docs/audit/2026-06-21_a_share_signal_up_5d_frontend_binding.json`, and
+  `docs/audit/2026-06-21_a_share_signal_5d_utility_review.json`.
 - DOCKCASE CSV quality-impact audit now consumes the completed 160,596-file
   full-row scanner plus all-file evidence. It classifies scoring/backtest/graph
   and BFF-impacting blockers at **0**, while retaining watchlist and
