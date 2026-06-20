@@ -79,10 +79,19 @@ Verified status from the current worktree:
   **5日跑赢同日流动性股票中位数概率**, not absolute 5日上涨概率. Current local
   artifact coverage is **1,610 rows / 1,100 validated**; as of 2026-06-20 it is
   correctly marked stale because the mounted DockCase archive latest trade date
-  is 20260605. Evidence:
+  is 20260605. The frozen bin probabilities are isotonic-smoothed for monotone
+  direction/strength mapping while preserving raw empirical `p_up_raw`. A
+  12-date walk-forward calibration backtest shows the H5 edge is weak but
+  auditable: avg rank IC **0.0245**, avg Brier skill **0.00034**, avg top-bucket
+  hit rate **51.36%**, and avg top-20 excess **-0.24pp**; UI/API must therefore
+  treat this as a relative ranking hint, not a high-conviction forecast.
+  Evidence:
   `docs/audit/2026-06-20_a_share_signal_5d_artifact_audit.json`,
   `docs/audit/2026-06-20_a_share_signal_5d_bff_smoke.json`, and
-  `docs/audit/2026-06-20_a_share_signal_5d_frontend_binding.json`.
+  `docs/audit/2026-06-20_a_share_signal_5d_frontend_binding.json`,
+  `docs/audit/2026-06-20_a_share_signal_5d_review_audit.json`,
+  `docs/audit/2026-06-20_a_share_signal_5d_backtest_10_dates.json`, and
+  `docs/audit/2026-06-20_a_share_signal_5d_contract_smoke.json`.
 - DOCKCASE CSV quality-impact audit now consumes the completed 160,596-file
   full-row scanner plus all-file evidence. It classifies scoring/backtest/graph
   and BFF-impacting blockers at **0**, while retaining watchlist and
@@ -3985,7 +3994,7 @@ The server is **read-only**. The table below lists the core route examples;
 | `/api/project-ult/market-events` | latest cross-stock realtime event stream payload |
 | `/api/project-ult/technicals?ts_code=X` | MA / MACD / RSI / KDJ / BOLL / VOL / ATR / OBV pack |
 | `/api/project-ult/aggregate`, `/api/project-ult/coverage`, `/api/project-ult/score` | derived layer aggregate, coverage, and score envelopes |
-| `/api/project-ult/signals/top?horizon=5&market=A_share` | A-share 5d relative signal ranking from `runtime/signal_5d/A_share.json`; HK/US return an honest empty envelope until separately calibrated |
+| `/api/project-ult/signals/top?horizon=5&market=A_share` | A-share 5d relative signal ranking from `runtime/signal_5d/A_share.json`; probability bins are isotonic-smoothed; HK/US return an honest empty envelope until separately calibrated |
 | `/api/project-ult/signals/stock?ts_code=X&horizon=5` | one A-share 5d relative signal block with `validated`, `stale`, `reason`, direction, strength, drivers, and risks |
 | `/api/admin/*`, `/api/alerts/*` | local mvp20 BFF empty-state stubs |
 

@@ -9,6 +9,9 @@
 - [A-share 5d signal artifact audit](audit/2026-06-20_a_share_signal_5d_artifact_audit.json)
 - [A-share 5d signal BFF smoke](audit/2026-06-20_a_share_signal_5d_bff_smoke.json)
 - [A-share 5d signal frontend binding](audit/2026-06-20_a_share_signal_5d_frontend_binding.json)
+- [A-share 5d signal review audit](audit/2026-06-20_a_share_signal_5d_review_audit.json)
+- [A-share 5d signal 12-date backtest](audit/2026-06-20_a_share_signal_5d_backtest_10_dates.json)
+- [A-share 5d signal contract smoke](audit/2026-06-20_a_share_signal_5d_contract_smoke.json)
 
 This documentation is intentionally scoped to the 13-industry MVP orchestration
 shell. It records how to validate a bounded industry-driven universe, lock
@@ -34,4 +37,7 @@ Current storage split:
 - `runtime/signal_5d/A_share.json` stores the backend A-share 5-day relative
   signal artifact used by the workbench. Its target is 5d probability of
   beating the same-day liquid-universe median, not absolute P(up); stale and
-  unvalidated rows must remain explicit in API/UI evidence.
+  unvalidated rows must remain explicit in API/UI evidence. Historical evidence
+  is in `audit/2026-06-20_a_share_signal_5d_backtest_10_dates.json`: 12
+  walk-forward dates, no future calibration bins, avg rank IC 0.0245, avg Brier
+  skill 0.00034, and avg top-20 excess -0.24pp.

@@ -1,0 +1,97 @@
+{
+  "audit": "a_share_signal_5d_review_audit",
+  "generated_at": "2026-06-20T21:24:33",
+  "scope": [
+    "mvp20/signal_5d.py",
+    "scripts/build_signal_5d.py",
+    "factor_research/model/export_signal_5d_params.py",
+    "mvp20/server.py",
+    "FrontEnd/src/pages/MarketOverview/index.tsx",
+    "scripts/audit_signal_5d.py",
+    "scripts/backtest_signal_5d.py"
+  ],
+  "matrix": [
+    {
+      "design_requirement": "5d signal target is relative P(beat same-day liquid median), not absolute P(up).",
+      "current_implementation": {
+        "params_target": "P(5d beat same-day liquid median)",
+        "params_target_kind": "relative_cross_section_median",
+        "artifact_target": "P(5d beat same-day liquid median)"
+      },
+      "review_conclusion": "pass",
+      "fix_action": "none",
+      "acceptance_evidence": "config/signal_5d_params.json target_kind and caveats"
+    },
+    {
+      "design_requirement": "forward 5d label must be label-only and not enter features.",
+      "current_implementation": {
+        "panel_forward_return_formula_found": true,
+        "build_uses_latest_feature_index_only": true
+      },
+      "review_conclusion": "pass",
+      "fix_action": "none",
+      "acceptance_evidence": "factor_research/model/panel.py forward_returns plus scripts/build_signal_5d.py feature construction"
+    },
+    {
+      "design_requirement": "historical backtest must not reuse future calibration bins.",
+      "current_implementation": {
+        "production_params_fit": "full-panel frozen bins over matured fwd5 relative returns",
+        "production_panel_end": "20260428",
+        "serving_artifact_asof": "20260605",
+        "production_params_not_after_serving_asof": true,
+        "backtest_walk_forward_calibration": true
+      },
+      "review_conclusion": "pass",
+      "fix_action": "added scripts/backtest_signal_5d.py walk-forward calibration evidence",
+      "acceptance_evidence": "docs/audit/2026-06-20_a_share_signal_5d_backtest_10_dates.json"
+    },
+    {
+      "design_requirement": "probability bins and direction/strength mapping should be monotone and explainable.",
+      "current_implementation": {
+        "params_bins_monotone": true,
+        "isotonic_export_enabled": true,
+        "direction_strength_functions": [
+          "direction_from_probability",
+          "strength_from_probability",
+          "grade_from_probability"
+        ]
+      },
+      "review_conclusion": "pass",
+      "fix_action": "applied weighted isotonic smoothing to frozen and walk-forward bin P(beat median)",
+      "acceptance_evidence": "tests/test_signal_5d.py plus config/signal_5d_params.json calibration.p_up_isotonic"
+    },
+    {
+      "design_requirement": "BFF and frontend must not surface placeholder/fallback fake 5d probability.",
+      "current_implementation": {
+        "hook_calls_signal_top_endpoint": true,
+        "market_overview_no_derive_stock_signal": true,
+        "market_overview_no_upside_probability": true,
+        "stale_invalid_hides_probability": true
+      },
+      "review_conclusion": "pass",
+      "fix_action": "none",
+      "acceptance_evidence": "frontend binding audit and tests/test_signal_5d.py source contract test"
+    },
+    {
+      "design_requirement": "HK/US must not receive A-share model output.",
+      "current_implementation": {
+        "server_has_a_share_only_reason": true,
+        "score_block_rejects_non_a": true
+      },
+      "review_conclusion": "pass",
+      "fix_action": "none",
+      "acceptance_evidence": "tests/test_server.py and contract smoke"
+    }
+  ],
+  "summary": {
+    "all_review_items_pass": true,
+    "leakage_found": false,
+    "placeholder_or_fallback_found_in_workbench": false,
+    "stale_data_exists_for_current_serving_artifact": true,
+    "known_limitations": [
+      "production frozen params are full-panel calibration for current serving; historical proof uses separate walk-forward calibration",
+      "A-share only; HK/US require separate history/features/calibration",
+      "current serving artifact freshness depends on DockCase daily refresh"
+    ]
+  }
+}

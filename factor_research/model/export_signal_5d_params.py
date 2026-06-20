@@ -26,6 +26,7 @@ import numpy as np
 sys.path.insert(0, os.getcwd())
 from factor_research.model import harness as H  # noqa: E402
 from factor_research.model.caliblib import K_BINS, fit_bins, liquid_mask  # noqa: E402
+from mvp20 import signal_5d  # noqa: E402
 
 
 OUT = Path("config/signal_5d_params.json")
@@ -106,9 +107,10 @@ def main() -> int:
         d for d in range(score.shape[0])
         if np.isfinite(score[d]).any() and np.isfinite(fwd[d]).any()
     ]
-    stats, _ = fit_bins(score, fwd, mask, train_idx)
-    if any(s is None for s in stats):
+    raw_stats, _ = fit_bins(score, fwd, mask, train_idx)
+    if any(s is None for s in raw_stats):
         raise RuntimeError("signal_5d bins incomplete")
+    stats = signal_5d.apply_isotonic_p_up(raw_stats)
 
     base_rate = float(np.nanmean([s["p_up"] for s in stats]))
     params = {
@@ -135,10 +137,13 @@ def main() -> int:
         "signs": signs,
         "base_rate": base_rate,
         "tilt_shrink": TILT_SHRINK,
-        "bins": [{k: s[k] for k in ("n", "p_up", "mean", "q10", "q50", "q90")}
-                 for s in stats],
+        "bins": [{k: s[k] for k in (
+            "n", "p_up", "p_up_raw", "mean", "q10", "q50", "q90"
+        )} for s in stats],
         "calibration": {
             "fit": "full-panel frozen bins over matured fwd5 relative returns",
+            "p_up_isotonic": True,
+            "p_up_isotonic_method": "weighted_pool_adjacent_violators",
             "stage3_oos": _stage3_summary(),
             "tilt_shrink": TILT_SHRINK,
         },

@@ -126,6 +126,59 @@ def grade_from_probability(probability: float, base_rate: float) -> str:
     return "D"
 
 
+def isotonic_non_decreasing(
+    values: Sequence[float],
+    weights: Sequence[float] | None = None,
+) -> list[float]:
+    """Weighted PAVA smoothing for score-bin probabilities.
+
+    The signal score is ordinal: higher bins should not emit a lower calibrated
+    P(beat median).  This only smooths the calibration layer; it does not change
+    the cross-sectional score or any realized backtest label.
+    """
+    if not values:
+        return []
+    xs = [float(v) for v in values]
+    ws = [1.0] * len(xs) if weights is None else [max(float(w), 1e-12) for w in weights]
+    blocks: list[dict[str, float | int]] = []
+    for i, (x, w) in enumerate(zip(xs, ws, strict=True)):
+        blocks.append({"start": i, "end": i, "sum_w": w, "sum_xw": x * w})
+        while len(blocks) >= 2:
+            left = blocks[-2]
+            right = blocks[-1]
+            left_mean = float(left["sum_xw"]) / float(left["sum_w"])
+            right_mean = float(right["sum_xw"]) / float(right["sum_w"])
+            if left_mean <= right_mean:
+                break
+            merged = {
+                "start": int(left["start"]),
+                "end": int(right["end"]),
+                "sum_w": float(left["sum_w"]) + float(right["sum_w"]),
+                "sum_xw": float(left["sum_xw"]) + float(right["sum_xw"]),
+            }
+            blocks[-2:] = [merged]
+    out = [0.0] * len(xs)
+    for block in blocks:
+        mean = float(block["sum_xw"]) / float(block["sum_w"])
+        for i in range(int(block["start"]), int(block["end"]) + 1):
+            out[i] = mean
+    return out
+
+
+def apply_isotonic_p_up(bin_stats: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Return bin stats with monotone ``p_up`` and preserved ``p_up_raw``."""
+    values = [float(s["p_up"]) for s in bin_stats]
+    weights = [float(s.get("n", 1.0)) for s in bin_stats]
+    smooth = isotonic_non_decreasing(values, weights)
+    out: list[dict[str, Any]] = []
+    for stat, p_smooth in zip(bin_stats, smooth, strict=True):
+        row = dict(stat)
+        row.setdefault("p_up_raw", float(row["p_up"]))
+        row["p_up"] = float(p_smooth)
+        out.append(row)
+    return out
+
+
 def _bin_of(score: "Any", eligible: "Any", k: int) -> "Any":
     return quant_score._bin_of(score, eligible, k)  # tested parity in quant_score
 

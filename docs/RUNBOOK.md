@@ -115,6 +115,7 @@ specific tickers.
     ```bash
     .venv/bin/python factor_research/model/export_signal_5d_params.py
     .venv/bin/python scripts/build_signal_5d.py
+    .venv/bin/python scripts/backtest_signal_5d.py --date 2026-06-20 --n-dates 12 --top-n 20
     .venv/bin/mvp20 serve --port 8701
     curl 'http://127.0.0.1:8701/api/project-ult/signals/stock?ts_code=002236.SZ&horizon=5' | jq '.data'
     curl 'http://127.0.0.1:8701/api/project-ult/signals/top?horizon=5&market=A_share&limit=5' | jq '.data.artifact'
@@ -124,11 +125,20 @@ specific tickers.
 
     | Field | Meaning |
     |---|---|
-    | `probability` / `p_beat_median` | 5d relative probability, not absolute P(up) |
+    | `probability` / `p_beat_median` | 5d relative probability, not absolute P(up); frozen bins are isotonic-smoothed |
+    | `raw_bin_probability` / `p_up_raw` | empirical bin probability before monotone smoothing |
     | `validated` | true only inside the liquid top-70% model gate with enough feature coverage |
     | `stale` | true when artifact `asof` is older than 10 calendar days |
     | `reason` | explicit reason for stale/unvalidated/unavailable rows |
     | `direction` / `signal_strength` | derived from relative probability tilt around base rate |
+
+    The 2026-06-20 review/backtest gate is intentionally conservative. It uses
+    walk-forward calibration for every historical asof date instead of reusing
+    today's frozen bins, so the evidence has no future calibration leak. Current
+    12-date evidence: avg rank IC 0.0245, avg Brier skill 0.00034, avg
+    top-bucket hit rate 51.36%, avg top-20 excess -0.24pp. This means the H5
+    layer is a weak relative ranking hint; stale or unvalidated rows must render
+    as `-- / 无有效信号`.
 
     HK/US are intentionally not emitted by this artifact. They need separate
     history feeds, feature pipelines, and calibration evidence before the same
@@ -147,6 +157,7 @@ The 2026-06-20 completion gate is reproducible from the current audit inputs:
 .venv/bin/python scripts/audit_bff_latency.py --start-server --port 8799 --output docs/audit/bff_latency_2026-06-20.json --repeats 2 --warmups 1 --threshold-ms 1000
 .venv/bin/python scripts/audit_dockcase_csv_quality_impact.py
 .venv/bin/python scripts/audit_signal_5d.py --date 2026-06-20 --base-url http://127.0.0.1:8701
+.venv/bin/python scripts/backtest_signal_5d.py --date 2026-06-20 --n-dates 12 --top-n 20 --base-url http://127.0.0.1:8701
 .venv/bin/python scripts/audit_completion_deviation.py
 ```
 

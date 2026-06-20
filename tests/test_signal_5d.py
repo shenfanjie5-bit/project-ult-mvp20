@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 
@@ -87,3 +88,41 @@ def test_direction_strength_thresholds():
     assert signal_5d.strength_from_probability(0.54, 0.50) == "强"
     assert signal_5d.strength_from_probability(0.515, 0.50) == "中"
     assert signal_5d.strength_from_probability(0.505, 0.50) == "弱"
+
+
+def test_isotonic_probability_smoothing_preserves_raw_bins():
+    stats = [
+        {"n": 100, "p_up": 0.50},
+        {"n": 100, "p_up": 0.55},
+        {"n": 300, "p_up": 0.52},
+        {"n": 100, "p_up": 0.58},
+    ]
+    smoothed = signal_5d.apply_isotonic_p_up(stats)
+    probs = [s["p_up"] for s in smoothed]
+    assert probs == sorted(probs)
+    assert smoothed[1]["p_up_raw"] == 0.55
+    assert smoothed[2]["p_up_raw"] == 0.52
+    # Weighted pooling makes the violating middle block 0.5275.
+    assert round(smoothed[1]["p_up"], 4) == 0.5275
+    assert round(smoothed[2]["p_up"], 4) == 0.5275
+
+
+def test_frozen_signal_5d_params_are_relative_and_monotone():
+    root = Path(__file__).resolve().parents[1]
+    params = json.loads((root / "config/signal_5d_params.json").read_text(encoding="utf-8"))
+    probs = [float(b["p_up"]) for b in params["bins"]]
+    assert params["target_kind"] == "relative_cross_section_median"
+    assert params["calibration"]["p_up_isotonic"] is True
+    assert probs == sorted(probs)
+    assert "absolute P(up)" in json.dumps(params["caveats"], ensure_ascii=False)
+
+
+def test_workbench_frontend_no_client_side_5d_signal_fallback():
+    root = Path(__file__).resolve().parents[1]
+    page = (root / "FrontEnd/src/pages/MarketOverview/index.tsx").read_text(encoding="utf-8")
+    hook = (root / "FrontEnd/src/api/hooks/useSignal5d.ts").read_text(encoding="utf-8")
+    assert "/project-ult/signals/top" in hook
+    assert "deriveStockSignal" not in page
+    assert "upside_probability" not in page
+    assert "5 日相对胜率" in page
+    assert "无有效信号" in page
