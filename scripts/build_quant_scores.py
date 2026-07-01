@@ -39,6 +39,8 @@ from factor_research.model import panel as P  # noqa: E402
 log = logging.getLogger("build_quant")
 
 LOOKBACK_SESSIONS = 320  # > 252 (mom_12_1 warmup inside price_features)
+MIN_ASOF_COVERAGE_COUNT = 1000
+MIN_ASOF_COVERAGE_RATIO = 0.60
 
 THEME_BASE = "/Volumes/dockcase2tb/database_all/股票数据/打板专题数据"
 #: local incremental supplement for the 打板 archive (master archive is never
@@ -152,6 +154,69 @@ def _universe() -> list[str]:
     return sorted({p.stem for p in overlays.glob("*/*.yaml") if "." in p.stem})
 
 
+def _latest_sufficient_asof(
+    cal: list[str],
+    ret: np.ndarray,
+    mv: np.ndarray,
+    *,
+    min_count: int | None = None,
+    min_ratio: float | None = None,
+) -> tuple[int, dict[str, int | str | bool | float]]:
+    """Pick the latest cross-section date with enough price and MV coverage.
+
+    DockCase refreshes can be partial intraday. Using the raw max trade_date
+    would turn a mostly complete prior close into a same-day cross-section with
+    only a few finite market-cap rows, which collapses the liquid gate.
+    """
+
+    if not cal:
+        raise ValueError("empty calendar")
+    n_stocks = int(ret.shape[1]) if ret.ndim == 2 else 0
+    if n_stocks <= 0:
+        raise ValueError("empty stock matrix")
+    min_count = (
+        int(os.environ.get("QUANT_MIN_ASOF_COVERAGE_COUNT", MIN_ASOF_COVERAGE_COUNT))
+        if min_count is None
+        else int(min_count)
+    )
+    min_ratio = (
+        float(os.environ.get("QUANT_MIN_ASOF_COVERAGE_RATIO", MIN_ASOF_COVERAGE_RATIO))
+        if min_ratio is None
+        else float(min_ratio)
+    )
+    threshold = min(n_stocks, max(1, min_count, int(np.ceil(n_stocks * min_ratio))))
+
+    counts: list[tuple[int, int]] = []
+    for i in range(len(cal)):
+        ok = np.isfinite(ret[i]) & np.isfinite(mv[i]) & (mv[i] > 0)
+        counts.append((i, int(ok.sum())))
+
+    raw_idx, raw_count = counts[-1]
+    for i, count in reversed(counts):
+        if count >= threshold:
+            return i, {
+                "raw_asof": cal[raw_idx],
+                "raw_coverage_count": raw_count,
+                "selected_asof": cal[i],
+                "selected_coverage_count": count,
+                "coverage_threshold": threshold,
+                "n_stocks": n_stocks,
+                "used_partial_fallback": i != raw_idx,
+            }
+
+    best_idx, best_count = max(counts, key=lambda item: item[1])
+    return best_idx, {
+        "raw_asof": cal[raw_idx],
+        "raw_coverage_count": raw_count,
+        "selected_asof": cal[best_idx],
+        "selected_coverage_count": best_count,
+        "coverage_threshold": threshold,
+        "n_stocks": n_stocks,
+        "used_partial_fallback": best_idx != raw_idx,
+        "below_threshold": True,
+    }
+
+
 def _load_matrices(codes: list[str]) -> tuple:
     """RET/TO/MV [n_days x n] for the last LOOKBACK_SESSIONS, live from the
     by-symbol archive (no research npz cache — that one is universe-frozen)."""
@@ -195,6 +260,26 @@ def _load_matrices(codes: list[str]) -> tuple:
     R = pd.DataFrame(rets).sort_index()
     TO = pd.DataFrame(tos).reindex(index=R.index, columns=R.columns)
     MV = pd.DataFrame(mvs).reindex(index=R.index, columns=R.columns)
+    if len(R.index):
+        asof_idx, asof_stats = _latest_sufficient_asof(
+            list(R.index),
+            R.values,
+            MV.values,
+        )
+        if asof_idx != len(R.index) - 1:
+            log.warning(
+                "partial latest cross-section: raw_asof=%s coverage=%s/%s; "
+                "using selected_asof=%s coverage=%s threshold=%s",
+                asof_stats["raw_asof"],
+                asof_stats["raw_coverage_count"],
+                asof_stats["n_stocks"],
+                asof_stats["selected_asof"],
+                asof_stats["selected_coverage_count"],
+                asof_stats["coverage_threshold"],
+            )
+            R = R.iloc[:asof_idx + 1]
+            TO = TO.iloc[:asof_idx + 1]
+            MV = MV.iloc[:asof_idx + 1]
     # ep_ttm mirrors research panel.value_features: the daily_basic row AT (or
     # last before) the as-of date — NaN if pe_ttm is NaN on that row (loss-
     # makers stay excluded). NOT last-non-null (that would resurrect a stale
