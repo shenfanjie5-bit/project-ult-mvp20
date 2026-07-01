@@ -123,6 +123,13 @@ _TS_CODE_RE = re.compile(r"^[A-Z0-9]{1,10}\.(SH|SZ|BJ|HK|US)$")
 #: capped, no path separators / dots. Matches AI_COMPUTE / STORAGE_GRID etc.
 _INDUSTRY_ID_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,31}$")
 
+#: Allowlist regex for snapshot ids (context/decision/extraction). Matches the
+#: generated ``<prefix>_<hexhash>`` shape (e.g. ``xtr_ab12cd34ef56`` /
+#: ``dec_...`` / ``ctx_...``) and bars path separators / ``..`` that would let a
+#: query param escape the snapshot directory via ``folder / f"{id}.json"``
+#: (path-traversal information disclosure — see handle_llm_stock_*_get).
+_SNAPSHOT_ID_RE = re.compile(r"^[a-z]{3}_[0-9a-f]{6,64}$")
+
 
 def _validate_ts_code(value: str | None) -> str | None:
     """Return canonical ``ts_code`` or None if input fails the allowlist.
@@ -146,6 +153,21 @@ def _validate_industry_id(value: str | None) -> str | None:
     if len(value) > 32:
         return None
     return value if _INDUSTRY_ID_RE.match(value) else None
+
+
+def _validate_snapshot_id(value: str | None) -> str | None:
+    """Return the snapshot id if it matches the allowlist, else None.
+
+    A missing/empty id is a legitimate "give me latest.json" request and is
+    passed through as ``None``; a *non-empty* id that fails the allowlist must
+    be rejected by the caller (it is the path-traversal vector)."""
+
+    if value is None or value == "":
+        return None
+    text = str(value)
+    if len(text) > 80:
+        return None
+    return text if _SNAPSHOT_ID_RE.match(text) else None
 
 
 def _query_flag(query: dict, name: str, *, default: bool) -> bool:
@@ -276,16 +298,35 @@ def handle_health(_: ServerConfig, _q: dict) -> HandlerResult:
 
 def handle_project_ult_health(cfg: ServerConfig, _q: dict) -> HandlerResult:
     lock = lock_mod.validate_lock(cfg.lock_path)
+    try:
+        universe = _load_yaml_cached(cfg.universe_path)
+        universe_total = len(universe.get("constituents") or [])
+    except Exception:  # noqa: BLE001 - health should still be reportable
+        universe_total = 0
     return 200, _ok_envelope({
-        "service": "mvp20",
+        "service": {
+            "module_id": "mvp20",
+            "version": "0.1.0",
+            "mode": "manifest_shell_read_only",
+            "active_profile": "manifest_only",
+        },
         "status": "ok" if lock.ok else "degraded",
         "lock_module_count": lock.module_count,
         "lock_errors": list(lock.errors),
+        "project_root": str(REPO_ROOT),
+        "assembly_root": str(REPO_ROOT / "upstream"),
+        "modules": {"total": lock.module_count},
+        "profiles": {"total": 1, "universe_total": universe_total},
+        "compatibility": {"total": 0},
+        "message": "mvp20 manifest shell is reachable",
     })
 
 
 def handle_compat(_: ServerConfig, _q: dict) -> HandlerResult:
     return 200, _ok_envelope({
+        "total": 0,
+        "statuses": {},
+        "items": [],
         "schema_versions": {
             "manifest": 2,
             "industries": 1,
@@ -299,17 +340,35 @@ def handle_compat(_: ServerConfig, _q: dict) -> HandlerResult:
 
 
 def handle_manifests_latest(cfg: ServerConfig, _q: dict) -> HandlerResult:
-    universe = _load_yaml_cached(cfg.universe_path)
-    industries = _load_yaml_cached(cfg.industries_path)
-    return 200, _ok_envelope({
-        "universe": universe,
-        "industries": industries,
-    })
+    return data_platform_adapter.handle_manifest_latest(cfg, _q)
 
 
 def handle_modules(cfg: ServerConfig, _q: dict) -> HandlerResult:
     payload = _load_yaml_cached(cfg.lock_path)
-    return 200, _ok_envelope(payload)
+    modules = payload.get("modules") if isinstance(payload, dict) else {}
+    items = []
+    if isinstance(modules, dict):
+        for module_id, meta in sorted(modules.items()):
+            meta = meta if isinstance(meta, dict) else {}
+            commit = str(meta.get("commit") or "")
+            items.append({
+                "module_id": module_id,
+                "module_version": commit[:12] if commit else "unknown",
+                "contract_version": str(payload.get("lock_version") or "1"),
+                "integration_status": "verified",
+                "supported_profiles": ["manifest_only"],
+                "public_entrypoints": [],
+                "notes": str(meta.get("repo") or ""),
+                "owner": meta.get("owner"),
+                "commit": commit,
+                "repo": meta.get("repo"),
+            })
+    return 200, _ok_envelope({
+        **(payload if isinstance(payload, dict) else {}),
+        "items": items,
+        "total": len(items),
+        "statuses": {"verified": len(items)} if items else {},
+    })
 
 
 def handle_providers(cfg: ServerConfig, _q: dict) -> HandlerResult:
@@ -367,6 +426,19 @@ def handle_profiles(cfg: ServerConfig, query: dict) -> HandlerResult:
         profiles.append(c)
 
     return 200, _ok_envelope({
+        "active_profile": "manifest_only",
+        "items": [{
+            "profile_id": "manifest_only",
+            "mode": "manifest_shell_read_only",
+            "enabled_service_bundles": [],
+            "resource_expectation": {},
+            "compatibility": {
+                "status": "verified",
+                "verified_at": None,
+                "extra_bundles": [],
+            },
+            "notes": "Local mvp20 BFF profile; stock universe is returned separately in profiles[].",
+        }],
         "profiles": profiles,
         "total": len(profiles),
         "universe_total": len(constituents),
@@ -472,9 +544,35 @@ def handle_orchestrator_runs_stub(_: ServerConfig, _q: dict) -> HandlerResult:
     return 200, _ok_envelope({
         "module": "mvp20-bff",
         "fixture": True,
+        "source_status": "unavailable",
+        "source": {
+            "kind": "orchestrator-runs",
+            "exists": False,
+            "message": "orchestrator runs are upstream-planned; no local artifact is bundled",
+        },
         "note": "orchestrator runs are upstream-planned (main-core); mvp20 is a manifest shell",
         "runs": [],
+        "items": [],
         "total": 0,
+        "next_cursor": None,
+    })
+
+
+def handle_orchestrator_run_detail_stub(_: ServerConfig, query: dict) -> HandlerResult:
+    path = str((query.get("_path") or [""])[0] or "")
+    run_id = path.rsplit("/", 1)[-1] if "/" in path else ""
+    return 200, _ok_envelope({
+        "module": "mvp20-bff",
+        "fixture": True,
+        "source_status": "unavailable",
+        "source": {
+            "kind": "orchestrator-run-detail",
+            "exists": False,
+            "message": "orchestrator run detail is upstream-planned; no local artifact is bundled",
+        },
+        "payload": None,
+        "metadata": {"run_id": run_id},
+        "message": "orchestrator run detail is unavailable in the local mvp20 manifest shell",
     })
 
 
@@ -1832,6 +1930,16 @@ def handle_signal_up_5d_top(cfg: ServerConfig, query: dict) -> HandlerResult:
         block = signal_up_5d.lookup(ts_code)
         if not block.get("available"):
             continue
+        # A top-list is a stock-ranking surface. The absolute-up artifact may
+        # retain a constant train base-rate fallback and shadow model values
+        # for audit, but those are not validated stock-specific probabilities
+        # and must not appear as ranked workbench signals.
+        if (
+            block.get("validated") is not True
+            or block.get("stale") is True
+            or block.get("probability_source") == signal_up_5d.FALLBACK_METHOD
+        ):
+            continue
         row = _enrich_signal_row(cfg, ts_code, block, profiles)
         candidates.append(row)
 
@@ -1970,6 +2078,41 @@ def handle_ranking(_: ServerConfig, query: dict) -> HandlerResult:
     })
 
 
+def handle_candidate_pool(cfg: ServerConfig, query: dict) -> HandlerResult:
+    market = (query.get("market") or ["A"])[0]
+    try:
+        from mvp20.non_llm_extractors import (
+            DEFAULT_CANDIDATE_CAPACITY,
+            clamp_capacity,
+            load_candidate_pool,
+            normalize_market,
+            slice_candidate_pool,
+        )
+        market_norm = normalize_market(str(market))
+    except ValueError as exc:
+        return 400, _error_envelope("BAD_MARKET", str(exc), status=400)
+    except Exception as exc:  # noqa: BLE001
+        return 500, _error_envelope(
+            "IMPORT_FAILED", f"candidate pool deps import failed: {exc}", status=500)
+
+    cap = clamp_capacity((query.get("capacity") or [None])[0])
+    payload = load_candidate_pool(_runtime_dir(cfg), market_norm)
+    if payload is None:
+        return 200, _ok_envelope({
+            "available": False,
+            "reason": "candidate pool artifact not built",
+            "market": market_norm,
+            "capacity": cap,
+            "default_capacity": DEFAULT_CANDIDATE_CAPACITY,
+            "total_ranked": 0,
+            "rows": [],
+            "note": "run `mvp20 screen-candidates --market A --capacity 80 --dry-run`",
+        })
+    data = slice_candidate_pool(payload, cap)
+    data["available"] = True
+    return 200, _ok_envelope(data)
+
+
 def _runtime_dir(cfg: ServerConfig) -> Path:
     return cfg.hot_db_path.parent
 
@@ -2018,6 +2161,19 @@ def _with_llm_decision_summary(
         out["llm_decision_summary"] = {
             "available": False,
             "reason": f"llm decision summary failed: {exc}",
+            "ts_code": ts_code,
+            "horizon": horizon,
+        }
+    try:
+        from mvp20.non_llm_extractors import candidate_gate_summary
+        out["candidate_gate_summary"] = candidate_gate_summary(
+            _runtime_dir(cfg),
+            ts_code=ts_code,
+        )
+    except Exception as exc:  # noqa: BLE001 — summary is additive only
+        out["candidate_gate_summary"] = {
+            "available": False,
+            "reason": f"candidate gate summary failed: {exc}",
             "ts_code": ts_code,
             "horizon": horizon,
         }
@@ -2081,20 +2237,29 @@ def handle_llm_stock_decision_get(cfg: ServerConfig, query: dict) -> HandlerResu
         horizon = normalize_horizon(str((query.get("horizon") or ["5d"])[0]))
         market_raw = (query.get("market") or [None])[0]
         inferred_market = market_for_ts_code(ts_code)
-        market, _supported, _reason = normalize_market(
+        market, supported, reason = normalize_market(
             str(market_raw) if market_raw else inferred_market,
             ts_code,
         )
     except ValueError as exc:
         return 400, _error_envelope("BAD_HORIZON", str(exc), status=400)
-    decision_id = (query.get("decision_id") or [None])[0]
+    # ``market`` is a path segment downstream; an unsupported value is the raw
+    # caller string (path-traversal vector), so refuse it rather than join it.
+    if not supported:
+        return 400, _error_envelope(
+            "BAD_MARKET", reason or "unsupported market", status=400)
+    decision_id_raw = (query.get("decision_id") or [None])[0]
+    if decision_id_raw is not None and _validate_snapshot_id(str(decision_id_raw)) is None:
+        return 400, _error_envelope(
+            "BAD_DECISION_ID", "invalid decision_id", status=400)
+    decision_id = str(decision_id_raw) if decision_id_raw else None
     from mvp20.llm_storage import read_decision_snapshot
     snapshot = read_decision_snapshot(
         _runtime_dir(cfg),
         market=market,
         ts_code=ts_code,
         horizon=horizon,
-        decision_id=str(decision_id) if decision_id else None,
+        decision_id=decision_id,
     )
     if snapshot is None:
         return 200, _ok_envelope({
@@ -2105,6 +2270,51 @@ def handle_llm_stock_decision_get(cfg: ServerConfig, query: dict) -> HandlerResu
             "horizon": horizon,
         })
     return 200, _ok_envelope({"available": True, "decision": snapshot})
+
+
+def handle_llm_stock_extraction_get(cfg: ServerConfig, query: dict) -> HandlerResult:
+    ts_code_raw = str((query.get("ts_code") or [""])[0]).strip().upper()
+    ts_code = _validate_ts_code(ts_code_raw)
+    if ts_code is None:
+        return 400, _error_envelope("BAD_TS_CODE", "invalid or missing ts_code", status=400)
+    try:
+        from mvp20.llm_context import market_for_ts_code, normalize_horizon, normalize_market
+        horizon = normalize_horizon(str((query.get("horizon") or ["5d"])[0]))
+        market_raw = (query.get("market") or [None])[0]
+        inferred_market = market_for_ts_code(ts_code)
+        market, supported, reason = normalize_market(
+            str(market_raw) if market_raw else inferred_market,
+            ts_code,
+        )
+    except ValueError as exc:
+        return 400, _error_envelope("BAD_HORIZON", str(exc), status=400)
+    # ``market`` is a path segment downstream; an unsupported value is the raw
+    # caller string (path-traversal vector), so refuse it rather than join it.
+    if not supported:
+        return 400, _error_envelope(
+            "BAD_MARKET", reason or "unsupported market", status=400)
+    extraction_id_raw = (query.get("extraction_id") or [None])[0]
+    if extraction_id_raw is not None and _validate_snapshot_id(str(extraction_id_raw)) is None:
+        return 400, _error_envelope(
+            "BAD_EXTRACTION_ID", "invalid extraction_id", status=400)
+    extraction_id = str(extraction_id_raw) if extraction_id_raw else None
+    from mvp20.llm_extraction import read_extraction_snapshot
+    snapshot = read_extraction_snapshot(
+        _runtime_dir(cfg),
+        market=market,
+        ts_code=ts_code,
+        horizon=horizon,
+        extraction_id=extraction_id,
+    )
+    if snapshot is None:
+        return 200, _ok_envelope({
+            "available": False,
+            "reason": "no llm extraction snapshot",
+            "market": market,
+            "ts_code": ts_code,
+            "horizon": horizon,
+        })
+    return 200, _ok_envelope({"available": True, "extraction": snapshot})
 
 
 def handle_llm_audit(cfg: ServerConfig, query: dict) -> HandlerResult:
@@ -2271,6 +2481,76 @@ def handle_llm_stock_decision_post(cfg: ServerConfig, body: dict) -> HandlerResu
     })
 
 
+def handle_llm_stock_extraction_post(cfg: ServerConfig, body: dict) -> HandlerResult:
+    status, context_or_error = _load_or_build_llm_context(cfg, body)
+    if status != 200:
+        return status, _error_envelope(
+            "LLM_CONTEXT_ERROR",
+            str(context_or_error.get("error") or "failed to load context"),
+            status=status,
+        )
+    context_payload = context_or_error
+    dry_run = bool(body.get("dry_run", True))
+    persist = bool(body.get("persist", True))
+    from mvp20.llm_extraction import prepare_extraction_snapshot
+    from mvp20.llm_storage import write_context_snapshot
+    context_path = None
+    if persist and context_payload.get("context_id"):
+        context_path = write_context_snapshot(_runtime_dir(cfg), context_payload)
+    extraction_output = body.get("extraction_output")
+    try:
+        extraction = prepare_extraction_snapshot(
+            context_payload,
+            extraction_output if isinstance(extraction_output, dict) else None,
+            dry_run=dry_run,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return 422, _error_envelope(
+            "LLM_EXTRACTION_INVALID",
+            f"extraction output failed schema validation: {exc}",
+            status=422,
+        )
+    validation = extraction.get("validation_result") or {}
+    if isinstance(extraction_output, dict) and not validation.get("passed"):
+        return 422, _error_envelope(
+            "LLM_EXTRACTION_REJECTED",
+            "extraction output failed validation",
+            status=422,
+            details={"validation_result": validation},
+        )
+    # An extraction with no resolvable context binding must never be persisted —
+    # it would be an unauditable, unreproducible snapshot. This covers the
+    # output=None path that the REJECTED gate above (dict-only) does not.
+    if not (extraction.get("context_ref") or {}).get("context_hash"):
+        return 422, _error_envelope(
+            "LLM_EXTRACTION_UNBOUND",
+            "extraction is not bound to a frozen context "
+            "(missing context_id/context_hash); refusing to persist",
+            status=422,
+            details={"validation_result": validation},
+        )
+    extraction_path = None
+    if persist:
+        from mvp20.llm_extraction import write_extraction_snapshot
+        extraction_path = write_extraction_snapshot(_runtime_dir(cfg), extraction)
+    return 200, _ok_envelope({
+        "extraction": extraction,
+        "provider_status": {
+            "llm_called": False,
+            "reason": (
+                "dry_run"
+                if dry_run
+                else "llm_provider_not_configured; returned deterministic validation snapshot"
+            ),
+        },
+        "storage": {
+            "context_path": str(context_path.relative_to(REPO_ROOT)) if context_path else None,
+            "extraction_path": str(extraction_path.relative_to(REPO_ROOT)) if extraction_path else None,
+            "persisted": bool(extraction_path),
+        },
+    })
+
+
 def _read_industry_overlay(cfg: ServerConfig, industry_id: str | None) -> dict:
     if not industry_id:
         return {}
@@ -2392,6 +2672,7 @@ def handle_industries(cfg: ServerConfig, query: dict) -> HandlerResult:
 def _post_routes() -> list[tuple[re.Pattern[str], Callable[[ServerConfig, dict], HandlerResult]]]:
     return [
         (re.compile(r"^/api/project-ult/llm/stock-decision$"), handle_llm_stock_decision_post),
+        (re.compile(r"^/api/project-ult/llm/stock-extraction$"), handle_llm_stock_extraction_post),
         (re.compile(r"^/api/project-ult/recognize$"), handle_recognize),
         (re.compile(r"^/api/project-ult/onboard$"), handle_onboard),
     ]
@@ -2409,6 +2690,7 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/project-ult/profiles$"), handle_profiles),
         (re.compile(r"^/api/project-ult/industry-graphs$"), handle_industry_graph),
         (re.compile(r"^/api/project-ult/cycles$"), handle_cycles_list),
+        (re.compile(r"^/api/project-ult/formal/[^/]+(?:/[^/]+)?$"), data_platform_adapter.handle_formal_object),
         (re.compile(r"^/api/subsystems/status$"), handle_subsystems_status),
         # === vendored upstream modules wired via mvp20/adapters/* ===
         # graph-engine
@@ -2428,16 +2710,19 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/world-state/.*$"), main_core_adapter.handle_world_state),
         # audit-eval
         (re.compile(r"^/api/project-ult/audit/[^/]+$"), audit_eval_adapter.handle_audit),
+        (re.compile(r"^/api/project-ult/replay/[^/]+$"), audit_eval_adapter.handle_replay),
         (re.compile(r"^/api/audit/.*$"), audit_eval_adapter.handle_audit),
         # backtests — real data from the production P&L feedback loop
         # (mvp20.pnl_loop + scripts/run_pnl_loop.py); replaces the empty
         # audit-eval fixture that capability audit G1 flagged.
-        (re.compile(r"^/api/project-ult/backtests/?.*$"), handle_pnl_backtests),
+        (re.compile(r"^/api/project-ult/backtests/[^/]+$"), audit_eval_adapter.handle_backtest_detail),
+        (re.compile(r"^/api/project-ult/backtests/?$"), handle_pnl_backtests),
         (re.compile(r"^/api/backtest/.*$"), handle_pnl_backtests),
         # mvp20 own BFF stubs — frontend-api not vendored; FrontEnd/ uses these
         (re.compile(r"^/api/admin/.*$"), handle_admin_stub),
         (re.compile(r"^/api/alerts/.*$"), handle_alerts_stub),
-        (re.compile(r"^/api/project-ult/orchestrator/runs/?.*$"), handle_orchestrator_runs_stub),
+        (re.compile(r"^/api/project-ult/orchestrator/runs/[^/]+$"), handle_orchestrator_run_detail_stub),
+        (re.compile(r"^/api/project-ult/orchestrator/runs/?$"), handle_orchestrator_runs_stub),
         # Phase-1 data-layer: merged stock overlay (YAML static + SQLite hot)
         (re.compile(r"^/api/project-ult/stock-overlay$"), handle_stock_overlay),
         # Cross-stock real-time event stream (MarketOverview "实时事件流")
@@ -2452,6 +2737,7 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/project-ult/score$"), handle_score),
         (re.compile(r"^/api/project-ult/llm/stock-context$"), handle_llm_stock_context),
         (re.compile(r"^/api/project-ult/llm/stock-decision$"), handle_llm_stock_decision_get),
+        (re.compile(r"^/api/project-ult/llm/stock-extraction$"), handle_llm_stock_extraction_get),
         (re.compile(r"^/api/project-ult/llm/audit$"), handle_llm_audit),
         (re.compile(r"^/api/project-ult/signals/up-5d/top$"), handle_signal_up_5d_top),
         (re.compile(r"^/api/project-ult/signals/up-5d/stock$"), handle_signal_up_5d_stock),
@@ -2459,6 +2745,7 @@ def _routes(cfg: ServerConfig) -> list[tuple[re.Pattern[str], Callable[[ServerCo
         (re.compile(r"^/api/project-ult/signals/stock$"), handle_signal_5d_stock),
         # G9 cross-sectional ranking (latest snapshot x quant artifact)
         (re.compile(r"^/api/project-ult/ranking$"), handle_ranking),
+        (re.compile(r"^/api/project-ult/candidate-pool$"), handle_candidate_pool),
         # Add-stock onboarding (P1): industries dropdown + job-status poll.
         # (POST /recognize + POST /onboard are dispatched via _post_routes.)
         (re.compile(r"^/api/project-ult/industries$"), handle_industries),
@@ -2539,8 +2826,10 @@ class _Handler(BaseHTTPRequestHandler):
         # Match exact handlers first
         for pattern, handler in _routes(cfg):
             if pattern.match(path):
+                handler_query = dict(query)
+                handler_query["_path"] = [path]
                 try:
-                    status, body = handler(cfg, query)
+                    status, body = handler(cfg, handler_query)
                 except Exception as exc:  # noqa: BLE001 - surface as 500
                     body = _error_envelope(
                         "HANDLER_ERROR", str(exc), status=500,

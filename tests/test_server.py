@@ -104,14 +104,18 @@ def test_compat(running_server) -> None:
     assert body["data"]["schema_versions"]["manifest"] == 2
 
 
-def test_manifests_latest_includes_universe_and_industries(running_server) -> None:
+def test_manifests_latest_returns_frontend_api_manifest(running_server) -> None:
     host, port, *_ = running_server
     status, _, body = _get(host, port, "/api/project-ult/manifests/latest")
     assert status == 200
     data = body["data"]
-    assert data["universe"]["universe_id"] == "mvp-13-industry-v1"
-    assert "industries" in data["industries"]
-    assert len(data["industries"]["industries"]) == 13
+    assert data["source_status"] == "available"
+    assert data["source"]["path"].endswith(
+        "upstream/data-platform/artifacts/frontend-api/manifests/latest.json"
+    )
+    assert data["cycle_id"] == "CYCLE_20260424"
+    assert data["manifest_ref"] == "artifact://frontend-api/manifests/CYCLE_20260424"
+    assert "world_state_snapshot" in data["formal_table_snapshots"]
 
 
 def test_modules_lock_returned(running_server) -> None:
@@ -121,6 +125,8 @@ def test_modules_lock_returned(running_server) -> None:
     modules = body["data"]["modules"]
     assert "frontend-api" in modules
     assert "contracts" in modules
+    assert body["data"]["total"] == 14
+    assert len(body["data"]["items"]) == 14
 
 
 def test_providers_returns_validation_summary(running_server) -> None:
@@ -137,6 +143,8 @@ def test_profiles_returns_universe_constituents(running_server) -> None:
     host, port, *_ = running_server
     status, _, body = _get(host, port, "/api/project-ult/profiles")
     assert status == 200
+    assert body["data"]["active_profile"] == "manifest_only"
+    assert body["data"]["items"][0]["profile_id"] == "manifest_only"
     assert body["data"]["universe_total"] >= 300
     assert body["data"]["total"] == body["data"]["universe_total"]
 
@@ -194,6 +202,54 @@ def test_cycles_returns_empty_list(running_server) -> None:
     assert body["data"]["cycles"] == []
 
 
+def test_formal_object_route_reads_frontend_api_artifact(running_server) -> None:
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, "/api/project-ult/formal/world_state_snapshot")
+    assert status == 200
+    data = body["data"]
+    assert data["source_status"] == "available"
+    assert data["source"]["path"].endswith(
+        "upstream/data-platform/artifacts/frontend-api/formal/world_state_snapshot/latest.json"
+    )
+    assert data["object_type"] == "world_state_snapshot"
+    assert data["cycle_id"] == "CYCLE_20260424"
+    assert isinstance(data["payload"], dict)
+
+
+def test_replay_route_reads_frontend_api_artifact(running_server) -> None:
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, "/api/project-ult/replay/CYCLE_20260424")
+    assert status == 200
+    data = body["data"]
+    assert data["source_status"] == "available"
+    assert data["source"]["path"].endswith(
+        "upstream/audit-eval/artifacts/frontend-api/replay/CYCLE_20260424.json"
+    )
+    assert data["payload"]["cycle_id"] == "CYCLE_20260424"
+
+
+def test_backtest_detail_route_reads_audit_eval_artifact(running_server) -> None:
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, "/api/project-ult/backtests/BT_API4A_001")
+    assert status == 200
+    data = body["data"]
+    assert data["source_status"] == "available"
+    assert data["source"]["path"].endswith(
+        "upstream/audit-eval/artifacts/frontend-api/backtests/BT_API4A_001.json"
+    )
+    assert data["payload"]["backtest_id"] == "BT_API4A_001"
+
+
+def test_orchestrator_detail_returns_detail_unavailable_envelope(running_server) -> None:
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, "/api/project-ult/orchestrator/runs/RUN_API4A_001")
+    assert status == 200
+    data = body["data"]
+    assert data["source_status"] == "unavailable"
+    assert data["payload"] is None
+    assert data["metadata"]["run_id"] == "RUN_API4A_001"
+
+
 def test_admin_alerts_handled_by_mvp20_bff(running_server) -> None:
     """frontend-api is NOT vendored under upstream/ — FrontEnd/ is the only
     frontend in this repo, and mvp20 server.py is the BFF. /api/admin/* and
@@ -216,7 +272,7 @@ _ADAPTER_ROUTES = [
     ("/api/project-ult/data/canonical/some_table", "data_platform"),
     ("/api/project-ult/data/raw/some_table", "data_platform"),
     ("/api/project-ult/entities", "entity_registry"),
-    ("/api/project-ult/entities/ENT_X", "entity_registry"),
+    ("/api/project-ult/entities/ENT_STOCK_600519.SH", "entity_registry"),
     ("/api/project-ult/reasoner/results", "reasoner_runtime"),
     ("/api/project-ult/cycles/cycle-2026q1", "main_core"),
     ("/api/stocks/300750", "main_core"),
@@ -300,6 +356,33 @@ def test_graph_adapter_accepts_declared_artifact_param(running_server) -> None:
     assert body["data"]["artifact_path"].endswith(
         "upstream/graph-engine/artifacts/frontend-api/subgraph.json"
     )
+
+
+def test_graph_routes_select_artifact_from_path(running_server) -> None:
+    host, port, *_ = running_server
+
+    status, _, body = _get(
+        host,
+        port,
+        "/api/project-ult/graph/paths?seed=ENT_STOCK_600519.SH&depth=2&limit=20",
+    )
+    assert status == 200
+    assert body["data"]["artifact_path"].endswith(
+        "upstream/graph-engine/artifacts/frontend-api/paths.json"
+    )
+    assert "paths" in body["data"]
+    assert body["data"]["total"] == len(body["data"]["paths"])
+
+    status, _, body = _get(
+        host,
+        port,
+        "/api/project-ult/graph/impact?entity_id=ENT_STOCK_600519.SH",
+    )
+    assert status == 200
+    assert body["data"]["artifact_path"].endswith(
+        "upstream/graph-engine/artifacts/frontend-api/impact.json"
+    )
+    assert body["data"]["total"] == len(body["data"]["items"])
 
 
 def test_unknown_api_path_returns_404_envelope(running_server) -> None:
@@ -1159,3 +1242,82 @@ def test_signal_up_5d_stock_top_and_score_embed(monkeypatch, tmp_path, running_s
     assert status == 200, body
     assert body["data"]["signal_up_5d"]["target_kind"] == "absolute_up_5d"
     assert body["data"]["signal_up_5d"]["p_up_5d"] == 0.571
+
+
+def test_signal_up_5d_top_hides_unvalidated_train_base_rate(
+    monkeypatch, tmp_path, running_server
+) -> None:
+    from mvp20 import signal_up_5d
+
+    signal_up_5d._artifact_cache.clear()
+    monkeypatch.setattr(signal_up_5d, "ARTIFACT_DIR", tmp_path)
+    asof = time.strftime("%Y%m%d")
+    artifact = {
+        "market": "A_share",
+        "asof": asof,
+        "horizon_days": 5,
+        "target": signal_up_5d.TARGET_LABEL,
+        "target_display": signal_up_5d.TARGET_DISPLAY,
+        "target_kind": signal_up_5d.TARGET_KIND,
+        "model_method": signal_up_5d.MODEL_METHOD,
+        "probability_source": signal_up_5d.FALLBACK_METHOD,
+        "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+        "n_rows": 1,
+        "n_available": 1,
+        "n_validated": 0,
+        "coverage": {"validated_ratio": 0.0},
+        "model": {"type": "ridge_logistic", "primary_enabled": False},
+        "baseline": {"method": signal_up_5d.BASELINE_METHOD},
+        "fallback": {"method": signal_up_5d.FALLBACK_METHOD, "probability": 0.459},
+        "calibration": {},
+        "caveats": ["fallback is audit-only"],
+        "rows": {
+            "300750.SZ": {
+                "available": True,
+                "validated": False,
+                "reason": "train base-rate fallback is not a stock-specific production signal",
+                "market": "A_share",
+                "horizon_days": 5,
+                "target": signal_up_5d.TARGET_LABEL,
+                "target_display": signal_up_5d.TARGET_DISPLAY,
+                "target_kind": signal_up_5d.TARGET_KIND,
+                "model_method": signal_up_5d.MODEL_METHOD,
+                "probability_source": signal_up_5d.FALLBACK_METHOD,
+                "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+                "feature_coverage": 1.0,
+                "model_probability_shadow": 0.612,
+                "fallback_probability": 0.459,
+                "baseline_probability": 0.53,
+                "probability": 0.459,
+                "p_up_5d": 0.459,
+                "direction": "下跌",
+                "signal_strength": "中",
+                "signal_grade": "D",
+                "drivers": [],
+                "risks": [],
+            },
+        },
+    }
+    signal_up_5d.save_artifact(artifact, root=tmp_path)
+    host, port, *_ = running_server
+
+    status, _h, body = _get(
+        host, port, "/api/project-ult/signals/up-5d/top?market=A_share&limit=5"
+    )
+    assert status == 200, body
+    top = body["data"]
+    assert top["artifact"]["available"] is True
+    assert top["artifact"]["stale"] is False
+    assert top["artifact"]["n_validated"] == 0
+    assert top["artifact"]["probability_source"] == signal_up_5d.FALLBACK_METHOD
+    assert top["rows"] == []
+    assert top["total"] == 0
+
+    qs = "?" + urlencode({"ts_code": "300750.SZ"})
+    status, _h, body = _get(host, port, f"/api/project-ult/signals/up-5d/stock{qs}")
+    assert status == 200, body
+    stock = body["data"]
+    assert stock["probability"] == 0.459
+    assert stock["p_up_5d"] == 0.459
+    assert stock["probability_source"] == signal_up_5d.FALLBACK_METHOD
+    assert stock["validated"] is False

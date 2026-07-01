@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from pathlib import Path
 
@@ -119,6 +120,11 @@ def derive_command(db_path: Path, history_days: int, limit_companies: int | None
     processed (Tushare for A-share, FMP for US/HK)."""
 
     load_dotenv()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
     from mvp20.derive import derive_all
 
     stats = derive_all(db_path, history_days=history_days,
@@ -1120,6 +1126,58 @@ def serve_command(host: str, port: int, cors_origin: str) -> None:
 
     cfg = ServerConfig(host=host, port=port, cors_origin=cors_origin)
     serve_forever(cfg)
+
+
+@main.command("screen-candidates")
+@click.option("--market", default="A", show_default=True,
+              help="Candidate market. Currently supports A/A_share.")
+@click.option("--capacity", default=80, show_default=True, type=int,
+              help="Candidate pool display/gate capacity.")
+@click.option(
+    "--db", "db_path", type=click.Path(path_type=Path),
+    default=Path("runtime/hot.sqlite"), show_default=True,
+    help="Hot SQLite database used by deterministic extractors.",
+)
+@click.option(
+    "--out", "output_path", type=click.Path(path_type=Path),
+    default=None,
+    help="Candidate-pool artifact path. Defaults to runtime/candidate_pool/A_share.json.",
+)
+@click.option(
+    "--dry-run/--write-runtime",
+    default=True,
+    show_default=True,
+    help="Dry-run writes only the candidate artifact; --write-runtime also UPSERTs hot.sqlite.",
+)
+def screen_candidates_command(
+    market: str,
+    capacity: int,
+    db_path: Path,
+    output_path: Path | None,
+    dry_run: bool,
+) -> None:
+    """Build the non-LLM first-pass candidate pool artifact."""
+
+    from mvp20.non_llm_extractors import build_candidate_pool
+
+    repo_root = Path(__file__).resolve().parent.parent
+    payload = build_candidate_pool(
+        repo_root=repo_root,
+        db_path=db_path,
+        market=market,
+        capacity=capacity,
+        write_runtime=not dry_run,
+        output_path=output_path,
+    )
+    summary = payload.get("summary") or {}
+    click.echo(f"artifact_path: {payload.get('artifact_path')}")
+    click.echo(f"market: {payload.get('market')}")
+    click.echo(f"default_capacity: {payload.get('default_capacity')}")
+    click.echo(f"capacity: {payload.get('policy', {}).get('capacity')}")
+    click.echo(f"total_ranked: {summary.get('total_ranked')}")
+    click.echo(f"passed_count: {summary.get('passed_count')}")
+    click.echo(f"write_runtime: {summary.get('write_runtime')}")
+    click.echo(f"runtime_rows_written: {summary.get('runtime_rows_written')}")
 
 
 def _emit_result(payload: dict[str, object]) -> None:

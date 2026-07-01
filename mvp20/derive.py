@@ -2152,6 +2152,7 @@ def derive_all(
     limit_companies: int | None = None,
     a_share_only: bool = True,
     ts_codes: list[str] | None = None,
+    commit_every: int | None = None,
 ) -> dict[str, int]:
     """Iterate every (ts_code) in realtime_current, compute Tier 0 derived
     dp_ids, UPSERT them back with source ``derived:*``. Returns counters.
@@ -2195,8 +2196,30 @@ def derive_all(
     if limit_companies:
         all_ts = all_ts[:limit_companies]
 
+    if commit_every is None:
+        try:
+            commit_every = int(os.environ.get("DERIVE_COMMIT_EVERY", "100"))
+        except ValueError:
+            commit_every = 100
+    commit_every = max(1, commit_every)
+
     derived_rows: list[tuple] = []
+    written_rows = 0
     now = int(time.time())
+    log.info(
+        "[derive] start companies=%d history_days=%d commit_every=%d",
+        len(all_ts), history_days, commit_every,
+    )
+
+    def _flush(reason: str) -> None:
+        nonlocal derived_rows, written_rows
+        if not derived_rows:
+            return
+        n = upsert_realtime(db_path, derived_rows)
+        written_rows += n
+        log.info("[derive] flushed %d rows (%s; total_written=%d)",
+                 n, reason, written_rows)
+        derived_rows = []
 
     for idx, ts_code in enumerate(all_ts):
         # Pull current values for this stock
@@ -2331,12 +2354,13 @@ def derive_all(
             ))
 
         if (idx + 1) % 20 == 0:
-            log.info("[derive] %d/%d processed (%d derived rows so far)",
-                     idx + 1, len(all_ts), len(derived_rows))
+            log.info("[derive] %d/%d processed (%d pending rows, %d written)",
+                     idx + 1, len(all_ts), len(derived_rows), written_rows)
+        if (idx + 1) % commit_every == 0:
+            _flush(f"{idx + 1}/{len(all_ts)} companies")
 
-    # Bulk UPSERT
-    n = upsert_realtime(db_path, derived_rows)
-    return {"companies_processed": len(all_ts), "derived_rows": n}
+    _flush("final")
+    return {"companies_processed": len(all_ts), "derived_rows": written_rows}
 
 
 # ---------------------------------------------------------------------------

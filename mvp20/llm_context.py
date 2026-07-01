@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mvp20 import providers as providers_mod
 from mvp20 import signal_5d, signal_up_5d
-from mvp20.llm_storage import canonical_json, sha256_payload, short_hash
+from mvp20.llm_storage import canonical_json, sha256_payload
 from mvp20.storage import read_hot_snapshot
 
 SCHEMA_VERSION = "single_stock_decision_context.v1"
@@ -36,6 +36,7 @@ SUPPORTED_HORIZONS: dict[str, int] = {
 PRIMARY_HORIZONS = {"5d", "180d", "1y"}
 PROBABILITY_BLOCKED_SOURCES = {
     "train_base_rate_unvalidated",
+    "score_pct_linear_bin10",
     "score_pct_logistic_shadow",
 }
 
@@ -291,8 +292,7 @@ def context_input_hash(payload: Mapping[str, Any]) -> str:
 def finalize_context(payload: dict[str, Any]) -> SingleStockDecisionContext:
     payload = _stable_json(dict(payload))
     payload["input_hash"] = context_input_hash(payload)
-    payload["context_id"] = "ctx_" + short_hash(payload)
-    payload["input_hash"] = context_input_hash(payload)
+    payload["context_id"] = "ctx_" + payload["input_hash"].split(":", 1)[1][:12]
     return SingleStockDecisionContext.model_validate(payload)
 
 
