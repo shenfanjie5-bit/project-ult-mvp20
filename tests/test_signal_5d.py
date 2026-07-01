@@ -175,7 +175,12 @@ def test_frozen_signal_5d_params_are_relative_and_monotone():
     assert "absolute P(up)" in json.dumps(params["caveats"], ensure_ascii=False)
 
 
-def test_workbench_frontend_uses_signal_up_without_relative_fallback():
+def test_workbench_frontend_prefers_signal_up_with_signal_5d_fallback():
+    # The workbench prefers the absolute signal_up_5d, but when that model has
+    # no governance-validated rows it falls back to the relative signal_5d
+    # ranking. The fallback carries a DISTINCT label (5 日相对胜率, not
+    # 5 日上涨概率) plus an explicit note, so the absolute/relative semantics
+    # are never conflated even though both sources are wired in.
     root = Path(__file__).resolve().parents[1]
     page = (root / "FrontEnd/src/pages/MarketOverview/index.tsx").read_text(encoding="utf-8")
     hook = (root / "FrontEnd/src/api/hooks/useSignal5d.ts").read_text(encoding="utf-8")
@@ -187,14 +192,18 @@ def test_workbench_frontend_uses_signal_up_without_relative_fallback():
     assert "/project-ult/signals/up-5d/top" in hook
     assert "deriveStockSignal" not in page
     assert "signal.upside_probability" not in page
+    # Both sources are wired: absolute up-probability preferred, relative
+    # win-rate as the validation-gated fallback.
     assert "5 日上涨概率" in page
+    assert "5 日相对胜率" in page
     assert "派生预览概率" not in page
-    assert "5 日相对胜率" not in page
     assert "相对胜率预览" not in page
     assert "train_base_rate_unvalidated" in page
     assert "已切换显示 5 日相对胜率预览" not in page
     assert "signal_up_5d" in page
-    assert "signal_5d" not in page
+    assert "signal_5d" in page
+    # Fallback must be explicit, not a silent substitution.
+    assert "已回落到 signal_5d" in page
     assert "signal5d={score?.signal_5d ?? null}" in stock_detail
     assert "signal5d.probability" in stock_header
     assert "5 日相对胜率" in stock_header

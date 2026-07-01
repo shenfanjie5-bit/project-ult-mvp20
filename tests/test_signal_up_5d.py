@@ -180,5 +180,7 @@ def test_stock_detail_frontend_distinguishes_absolute_and_relative_labels():
     assert "5 日上涨概率" in market_page
     assert "signal_up_5d" in market_page
     assert "派生预览概率" not in market_page
-    assert "5 日相对胜率" not in market_page
+    # Workbench falls back to the relative win-rate signal under a distinct
+    # label when signal_up_5d has no validated rows (see test_signal_5d).
+    assert "5 日相对胜率" in market_page
     assert "相对胜率预览" not in market_page
