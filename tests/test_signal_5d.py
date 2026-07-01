@@ -175,15 +175,28 @@ def test_frozen_signal_5d_params_are_relative_and_monotone():
     assert "absolute P(up)" in json.dumps(params["caveats"], ensure_ascii=False)
 
 
-def test_workbench_frontend_no_client_side_5d_signal_fallback():
+def test_workbench_frontend_uses_signal_up_without_relative_fallback():
     root = Path(__file__).resolve().parents[1]
     page = (root / "FrontEnd/src/pages/MarketOverview/index.tsx").read_text(encoding="utf-8")
     hook = (root / "FrontEnd/src/api/hooks/useSignal5d.ts").read_text(encoding="utf-8")
+    stock_detail = (root / "FrontEnd/src/pages/StockDetail/index.tsx").read_text(encoding="utf-8")
+    stock_header = (
+        root / "FrontEnd/src/pages/StockDetail/components/StockHeader.tsx"
+    ).read_text(encoding="utf-8")
     assert "/project-ult/signals/top" in hook
+    assert "/project-ult/signals/up-5d/top" in hook
     assert "deriveStockSignal" not in page
-    assert "upside_probability" not in page
-    assert "5 日相对胜率" in page
-    assert "模型:" in page
-    assert "旧桶" in page
-    assert "过期预览，不作为有效信号" in page
-    assert "无有效信号" in page
+    assert "signal.upside_probability" not in page
+    assert "5 日上涨概率" in page
+    assert "派生预览概率" not in page
+    assert "5 日相对胜率" not in page
+    assert "相对胜率预览" not in page
+    assert "train_base_rate_unvalidated" in page
+    assert "已切换显示 5 日相对胜率预览" not in page
+    assert "signal_up_5d" in page
+    assert "signal_5d" not in page
+    assert "signal5d={score?.signal_5d ?? null}" in stock_detail
+    assert "signal5d.probability" in stock_header
+    assert "5 日相对胜率" in stock_header
+    assert "跑赢同日流动性股票中位数概率" in stock_header
+    assert "未来 5 日上涨概率" not in stock_header

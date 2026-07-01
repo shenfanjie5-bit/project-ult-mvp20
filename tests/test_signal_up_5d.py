@@ -177,4 +177,8 @@ def test_stock_detail_frontend_distinguishes_absolute_and_relative_labels():
     assert "signal_5d 后端信号" in header
     assert "派生预览，不是上涨概率模型" in header
     assert "signal.upside_probability" in header
-    assert "5 日相对胜率" in market_page
+    assert "5 日上涨概率" in market_page
+    assert "signal_up_5d" in market_page
+    assert "派生预览概率" not in market_page
+    assert "5 日相对胜率" not in market_page
+    assert "相对胜率预览" not in market_page
