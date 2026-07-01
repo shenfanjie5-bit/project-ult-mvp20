@@ -7,7 +7,14 @@ import {
   useIndustryGraphList,
   type IndustryGraphPayload,
 } from '../../api/hooks/useIndustryGraphs'
-import { useSignal5dTop, type Signal5dRow } from '../../api/hooks/useSignal5d'
+import {
+  useSignal5dTop,
+  useSignalUp5dTop,
+  type Signal5dArtifactInfo,
+  type Signal5dRow,
+  type SignalUp5dArtifactInfo,
+  type SignalUp5dRow,
+} from '../../api/hooks/useSignal5d'
 import { ContentCard } from '../../components/common/ContentCard'
 import { PageLayout } from '../../components/common/PageLayout'
 import { MetricCard } from '../../components/data/MetricCard'
@@ -26,6 +33,8 @@ import { useUniverseProfiles } from './hooks/useUniverseProfiles'
 
 type MarketCode = 'ALL' | 'A' | 'HK' | 'US'
 type RoleFilter = 'ALL' | 'target' | 'customer' | 'both'
+type OverviewSignalRow = Signal5dRow | SignalUp5dRow
+type OverviewSignalArtifact = Signal5dArtifactInfo | SignalUp5dArtifactInfo
 
 const MARKET_LABEL: Record<MarketCode, string> = {
   ALL: '全部',
@@ -40,6 +49,8 @@ const ROLE_LABEL: Record<RoleFilter, string> = {
   customer: '客户',
   both: '兼具',
 }
+
+const SIGNAL_UP_5D_FALLBACK_SOURCE = 'train_base_rate_unvalidated'
 
 function inferMarket(tsCode: string): MarketCode {
   if (/\.(SH|SZ|BJ)$/i.test(tsCode)) return 'A'
@@ -94,6 +105,14 @@ export function MarketOverviewPage() {
 
   const universeQuery = useUniverseProfiles({})
   const graphListQuery = useIndustryGraphList()
+  const signalUp5dQuery = useSignalUp5dTop({
+    market: selectedMarket === 'ALL' ? 'A_share' : selectedMarket,
+    industryId: selectedIndustryId,
+    role: selectedRole === 'ALL' ? undefined : selectedRole,
+    limit: 12,
+  })
+  // Relative win-rate signal, used as the fallback ranking when signal_up_5d
+  // has no governance-validated rows yet (see source selection below).
   const signal5dQuery = useSignal5dTop({
     market: selectedMarket === 'ALL' ? 'A_share' : selectedMarket,
     industryId: selectedIndustryId,
@@ -126,6 +145,11 @@ export function MarketOverviewPage() {
       enabled: id.length > 0,
     })),
   })
+
+  const universe = universeQuery.data?.profiles ?? []
+  const graphs: IndustryGraphPayload[] = graphQueries
+    .map((q) => q.data)
+    .filter((g): g is IndustryGraphPayload => Boolean(g))
 
   const isLoadingPrimary = universeQuery.isLoading || graphListQuery.isLoading
   const isLoadingGraphs =
@@ -167,43 +191,73 @@ export function MarketOverviewPage() {
     )
   }
 
-  const universe = universeQuery.data.profiles ?? []
-  const graphs: IndustryGraphPayload[] = graphQueries
-    .map((q) => q.data)
-    .filter((g): g is IndustryGraphPayload => Boolean(g))
-
-  const topSignals = signal5dQuery.data?.rows ?? []
-  const signalArtifact = signal5dQuery.data?.artifact
+  // Prefer the absolute 5-day up-probability signal (signal_up_5d). When it
+  // has no governance-validated rows (n_validated === 0 or a pure
+  // train-base-rate fallback), fall back to the relative win-rate signal
+  // (signal_5d), which README anchors the workbench ranking to. The label
+  // switches with the source so the two semantics are never conflated.
   const unsupportedSignalMarket = selectedMarket === 'HK' || selectedMarket === 'US'
-  const signalEmptyMessage = unsupportedSignalMarket
-    ? '港股 / 美股 5 日相对信号尚未完成独立校准。'
-    : '当前筛选条件下没有命中 A 股 5 日信号。'
-  const signalCardDescription = signal5dQuery.isLoading
-    ? '正在加载 A 股 signal_5d 后端信号。'
-    : signal5dQuery.isError
-      ? 'A 股 signal_5d 后端信号暂时不可用。'
-      : unsupportedSignalMarket
-        ? '当前市场暂无已校准的 5 日相对信号。'
-        : signalArtifact?.stale && signalArtifact.asof
-          ? `A 股 5 日相对信号已陈旧（asof ${signalArtifact.asof}）。`
-          : signalArtifact?.available === false
-            ? 'A 股 signal_5d artifact 暂不可用。'
-            : `A 股 5 日相对胜率排序（top ${topSignals.length}）。`
+  const up5dArtifact = signalUp5dQuery.data?.artifact
+  const up5dUsable =
+    up5dArtifact?.available !== false &&
+    (up5dArtifact?.n_validated ?? 0) > 0 &&
+    up5dArtifact?.probability_source !== SIGNAL_UP_5D_FALLBACK_SOURCE
+  const activeSource: 'up_5d' | '5d' = up5dUsable ? 'up_5d' : '5d'
+  const usingFallback = !unsupportedSignalMarket && activeSource === '5d'
 
-  function signalIsRenderable(row: Signal5dRow): boolean {
+  const rawTopSignals: OverviewSignalRow[] =
+    activeSource === 'up_5d'
+      ? (signalUp5dQuery.data?.rows ?? [])
+      : (signal5dQuery.data?.rows ?? [])
+  const signalArtifact: OverviewSignalArtifact | undefined =
+    activeSource === 'up_5d'
+      ? signalUp5dQuery.data?.artifact
+      : signal5dQuery.data?.artifact
+  const rawSignalTotal =
+    activeSource === 'up_5d'
+      ? (signalUp5dQuery.data?.total ?? rawTopSignals.length)
+      : (signal5dQuery.data?.total ?? rawTopSignals.length)
+  const displayedSignals: OverviewSignalRow[] = rawTopSignals.filter((row) =>
+    signalIsRenderable(row),
+  )
+  const displayedSignalLabel = activeSource === 'up_5d' ? '5 日上涨概率' : '5 日相对胜率'
+  const displayedSignalSource = activeSource === 'up_5d' ? 'signal_up_5d' : 'signal_5d'
+  const signalLoading = signalUp5dQuery.isLoading || signal5dQuery.isLoading
+  const signalError =
+    activeSource === 'up_5d' ? signalUp5dQuery.isError : signal5dQuery.isError
+  const fallbackNote = usingFallback
+    ? ' signal_up_5d 暂无已验证概率，已回落到 signal_5d 相对胜率。'
+    : ''
+  const signalEmptyMessage = unsupportedSignalMarket
+    ? '港股 / 美股 5 日信号尚未完成独立校准。'
+    : `当前筛选条件下没有命中 A 股 ${displayedSignalLabel}。`
+  const signalCardDescription = signalLoading
+    ? '正在加载 A 股 5 日信号。'
+    : signalError
+      ? 'A 股 5 日信号接口暂时不可用。'
+      : unsupportedSignalMarket
+        ? '当前市场暂无已校准的 5 日信号。'
+        : signalArtifact?.stale && signalArtifact.asof
+          ? `A 股 ${displayedSignalLabel} artifact 已陈旧（asof ${signalArtifact.asof}）。${fallbackNote}`
+          : signalArtifact?.available === false
+            ? `A 股 ${displayedSignalSource} artifact 暂不可用。`
+            : `A 股 ${displayedSignalLabel}排序（top ${displayedSignals.length}）。${fallbackNote}`
+
+  function signalIsRenderable(row: OverviewSignalRow): boolean {
     return (
       row.available !== false &&
       row.validated === true &&
       row.stale !== true &&
+      row.probability_source !== SIGNAL_UP_5D_FALLBACK_SOURCE &&
       typeof row.probability === 'number'
     )
   }
 
-  function signalHasPreview(row: Signal5dRow): boolean {
+  function overviewSignalHasProbability(row: OverviewSignalRow): boolean {
     return row.available !== false && typeof row.probability === 'number'
   }
 
-  function openStock(row: Signal5dRow): void {
+  function openStock(row: OverviewSignalRow): void {
     const cachedProfile =
       universe.find((profile) => profile.ts_code === row.ts_code) ??
       ({
@@ -219,7 +273,7 @@ export function MarketOverviewPage() {
       universe_total: universe.length,
     })
     navigate({
-      pathname: `/stock/${row.ts_code}`,
+      pathname: `/stock/${cachedProfile.ts_code}`,
       search: location.search,
     })
   }
@@ -230,26 +284,30 @@ export function MarketOverviewPage() {
     (a, b) => b.heat_score - a.heat_score,
   )
 
-  // Current signal list summary. Counts only rows returned by the real
-  // signal_5d endpoint; no options/fallback mock is included.
+  // Current displayed signal summary. The workbench intentionally avoids
+  // substituting the relative win-rate target for absolute 5-day up probability.
   const coreSummary = (() => {
-    const active = topSignals.filter((s) => signalIsRenderable(s))
-    const stalePreview = topSignals.filter(
-      (s) => !signalIsRenderable(s) && s.stale === true && signalHasPreview(s),
-    )
-    const strongUp = active.filter(
-      (s) => s.direction === '上涨' && s.signal_strength === '强',
+    const withProbability = displayedSignals.filter((row) => overviewSignalHasProbability(row))
+    const strongUp = withProbability.filter(
+      (row) => row.direction === '上涨' && row.signal_strength === '强',
     ).length
-    const strongDown = active.filter(
-      (s) => s.direction === '下跌' && s.signal_strength === '强',
+    const strongDown = withProbability.filter(
+      (row) => row.direction === '下跌' && row.signal_strength === '强',
     ).length
+    const validated = withProbability.filter((row) => row.validated === true && row.stale !== true).length
+    const stalePreview = withProbability.filter((row) => row.stale === true).length
+    const averageProbability =
+      withProbability.length > 0
+        ? withProbability.reduce((sum, row) => sum + (row.probability ?? 0), 0) / withProbability.length
+        : null
     return {
-      total: topSignals.length,
+      total: displayedSignals.length,
+      rawTotal: rawSignalTotal,
       strongUp,
       strongDown,
-      validated: active.length,
-      stalePreview: stalePreview.length,
-      invalid: topSignals.length - active.length - stalePreview.length,
+      validated,
+      stalePreview,
+      averageProbability,
     }
   })()
 
@@ -265,7 +323,7 @@ export function MarketOverviewPage() {
   return (
     <PageLayout
       title="工作台"
-      description="今日值得关注的 A 股 5 日相对信号、行业热度与事件流。"
+      description={`今日值得关注的 A 股 ${displayedSignalLabel}、行业热度与事件流。`}
     >
       {/* Filters */}
       <ContentCard
@@ -342,24 +400,23 @@ export function MarketOverviewPage() {
           title="今日重点信号"
           description={signalCardDescription}
         >
-          {signal5dQuery.isLoading ? (
+          {signalLoading ? (
             <div className="rounded-lg border border-dashed border-[var(--border-medium)] px-3 py-8 text-center text-[12px] text-[var(--text-secondary)]">
-              正在加载 A 股 5 日信号…
+              正在加载 A 股 5 日概率信号…
             </div>
-          ) : signal5dQuery.isError ? (
+          ) : signalError ? (
             <div className="rounded-lg border border-dashed border-[var(--border-medium)] px-3 py-8 text-center text-[12px] text-[var(--text-secondary)]">
-              A 股 5 日信号接口不可用。
+              A 股 5 日上涨概率接口不可用。
             </div>
-          ) : topSignals.length === 0 ? (
+          ) : displayedSignals.length === 0 ? (
             <div className="rounded-lg border border-dashed border-[var(--border-medium)] px-3 py-8 text-center text-[12px] text-[var(--text-secondary)]">
               {signalEmptyMessage}
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {topSignals.map((signal) => {
-                const renderable = signalIsRenderable(signal)
-                const previewable = signalHasPreview(signal)
-                const stalePreview = !renderable && signal.stale === true && previewable
+              {displayedSignals.map((signal) => {
+                const probabilityPercent =
+                  typeof signal.probability === 'number' ? signal.probability * 100 : null
                 const isUp = signal.direction === '上涨'
                 const isDown = signal.direction === '下跌'
                 const directionColor = isUp
@@ -367,19 +424,13 @@ export function MarketOverviewPage() {
                   : isDown
                     ? 'var(--success)'
                     : 'var(--text-secondary)'
-                const displayColor = renderable ? directionColor : 'var(--text-secondary)'
-                const modelLabel =
-                  signal.model_method === 'logistic_multifeature_7f'
-                    ? '7f logistic'
-                    : (signal.model_method ?? 'legacy')
-                const legacyProbabilityLabel =
-                  typeof signal.legacy_bin_probability === 'number'
-                    ? `${(signal.legacy_bin_probability * 100).toFixed(2)}%`
-                    : '--'
-                const featureCoverageLabel =
+                const displayColor = probabilityPercent !== null ? directionColor : 'var(--text-secondary)'
+                const sourceLabel = [
+                  signal.probability_source ?? displayedSignalSource,
                   typeof signal.feature_coverage === 'number'
-                    ? `${Math.round(signal.feature_coverage * 100)}%`
-                    : '--'
+                    ? `覆盖 ${Math.round(signal.feature_coverage * 100)}%`
+                    : null,
+                ].filter(Boolean).join(' · ')
                 return (
                   <div
                     key={signal.ts_code}
@@ -397,12 +448,8 @@ export function MarketOverviewPage() {
                       <span
                         className="flex h-7 w-7 items-center justify-center rounded-md text-[13px] font-semibold"
                         style={{
-                          background: renderable
-                            ? gradeBg(signal.signal_grade)
-                            : 'var(--bg-secondary)',
-                          color: renderable
-                            ? gradeColor(signal.signal_grade)
-                            : 'var(--text-secondary)',
+                          background: gradeBg(signal.signal_grade),
+                          color: gradeColor(signal.signal_grade),
                         }}
                       >
                         {signal.signal_grade}
@@ -424,41 +471,33 @@ export function MarketOverviewPage() {
                                   : (signal.pool ?? '常规')
                         }
                       />
-                      {stalePreview ? <TagBadge label="过期预览" /> : null}
-                      {signal.stale && !stalePreview ? <TagBadge label="陈旧" /> : null}
+                      {signal.stale ? <TagBadge label="过期预览" /> : null}
                       {signal.validated === false ? <TagBadge label="未验证" /> : null}
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 rounded-md bg-[var(--bg-secondary)] px-3 py-2">
                       <div>
-                        <div className="text-[10px] text-[var(--text-tertiary)]">5 日相对胜率</div>
+                        <div className="text-[10px] text-[var(--text-tertiary)]">{displayedSignalLabel}</div>
                         <div
                           className="text-[16px] font-semibold tabular-nums"
                           style={{ color: displayColor }}
                         >
-                          {renderable || stalePreview
-                            ? `${((signal.probability ?? 0) * 100).toFixed(2)}%`
-                            : '--'}
+                          {probabilityPercent === null ? '--' : `${probabilityPercent.toFixed(2)}%`}
                         </div>
-                        {stalePreview ? (
-                          <div className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">
-                            过期预览
-                          </div>
-                        ) : null}
                       </div>
                       <div>
                         <div className="text-[10px] text-[var(--text-tertiary)]">方向 / 强度</div>
                         <div
-	                          className="text-[13px] font-medium"
-	                          style={{ color: displayColor }}
-	                        >
-	                          {renderable || stalePreview
-                            ? `${signal.direction ?? '震荡'} · ${signal.signal_strength ?? '弱'}`
-                            : '无有效信号'}
+                          className="text-[13px] font-medium"
+                          style={{ color: displayColor }}
+                        >
+                          {probabilityPercent === null
+                            ? '无有效信号'
+                            : `${signal.direction ?? '震荡'} · ${signal.signal_strength ?? '弱'}`}
                         </div>
                       </div>
                       <div className="col-span-2 truncate text-[10px] text-[var(--text-tertiary)]">
-                        模型: {modelLabel} · 旧桶 {legacyProbabilityLabel} · 覆盖 {featureCoverageLabel}
+                        来源: {sourceLabel}
                       </div>
                     </div>
 
@@ -508,11 +547,9 @@ export function MarketOverviewPage() {
                       </div>
                     ) : null}
 
-                    {!renderable ? (
+                    {signal.stale || signal.validated === false ? (
                       <div className="rounded-md bg-[var(--bg-secondary)] px-3 py-2 text-[11px] text-[var(--text-secondary)]">
-                        {stalePreview
-                          ? `过期预览，不作为有效信号：${signal.reason ?? 'artifact 已陈旧。'}`
-                          : (signal.reason ?? 'signal_5d 当前未通过有效性检查。')}
+                        {signal.reason ?? '过期预览，不作为有效信号。'}
                       </div>
                     ) : null}
 
@@ -625,7 +662,7 @@ export function MarketOverviewPage() {
       {/* Core pool summary */}
       <ContentCard
         title="信号摘要"
-        description={`当前 A 股 signal_5d 返回 ${coreSummary.total} 只，validated ${coreSummary.validated} 只。`}
+        description={`当前 A 股 ${displayedSignalSource} 可展示 ${coreSummary.total} 只，接口返回 ${coreSummary.rawTotal} 只。`}
       >
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <MetricCard
@@ -645,8 +682,14 @@ export function MarketOverviewPage() {
           />
           <MetricCard
             label="过期预览"
-            value={String(coreSummary.stalePreview)}
-            hint="stale=true，仅灰色预览，不计入有效信号"
+            value={
+              coreSummary.stalePreview > 0
+                ? String(coreSummary.stalePreview)
+                : coreSummary.averageProbability === null
+                  ? '--'
+                  : `${(coreSummary.averageProbability * 100).toFixed(2)}%`
+            }
+            hint={coreSummary.stalePreview > 0 ? 'stale=true，仅作预览' : `当前展示卡片的${displayedSignalLabel}均值`}
           />
         </div>
       </ContentCard>
