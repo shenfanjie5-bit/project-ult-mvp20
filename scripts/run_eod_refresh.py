@@ -8,9 +8,14 @@ silently ages (observed: 113h-stale technicals) and the 22:30 P&L snapshot
 scores on stale features.
 
 Chain (all idempotent):
-  1. mvp20 derive            — full A-share universe (~2.1s/stock ≈ 65min)
-  2. mvp20 compile-overlays  — re-merge overlay YAML + fresh hot rows
-  3. mvp20 build-peer-context — refresh cross-sectional pools (R-3a/R-3b.2)
+  1. collector tushare       — full A-share financial/event refresh
+  2. collector tushare-core  — latest daily_basic / moneyflow cross-section
+  3. collector tushare-macro — market/macro sentinels
+  4. mvp20 derive            — Tier-0 historical derives
+  5. mvp20 derive-snapshot   — Tier-1..4 snapshot derives, incl. L11 signals
+  6. mvp20 compile-overlays  — re-merge overlay YAML + fresh hot rows
+  7. mvp20 build-peer-context — refresh cross-sectional pools (R-3a/R-3b.2)
+  8. quant/signal builders   — refresh homepage and stock-detail artifacts
 
 Cron (weekdays 17:30, AFTER tushare EOD settles, BEFORE the 22:30 P&L
 snapshot so it scores fresh features):
@@ -21,6 +26,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import selectors
+import signal
 import subprocess
 import sys
 import time
@@ -36,20 +43,52 @@ PY = str(ROOT / ".venv" / "bin" / "python")
 
 def _run(label: str, args: list[str], timeout_s: int) -> dict:
     t0 = time.time()
+    tail: list[str] = []
+    proc: subprocess.Popen[str] | None = None
     try:
-        proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=timeout_s,
+        log.info("%s: start %s", label, " ".join(args))
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
         )
+        assert proc.stdout is not None
+        selector = selectors.DefaultSelector()
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        while True:
+            for key, _ in selector.select(timeout=1.0):
+                line = key.fileobj.readline()
+                if line:
+                    msg = line.rstrip()
+                    print(msg, flush=True)
+                    tail.append(msg)
+                    tail = tail[-5:]
+            if proc.poll() is not None:
+                for rest in proc.stdout:
+                    msg = rest.rstrip()
+                    print(msg, flush=True)
+                    tail.append(msg)
+                    tail = tail[-5:]
+                break
+            if time.time() - t0 > timeout_s:
+                raise subprocess.TimeoutExpired(args, timeout_s)
         ok = proc.returncode == 0
-        tail = (proc.stdout or proc.stderr or "").strip().splitlines()[-3:]
         log.info("%s: rc=%d %.0fs %s", label, proc.returncode,
                  time.time() - t0, " | ".join(tail))
         return {"step": label, "ok": ok, "rc": proc.returncode,
                 "elapsed_s": round(time.time() - t0, 1), "tail": tail}
     except subprocess.TimeoutExpired:
+        if proc is not None and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         log.error("%s: TIMEOUT after %ds", label, timeout_s)
         return {"step": label, "ok": False, "rc": -1, "timeout": True,
-                "elapsed_s": round(time.time() - t0, 1)}
+                "elapsed_s": round(time.time() - t0, 1), "tail": tail}
 
 
 def _run_derive_inprocess() -> dict:
@@ -89,12 +128,30 @@ def main() -> int:
         _run("collect-full",
              [PY, "scripts/collector.py", "--source", "tushare",
               "--max-cycles", "1"], 10800),
+        # The full collector may be slow or partially fail on long per-stock
+        # endpoints. Re-run the fast cross-sectional market rows so EOD derives
+        # and signal artifacts always see the latest daily_basic / moneyflow.
+        _run("collect-core",
+             [PY, "scripts/collector.py", "--source", "tushare-core",
+              "--max-cycles", "1"], 900),
+        _run("collect-macro",
+             [PY, "scripts/collector.py", "--source", "tushare-macro",
+              "--max-cycles", "1"], 900),
         _run_derive_inprocess(),
+        _run("derive-snapshot",
+             [PY, "-m", "mvp20.cli", "derive-snapshot",
+              "--db", "runtime/hot.sqlite", "--no-show-stats"], 1800),
         _run("compile-overlays",
              [PY, "-m", "mvp20.cli", "compile-overlays",
               "--db", "runtime/hot.sqlite"], 1800),
         _run("build-peer-context",
              [PY, "-m", "mvp20.cli", "build-peer-context"], 1800),
+        _run("build-quant-scores",
+             [PY, "scripts/build_quant_scores.py"], 1800),
+        _run("build-signal-5d",
+             [PY, "scripts/build_signal_5d.py"], 1800),
+        _run("build-signal-up-5d",
+             [PY, "scripts/build_signal_up_5d.py"], 1800),
     ]
     out = {"steps": results, "all_ok": all(r["ok"] for r in results),
            "elapsed_s": round(time.time() - t0, 1),
