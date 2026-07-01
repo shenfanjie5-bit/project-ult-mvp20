@@ -6,6 +6,8 @@
 #
 # - Model + sandbox inherit from ~/.codex/config.toml (gpt-5.5).
 # - reasoning_effort is overridden via `-c` to "low".
+# - Overrides service_tier to CODEX_SERVICE_TIER (default: fast) so a local
+#   unsupported ~/.codex service_tier does not break batch runs.
 # - Working directory: $CODEX_WORKDIR (env) or current $(pwd).
 # - Prompt is piped via stdin so size is not bounded by argv limits.
 
@@ -23,10 +25,12 @@ if [ ! -f "$PROMPT_FILE" ]; then
 fi
 
 WORKDIR="${CODEX_WORKDIR:-$(pwd)}"
+SERVICE_TIER="${CODEX_SERVICE_TIER:-fast}"
 
 exec codex exec \
   --full-auto \
   --skip-git-repo-check \
+  -c service_tier="$SERVICE_TIER" \
   -c model_reasoning_effort=low \
   -C "$WORKDIR" \
   < "$PROMPT_FILE"

@@ -121,6 +121,8 @@ def _is_fillable(
     event_driven_dp_ids: frozenset[str] | None = None,
     db_path: Path | None = None,
     ts_code: str | None = None,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> tuple[bool, str | None]:
     """Decide whether this node should be included in the codex prompt.
 
@@ -148,6 +150,13 @@ def _is_fillable(
       8. ``data_status == Optionality`` with non-empty value → skip
          (preserved by Z1a).
       9. Optional tier filter: governance.model_tier mismatch → skip.
+      10. If ``refresh_baseline_missing`` is false, legacy Known/Inactive
+          nodes that lack ``source_fingerprint_at_fill`` are preserved for
+          audit instead of being re-prompted just to establish a baseline.
+      11. If ``preserve_unknown_no_local_evidence`` is true, an Unknown node
+          previously filled as ``missing_reason: no_local_evidence`` is also
+          fingerprint-gated so unchanged local evidence is not sent back to
+          the LLM repeatedly.
     """
 
     dp_id = node.get("dp_id") or ""
@@ -169,8 +178,21 @@ def _is_fillable(
         if entry_tier != model_tier_filter:
             return False, f"tier_mismatch_{entry_tier}"
 
-    # Rule 3: Unknown → fill
+    # Rule 3: Unknown → fill, unless a previous no-evidence fill already
+    # established a current source fingerprint for this exact source state.
     if status == "Unknown":
+        if (
+            preserve_unknown_no_local_evidence
+            and node.get("missing_reason") == "no_local_evidence"
+        ):
+            if db_path is None or ts_code is None:
+                return False, "preserved_unknown_no_local_evidence:no_db_context"
+            need_refresh, reason = is_refresh_triggered(
+                node, governance_entry, db_path, ts_code
+            )
+            if need_refresh:
+                return True, f"refresh:{reason}"
+            return False, f"preserved_unknown_no_local_evidence:{reason}"
         return True, None
 
     # Rule 4: Optionality with empty value → fill
@@ -210,6 +232,8 @@ def _is_fillable(
             node, governance_entry, db_path, ts_code
         )
         if need_refresh:
+            if reason == "fingerprint_baseline_missing" and not refresh_baseline_missing:
+                return False, "inactive_event_baseline_missing_preserved"
             return True, f"refresh:{reason}"
         return False, f"inactive_event_no_change:{reason}"
 
@@ -221,6 +245,8 @@ def _is_fillable(
             node, governance_entry, db_path, ts_code
         )
         if need_refresh:
+            if reason == "fingerprint_baseline_missing" and not refresh_baseline_missing:
+                return False, "preserved_known:fingerprint_baseline_missing"
             return True, f"refresh:{reason}"
         return False, f"preserved_known:{reason}"
 
@@ -240,6 +266,8 @@ def _filter_nodes(
     model_tier_filter: str = "all",
     db_path: Path | None = None,
     ts_code: str | None = None,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> tuple[list[dict], list[tuple[str, str]]]:
     """Apply governance + status filter to a node list.
 
@@ -268,6 +296,8 @@ def _filter_nodes(
             event_driven_dp_ids=triggers,
             db_path=db_path,
             ts_code=ts_code,
+            refresh_baseline_missing=refresh_baseline_missing,
+            preserve_unknown_no_local_evidence=preserve_unknown_no_local_evidence,
         )
         if ok:
             fillable.append(node)
@@ -541,6 +571,42 @@ def _format_fillable_table(
 # fields + types right next to the field list.
 # ---------------------------------------------------------------------------
 
+_PROMPT_SCHEMA_GUIDANCE: dict[str, tuple[str, ...]] = {
+    "L1.role.tag": (
+        "标签只写 `value.tags` 列表；不要写 `role` / `category` / `summary` 等额外字段。",
+        "`last_filled_period` 用最近本地事实源期间；只有主营/问答文本时可用 `2026Q1`。",
+    ),
+    "L1.model.tag": (
+        "标签只写 `value.tags` 列表；不要写 `model` / `business_model` / `summary` 等额外字段。",
+        "`last_filled_period` 用最近本地事实源期间；只有主营/问答文本时可用 `2026Q1`。",
+    ),
+    "L1.moat.tags": (
+        "标签只写 `value.tags`，可选 `notes`；护城河弱也填保守标签，不要编造强护城河。",
+        "证据不足时降低 `confidence`，不要用行业常识替代本地公司证据。",
+    ),
+    "L1.stock_attr.tags": (
+        "标签只写 `value.tags`，可选 `notes`；可引用 `L6.path.tag`、收入增速、主营文本。",
+        "只能把 `L6.path.tag` 的文字标签作为证据；不要把 PE/PB 分位、估值倍数、百分位数字写成标签或挂在 `L6.path.tag` 证据下。",
+        "自然语言说明也不要写“未把估值倍数/分位数/百分位写入标签”这类治理提示词；改写为“未使用具体估值数值或相对位置作为标签”。",
+        "不要把估值/主题标签写成顶层字段。",
+    ),
+    "L1.position.growth_rank": (
+        "禁止旧字段：`growth_pct` / `rank_bucket` / `growth_metric` / `value_pct` / `growth_tier` / `rank_label`。",
+        "`rank` 和 `share_pct` 只有本地证据直接披露行业排名/份额时才可填数字；否则必须为 `null`。",
+        "`trend` 只允许 `modest_growth` / `decline` / `mixed`：收入同比正增长写 `modest_growth`，负增长写 `decline`，口径冲突或缺失写 `mixed`。",
+        "无排名/份额直接证据时 `confidence <= 0.52` 且 `evidence_quality: low`；优先引用 `L5.is.revenue_growth` 与 `L5.fina.revenue_yoy`，不要用 `local_overlay` 伪造排名证据。",
+    ),
+    "L3.channel.mix": (
+        "只有年报/本地文本直接披露直销、经销/分销、电商、其他渠道占比，或同一张销售模式表披露可直接映射的收入金额时，才填 `Known`。",
+        "若同表披露直销、经销/分销、电商、其他等销售模式收入金额和可核对合计，可用金额做确定性占比计算；工业模式、其他模式等非标准销售模式归入 `others_pct`，内部抵消不当作渠道模式。",
+        "若披露“销售模式均为直销”或等价表述，可填 direct_pct=100，其余为 0；否则 Unknown/no_local_evidence，四个占比都写 null。",
+        "业务线、客户类型、区域、收入结构不等于渠道结构，不能据此推算渠道占比。",
+        "线上/线下、境内/境外、产品/服务类型也不能映射为 ecommerce/others；除非文本直接披露“电商渠道”或 direct/distributor/ecommerce/other 口径，否则保持 Unknown。",
+        "`value.trend` 不写中文自由文本；仅用短枚举式字符串，例如 `direct_sales_dominant`、`direct_share_up`、`direct_share_slightly_down`、`flat`、`mixed`，无趋势证据写 `null`。",
+        "若 `direct_pct`、`distributor_pct`、`ecommerce_pct`、`others_pct` 全部为 `null`，或节点仍是 Unknown，则 `value.trend` 也必须写 `null`；定性“直销为主/经销为辅”只写在 notes。",
+    ),
+}
+
 
 def _schema_one_line(node: dict) -> str | None:
     """Compact one-line schema spec for a fillable node, or None.
@@ -594,6 +660,8 @@ def _format_schema_block(nodes: list[dict]) -> list[str]:
         spec = _schema_one_line(n)
         if spec:
             rows.append(f"- `{dp_id}`: {spec}")
+            for guidance in _PROMPT_SCHEMA_GUIDANCE.get(dp_id, ()):
+                rows.append(f"  - {guidance}")
     if not rows:
         return []
     return [
@@ -605,6 +673,10 @@ def _format_schema_block(nodes: list[dict]) -> list[str]:
         "（无数据填 `null`，不要省略也不要换名）；`optional` 字段可省略。",
         "类型记号：`float|int` = 数字，`str` = 字符串，`null` = JSON null，"
         "`dict` = JSON 对象，`list` = JSON 数组，`bool` = 布尔。",
+        "自然语言说明（如 `evidence_summary`、`notes`、`missing_reason`）必须使用中文；"
+        "不要输出英文句子。枚举值、dp_id、source 名称、`no_local_evidence` 可保持原格式。",
+        "自然语言说明不要复述 schema 字段名或枚举 key，例如 `rank`、`share_pct`、`trend`、"
+        "`path.tag`、`decline`、`modest_growth`；应改写成中文“排名、份额、趋势、路径标签、下降、温和增长”。",
         "Optionality 节点（schema 含 `current_contribution` + `future_option_value`）"
         "的 `value` 必须同时含这两个键、各为对象，**不要写成扁平结构**。",
         "",
@@ -1102,8 +1174,9 @@ def _format_source_value_section(
         "以及对应字段当前在 SQLite 的完整 value 文本。"
         "**强制规则**：你写 `evidence_sources` 时，"
         "`kind=local_dp_id` 的 `excerpt` 字段必须从对应 source 的 value 文本里"
-        " **verbatim 复制片段**（保留数字格式 / 单位 / 引号等）。"
-        "禁止 paraphrase，禁止改数字格式。"
+        " **verbatim 复制语义值片段**（保留数字格式 / 单位）。"
+        "不要复制 JSON key 名、外层引号、冒号或 `\\n` 转义符；"
+        "多行文本请写成真实换行。禁止 paraphrase，禁止改数字格式。"
     )
     parts.append("")
     parts.append(
@@ -1139,6 +1212,20 @@ def _format_preserved_section(preserved: list[tuple[str, str]]) -> list[str]:
     return parts
 
 
+def _format_company_verification_boundary(industry_id: str, ts_code: str) -> list[str]:
+    """Render self-check limits for company-level LLM subprocesses."""
+
+    overlay_path = f"config/stock_overlays/{industry_id}/{ts_code}.yaml"
+    return [
+        "**自检边界（节省时间 / 降低噪音）**：",
+        "",
+        "- 不要运行 `scripts/verify_overlay_closed_loop.py` 的默认全量扫描，也不要对整个行业目录扫描；外层 batch runner 会统一跑全量 verifier、`validate-overlays` 和 pytest。",
+        f"- 如需在子流程内自检，只检查当前目标文件 `{overlay_path}`：把它复制到 `/tmp` 下只含这一只股票的临时 `stock_overlays/{industry_id}/` 目录，再用 `--stock-overlays-dir` 指向该临时单文件目录。",
+        "- 子流程自检必须保持只读；不要因为历史 soft warning 修改 preserved/排除字段。",
+        "",
+    ]
+
+
 def build_industry_prompt(
     industry_id: str,
     *,
@@ -1146,6 +1233,8 @@ def build_industry_prompt(
     model_tier_filter: str = "all",
     governance: dict | None = None,
     include_source_values: bool = True,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> str:
     """Build a prompt for filling L0 fields in an industry_overlay file."""
 
@@ -1171,6 +1260,8 @@ def build_industry_prompt(
         model_tier_filter=model_tier_filter,
         db_path=db_path,
         ts_code=industry_ts_code,
+        refresh_baseline_missing=refresh_baseline_missing,
+        preserve_unknown_no_local_evidence=preserve_unknown_no_local_evidence,
     )
     preserved_l0 = _preserved_dp_ids(nodes, governance, layer_prefix="L0.")
 
@@ -1188,27 +1279,22 @@ def build_industry_prompt(
     parts.append("")
     parts.append(_render_evidence_rules(fillable_l0, governance).rstrip())
     parts.append("")
-    parts.append("## 输入文件（必读）")
+    parts.append("## 本地上下文（已内联优先，必要时才打开文件）")
     parts.append("")
     parts.append(
-        "1. **`docs/codex/codex_fill_guide.md`** — 总指南，字段语义 / 状态机 / 不要做的事"
+        "1. **本 prompt 已内联的 output_schema / source value / 指纹表** — 最高优先级"
     )
-    parts.append("2. **`图谱设计.md`** — v2 spec 12 层")
+    parts.append("2. **`config/industry_overlays/{0}.yaml`** — 该行业 overlay，也是你要编辑的文件".format(industry_id))
     parts.append(
-        "3. **`docs/data_sources/llm_derived_nodes.md`** Section 3 — 行业级 L0 字段的 prompt 模板 + output_schema"
-    )
-    parts.append(
-        "4. **`config/industry_graphs/{0}.yaml`** — 该行业的因果图，含已填的行业层 priors（state_probabilities / valuation_mix / tail_risk）".format(
+        "3. **`config/industry_graphs/{0}.yaml`** — 该行业的因果图，仅作行业层上下文".format(
             industry_id
         )
     )
     parts.append(
-        "5. **`config/industry_overlays/{0}.yaml`** — **你要编辑的文件**".format(
-            industry_id
-        )
+        "4. **`config/llm_field_governance.yaml`** — governance；prompt 已摘取本次相关字段"
     )
     parts.append(
-        "6. **`config/llm_field_governance.yaml`** — governance（route / model_tier / refresh_trigger / source_dependencies）"
+        "不要为了找 schema 再读旧 docs 或历史 overlay 样本；如需打开文件，只打开本任务列出的本地文件。"
     )
     parts.append("")
 
@@ -1350,6 +1436,8 @@ def build_company_prompt(
     model_tier_filter: str = "all",
     governance: dict | None = None,
     include_source_values: bool = True,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> str:
     """Build a prompt for filling L1-L5 fields in a company stock_overlay."""
 
@@ -1375,6 +1463,8 @@ def build_company_prompt(
         model_tier_filter=model_tier_filter,
         db_path=db_path,
         ts_code=ts_code,
+        refresh_baseline_missing=refresh_baseline_missing,
+        preserve_unknown_no_local_evidence=preserve_unknown_no_local_evidence,
     )
     preserved_company = _preserved_dp_ids(
         nodes, governance, layer_exclude=("L0.",)
@@ -1390,21 +1480,20 @@ def build_company_prompt(
     parts.append("")
     parts.append(_render_evidence_rules(fillable_company, governance).rstrip())
     parts.append("")
-    parts.append("## 输入文件（必读）")
+    parts.append("## 本地上下文（已内联优先，必要时才打开文件）")
     parts.append("")
-    parts.append("1. **`docs/codex/codex_fill_guide.md`** — 总指南")
-    parts.append("2. **`图谱设计.md`** — v2 spec")
+    parts.append("1. **本 prompt 已内联的 output_schema / source value / 年报摘录 / 指纹表** — 最高优先级")
     parts.append(
-        "3. **`docs/data_sources/llm_derived_nodes.md`** Section 4 — 公司级字段 prompt + output_schema"
+        f"2. **`config/stock_overlays/{industry_id}/{ts_code}.yaml`** — **你要编辑的文件**"
     )
     parts.append(
-        f"4. **`config/industry_overlays/{industry_id}.yaml`** — 该行业 overlay 已填的 L0 上下文（作为公司判断的输入参考）"
+        f"3. **`config/industry_overlays/{industry_id}.yaml`** — 行业 overlay L0 上下文"
     )
     parts.append(
-        f"5. **`config/stock_overlays/{industry_id}/{ts_code}.yaml`** — **你要编辑的文件**"
+        "4. **`config/llm_field_governance.yaml`** — governance；prompt 已摘取本次相关字段"
     )
     parts.append(
-        "6. **`config/llm_field_governance.yaml`** — governance（route / model_tier / refresh_trigger / source_dependencies）"
+        "不要为了找 schema 再读旧 docs 或历史 overlay 样本；如需打开文件，只打开本任务列出的本地文件。"
     )
     parts.append("")
 
@@ -1569,9 +1658,33 @@ def build_company_prompt(
     parts.append("")
     parts.append(f"编辑 `config/stock_overlays/{industry_id}/{ts_code}.yaml`：")
     parts.append("")
+    parts.append("**操作边界（防 schema drift）**：")
+    parts.append("")
     parts.append(
-        "对上面 N 条节点，按 `llm_derived_nodes.md` Section 4 各 dp_id 的 "
-        "`output_schema` 输出 `value` 字段。判断时要参考："
+        "- 不要用 `rg` / `grep` 搜索其它 overlay 样本来模仿字段形状；历史 overlay "
+        "可能包含旧 schema，本 prompt 下方的 output_schema 才是最高优先级。"
+    )
+    parts.append(
+        "- 除非本 prompt 明确缺证据，不要再阅读 `docs/data_sources/llm_derived_nodes.md` "
+        "或旧审计/旧 patch；这里已经内联了本次需要的 schema、source value 和年报摘录。"
+    )
+    parts.append(
+        "- 只生成并应用本次待填 dp_id 的 patch；不要改 preserved/排除字段，也不要顺手修其它股票。"
+    )
+    parts.append("")
+    parts.append(
+        "**强制编辑方式**：不要用宽上下文 `apply_patch` 直接改 overlay。"
+        "同一文件中很多 node 块字段布局相同，容易误命中相邻 dp_id。"
+        "请先生成只含本次待填 dp_id 的 YAML patch（顶层 `nodes:`，每项含 `dp_id`），"
+        "再运行 `scripts/apply_yaml_patch.py --strict-schema config/stock_overlays/"
+        f"{industry_id}/{ts_code}.yaml <patch-file>` 按 dp_id 合并。"
+        "应用后必须用结构 diff 确认只改了本 prompt 列出的 dp_id。"
+    )
+    parts.append("")
+    parts.extend(_format_company_verification_boundary(industry_id, ts_code))
+    parts.append(
+        "对上面 N 条节点，按本 prompt 已内联的 output_schema 输出 `value` 字段。"
+        "判断时要参考："
     )
     parts.append("")
     parts.append("1. 已注入的财务/估值数据（事实背景）")
@@ -1593,6 +1706,37 @@ def build_company_prompt(
     parts.append(
         "- Optionality 字段（如 L2.newbiz.*）→ 填 `value.current_contribution` 或 "
         "`value.future_option_value`，保留 `data_status: Optionality`"
+    )
+    parts.append(
+        "- `evidence_quality` 是顶层字符串枚举，只能写 `low` / `medium` / `high`；"
+        "禁止写 0.7、0.55 等数字。`confidence` 才是 0-1 数值。"
+    )
+    parts.append(
+        "- `value.evidence_summary`、`value.notes`、`missing_reason` 等自然语言说明必须使用中文；"
+        "不要输出英文句子。枚举值、dp_id、source 名称、`no_local_evidence` 可保持原格式。"
+    )
+    parts.append(
+        "- 自然语言说明不要复述 schema 字段名或枚举 key，例如 `rank`、`share_pct`、`trend`、"
+        "`path.tag`、`decline`、`modest_growth`；应改写成中文“排名、份额、趋势、路径标签、下降、温和增长”。"
+    )
+    parts.append(
+        "- `L3.channel.mix` 必须有直接披露的直销/经销/电商/其他渠道占比才可填 "
+        "`Known`；如果同一张年报销售模式表披露直销、经销/分销、电商、其他等"
+        "可直接映射模式的收入金额和可核对合计，可用金额做确定性占比计算；"
+        "工业模式、其他模式等非标准销售模式归入 `others_pct`，内部抵消不当作渠道模式。"
+        "如果只有业务线、客户结构、区域或收入结构，而没有这些渠道占比或销售模式金额，"
+        "或仅有线上/线下、境内/境外、产品/服务类型结构，"
+        "保持 `status/data_status: Unknown`、`missing_reason: no_local_evidence`、"
+        "`evidence_sources: []`，并按 schema 写四个占比 `null`。"
+    )
+    parts.append(
+        "- `L1.stock_attr.tags` 可引用 `L6.path.tag` 的文字标签（如估值扩张/估值修复），"
+        "但不要把 PE/PB 分位、估值倍数、百分位数字写成 `value.tags`，也不要把这些数字"
+        "挂在 `L6.path.tag` evidence excerpt 下。"
+    )
+    parts.append(
+        "- `L1.stock_attr.tags.value.evidence_summary/notes` 也不要写“未把估值倍数/"
+        "分位数/百分位写入标签”这类治理提示词；改写为“未使用具体估值数值或相对位置作为标签”。"
     )
     parts.append("- **不要 hallucinate** — 数字必须有出处")
     parts.append("")
@@ -1617,6 +1761,8 @@ def build_list_only_report(
     root: Path = ROOT,
     model_tier_filter: str = "all",
     governance: dict | None = None,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> str:
     """Return a compact dry-run summary of which dp_ids would be filled."""
 
@@ -1649,6 +1795,8 @@ def build_list_only_report(
         model_tier_filter=model_tier_filter,
         db_path=db_path,
         ts_code=scope_ts_code,
+        refresh_baseline_missing=refresh_baseline_missing,
+        preserve_unknown_no_local_evidence=preserve_unknown_no_local_evidence,
     )
 
     lines: list[str] = []
@@ -1747,6 +1895,29 @@ def main() -> int:
             "legacy path; use only when comparing prompt sizes)."
         ),
     )
+    parser.add_argument(
+        "--preserve-known-baseline-missing",
+        dest="refresh_baseline_missing",
+        action="store_false",
+        default=True,
+        help=(
+            "Preserve Known / event-driven Inactive nodes whose only refresh "
+            "reason is missing source_fingerprint_at_fill. This avoids "
+            "re-prompting legacy LLM content just to establish a fingerprint "
+            "baseline; true source_changed refreshes still enter the prompt."
+        ),
+    )
+    parser.add_argument(
+        "--preserve-unknown-no-local-evidence",
+        action="store_true",
+        help=(
+            "Preserve Unknown nodes previously filled as "
+            "missing_reason=no_local_evidence when their source fingerprint "
+            "is unchanged. This prevents repeated LLM calls for already "
+            "audited no-evidence cases; true source_changed refreshes still "
+            "enter the prompt."
+        ),
+    )
     args = parser.parse_args()
 
     if args.list_only:
@@ -1754,6 +1925,8 @@ def main() -> int:
             args.industry,
             args.ts_code,
             model_tier_filter=args.model_tier,
+            refresh_baseline_missing=args.refresh_baseline_missing,
+            preserve_unknown_no_local_evidence=args.preserve_unknown_no_local_evidence,
         )
     elif args.ts_code:
         prompt = build_company_prompt(
@@ -1761,12 +1934,16 @@ def main() -> int:
             args.ts_code,
             model_tier_filter=args.model_tier,
             include_source_values=args.include_source_values,
+            refresh_baseline_missing=args.refresh_baseline_missing,
+            preserve_unknown_no_local_evidence=args.preserve_unknown_no_local_evidence,
         )
     else:
         prompt = build_industry_prompt(
             args.industry,
             model_tier_filter=args.model_tier,
             include_source_values=args.include_source_values,
+            refresh_baseline_missing=args.refresh_baseline_missing,
+            preserve_unknown_no_local_evidence=args.preserve_unknown_no_local_evidence,
         )
 
     if args.out:
