@@ -52,6 +52,7 @@ human-readable error strings. Soft warnings are prefixed with
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -60,6 +61,19 @@ _INT_OR_NULL = (int, type(None))
 _FLOAT_OR_NULL = (float, int, type(None))  # accept int where float expected
 _NUM_OR_NULL = (float, int, type(None))
 _STR_OR_NULL = (str, type(None))
+
+_NATURAL_LANGUAGE_FIELDS = ("evidence_summary", "notes")
+_NATURAL_LANGUAGE_RESIDUE_RE = re.compile(
+    r"\b("
+    r"rank|share_pct|trend|path\.tag|others_pct|growth_pct|rank_bucket|"
+    r"decline|modest_growth|direct_sales_dominant|direct_share_up|"
+    r"direct_share_slightly_down"
+    r")\b"
+)
+_STOCK_ATTR_FORBIDDEN_VALUATION_RE = re.compile(
+    r"(高PE|低PE|PE分位|PB分位|估值倍数|分位数|百分位|percentile|valuation multiple)"
+)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +217,32 @@ DP_SCHEMA: dict[str, dict[str, Any]] = {
         },
         "optional": {"churn_signals": list, "evidence_summary": str},
     },
+    "L1.role.tag": {
+        "required": {"tags": list},
+        "optional": {"notes": str, "evidence_summary": str},
+    },
+    "L1.model.tag": {
+        "required": {"tags": list},
+        "optional": {"notes": str, "evidence_summary": str},
+    },
+    "L1.moat.tags": {
+        "required": {"tags": list},
+        "optional": {"notes": str, "evidence_summary": str},
+    },
+    "L1.stock_attr.tags": {
+        "required": {"tags": list},
+        "optional": {"notes": str, "evidence_summary": str},
+    },
+    "L1.position.growth_rank": {
+        "required": {
+            "rank": _INT_OR_NULL,
+            "share_pct": _FLOAT_OR_NULL,
+            "trend": _STR_OR_NULL,
+            "source_year": _STR_OR_NULL,
+            "market_size_unit": _STR_OR_NULL,
+        },
+        "optional": {"evidence_summary": str, "notes": str},
+    },
     "L2.newbiz.tam": {
         "required": {
             "tam_usd_or_cny": _NUM_OR_NULL,
@@ -307,6 +347,71 @@ DP_SCHEMA: dict[str, dict[str, Any]] = {
         "optional": {
             "season_high": (bool, type(None)),
             "notes": str,
+        },
+    },
+    "L4.share.market": {
+        "required": {
+            "rank": _INT_OR_NULL,
+            "share_pct": _FLOAT_OR_NULL,
+        },
+        "optional": {
+            "peers": list,
+            "trend": _STR_OR_NULL,
+            "source_year": _STR_OR_NULL,
+            "market_size_unit": _STR_OR_NULL,
+            "evidence_summary": str,
+            "notes": str,
+        },
+    },
+    "L4.share.substitution": {
+        "required": {},
+        "optional": {
+            "yoy_pct": _FLOAT_OR_NULL,
+            "score": _FLOAT_OR_NULL,
+            "risk_level": _STR_OR_NULL,
+            "substitution_risk": _STR_OR_NULL,
+            "trend": _STR_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
+        },
+    },
+    "L4.volume.sales": {
+        "required": {},
+        "optional": {
+            "metric_kind": _STR_OR_NULL,
+            "value": _NUM_OR_NULL,
+            "unit": _STR_OR_NULL,
+            "yoy_pct": _FLOAT_OR_NULL,
+            "trend": _STR_OR_NULL,
+            "score": _FLOAT_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
+        },
+    },
+    "L4.volume.orders": {
+        "required": {},
+        "optional": {
+            "metric_kind": _STR_OR_NULL,
+            "value": _NUM_OR_NULL,
+            "unit": _STR_OR_NULL,
+            "yoy_pct": _FLOAT_OR_NULL,
+            "trend": _STR_OR_NULL,
+            "score": _FLOAT_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
+        },
+    },
+    "L4.volume.shipments": {
+        "required": {},
+        "optional": {
+            "metric_kind": _STR_OR_NULL,
+            "value": _NUM_OR_NULL,
+            "unit": _STR_OR_NULL,
+            "yoy_pct": _FLOAT_OR_NULL,
+            "trend": _STR_OR_NULL,
+            "score": _FLOAT_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
         },
     },
     "L4.eff.capacity_utilization": {
@@ -415,6 +520,32 @@ DP_SCHEMA: dict[str, dict[str, Any]] = {
             "cash_contrib_pct": _FLOAT_OR_NULL,
         },
     },
+    "L2.segment.opex_ratio": {
+        "required": {},
+        "optional": {
+            "opex_ratio": _FLOAT_OR_NULL,
+            "ratio": _FLOAT_OR_NULL,
+            "score": _FLOAT_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
+        },
+    },
+    "L2.segment.profit_share": {
+        "required": {"segments": list},
+        "optional": {
+            "top_profit_share_pct": _FLOAT_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
+        },
+        "segments_item_schema": {
+            "item": _STR_OR_NULL,
+            "name": _STR_OR_NULL,
+            "revenue_pct": _FLOAT_OR_NULL,
+            "gross_margin_pct": _FLOAT_OR_NULL,
+            "gross_profit_share_pct": _FLOAT_OR_NULL,
+            "period": _STR_OR_NULL,
+        },
+    },
     "L2.segment.industry_exposure": {
         "required": {"exposures": list},
         "optional": {
@@ -499,6 +630,55 @@ DP_SCHEMA: dict[str, dict[str, Any]] = {
             "localization_stage": _STR_OR_NULL,
             "evidence_summary": str,
             "notes": str,
+        },
+    },
+    "L3.channel.cost": {
+        "required": {},
+        "optional": {
+            "ratio": _FLOAT_OR_NULL,
+            "score": _FLOAT_OR_NULL,
+            "cost_ratio": _FLOAT_OR_NULL,
+            "trend": _STR_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
+        },
+    },
+    "L3.channel.efficiency": {
+        "required": {},
+        "optional": {
+            "sga_rd_ratio_revenue": _FLOAT_OR_NULL,
+            "score": _FLOAT_OR_NULL,
+            "revenue_per_channel": _FLOAT_OR_NULL,
+            "trend": _STR_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
+        },
+    },
+    "L3.region.fx_geo": {
+        "required": {},
+        "optional": {
+            "overseas_pct": _FLOAT_OR_NULL,
+            "domestic_pct": _FLOAT_OR_NULL,
+            "fx_exposure_score": _FLOAT_OR_NULL,
+            "macro_fx_present": (bool, type(None)),
+            "notes": str,
+            "evidence_summary": str,
+        },
+    },
+    "L3.region.domestic_overseas": {
+        "required": {},
+        "optional": {
+            "domestic_pct": _FLOAT_OR_NULL,
+            "overseas_pct": _FLOAT_OR_NULL,
+            "total_revenue_cny": _NUM_OR_NULL,
+            "regions": list,
+            "source": _STR_OR_NULL,
+            "notes": str,
+            "evidence_summary": str,
+        },
+        "regions_item_schema": {
+            "name": str,
+            "revenue_pct": _FLOAT_OR_NULL,
         },
     },
     "L3.region.key_risk": {
@@ -656,6 +836,57 @@ def _check_type(value: Any, expected: Any) -> bool:
     return isinstance(value, expected_tuple)
 
 
+def _natural_language_warnings(dp_id: str, value: dict[str, Any]) -> list[str]:
+    """Warn on LLM residue in human-readable value fields.
+
+    These checks are intentionally advisory: they do not change the canonical
+    value schema, but they catch the recurrent C1 failure mode where the model
+    copies schema keys, enum keys, or prompt guardrail text into Chinese prose.
+    """
+
+    warnings: list[str] = []
+    for field in _NATURAL_LANGUAGE_FIELDS:
+        text = value.get(field)
+        if not isinstance(text, str) or not text:
+            continue
+        match = _NATURAL_LANGUAGE_RESIDUE_RE.search(text)
+        if match:
+            warnings.append(
+                "[warn] natural-language field "
+                f"{field!r} contains schema/enum residue {match.group(0)!r} "
+                f"(dp_id={dp_id})"
+            )
+        if dp_id == "L1.stock_attr.tags":
+            valuation_match = _STOCK_ATTR_FORBIDDEN_VALUATION_RE.search(text)
+            if valuation_match:
+                warnings.append(
+                    "[warn] L1.stock_attr.tags natural-language field "
+                    f"{field!r} contains valuation guardrail wording "
+                    f"{valuation_match.group(0)!r}; rewrite as concrete "
+                    "valuation numbers/relative position are not used "
+                    f"(dp_id={dp_id})"
+                )
+    if dp_id == "L3.channel.mix":
+        trend = value.get("trend")
+        if isinstance(trend, str) and _CJK_RE.search(trend):
+            warnings.append(
+                "[warn] L3.channel.mix trend must be enum-like, not Chinese "
+                f"free text (got {trend!r}, dp_id={dp_id})"
+            )
+        channel_pct_keys = (
+            "direct_pct",
+            "distributor_pct",
+            "ecommerce_pct",
+            "others_pct",
+        )
+        if trend is not None and all(value.get(key) is None for key in channel_pct_keys):
+            warnings.append(
+                "[warn] L3.channel.mix trend must be null when all channel "
+                f"percentages are null (got {trend!r}, dp_id={dp_id})"
+            )
+    return warnings
+
+
 def validate_value(
     dp_id: str,
     value: Any,
@@ -755,6 +986,7 @@ def validate_value(
                         f"{_type_name(it)} (dp_id={dp_id})"
                     )
 
+    errors.extend(_natural_language_warnings(dp_id, value))
     return errors
 
 
