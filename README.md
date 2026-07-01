@@ -77,9 +77,9 @@ Verified status from the current worktree:
   `runtime/signal_5d/A_share.json`, built from DockCase daily/daily_basic data
   and frozen `factor_research` calibration. The display contract is
   **5日跑赢同日流动性股票中位数概率**, not absolute 5日上涨概率. Current local
-  artifact coverage is **1,610 rows / 1,100 validated**; as of 2026-06-20 it is
-  correctly marked stale because the mounted DockCase archive latest trade date
-  is 20260605. The v2 calibration trains a 7-feature ridge-logistic candidate
+  artifact coverage after the 2026-06-24 refresh is **1,613 rows / 1,125
+  validated** with artifact asof `20260624`. The v2 calibration trains a
+  7-feature ridge-logistic candidate
   (`ivol_60`, `ep_ttm`, `strev`, `max5`, `turnover_20`, `rvol_20`, `mom_6_1`)
   and keeps the legacy 10-bin calibration as audit/fallback evidence. The
   12-date walk-forward test passed the aggressive model gates (avg Brier skill
@@ -87,9 +87,7 @@ Verified status from the current worktree:
   1dp probabilities **160.9**), but the stricter 42-date gate failed Brier skill
   and rank-IC-vs-fallback. Production therefore uses the per-stock continuous
   `score_pct_linear_bin10` probability source, with the logistic value emitted
-  as `model_probability_shadow`; the current validated artifact has **364**
-  distinct 4-decimal probabilities and **37** distinct 1-decimal probabilities,
-  so it is no longer a 10 reused-value display. UI/API must still treat this as
+  as `model_probability_shadow`. UI/API must still treat this as
   a relative ranking hint, not a high-conviction forecast. Stale rows can be
   shown as gray `过期预览` values for inspection, but they remain
   `validated=false` and are not counted as effective signals.
@@ -100,8 +98,9 @@ Verified status from the current worktree:
   `docs/audit/2026-06-20_a_share_signal_5d_review_audit.json`,
   `docs/audit/2026-06-20_a_share_signal_5d_backtest_10_dates.json`, and
   `docs/audit/2026-06-20_a_share_signal_5d_contract_smoke.json`,
-  `docs/audit/2026-06-20_a_share_signal_5d_model_backtest.json`, and
-  `docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json`.
+  `docs/audit/2026-06-20_a_share_signal_5d_model_backtest.json`,
+  `docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json`, and
+  `docs/audit/2026-06-24_a_share_update_health.json`.
 - A separate A-share absolute 5-day upside layer now lives beside, not inside,
   the relative signal: `signal_up_5d` targets **P(5d return > 0)** and writes
   `config/signal_up_5d_params.json` plus `runtime/signal_up_5d/A_share.json`.
@@ -2144,8 +2143,13 @@ AKSHARE_CALL_TIMEOUT_S=30 .venv/bin/python scripts/collector.py --source akshare
 AKSHARE_CALL_TIMEOUT_S=30 .venv/bin/python scripts/collector.py --source akshare-cls --max-cycles 1
 AKSHARE_CALL_TIMEOUT_S=25 .venv/bin/python scripts/collector.py --source akshare --max-cycles 1
 TUSHARE_TIMEOUT_SECONDS=3 .venv/bin/python scripts/collector.py --source tushare --max-cycles 1
+.venv/bin/python scripts/refresh_dockcase_a_share_eod.py --trade-date YYYYMMDD --create-missing-full
 .venv/bin/python -m mvp20.cli derive-snapshot --db runtime/hot.sqlite
+.venv/bin/python -m mvp20.cli compile-overlays --db runtime/hot.sqlite
 .venv/bin/python -m mvp20.cli build-peer-context
+.venv/bin/python scripts/build_quant_scores.py
+.venv/bin/python scripts/build_signal_5d.py
+.venv/bin/python scripts/build_signal_up_5d.py
 .venv/bin/python scripts/check_a_share_spec_completion.py
 .venv/bin/python scripts/audit_a_share_score_trace.py --sample-ts-code 300750.SZ
 .venv/bin/python scripts/audit_a_share_score_gap_priority.py

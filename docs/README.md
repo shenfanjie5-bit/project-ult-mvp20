@@ -23,6 +23,7 @@
 - [A-share absolute up-5d BFF smoke](audit/2026-06-21_a_share_signal_up_5d_bff_smoke.json)
 - [A-share absolute up-5d frontend binding](audit/2026-06-21_a_share_signal_up_5d_frontend_binding.json)
 - [A-share relative 5d utility review](audit/2026-06-21_a_share_signal_5d_utility_review.json)
+- [A-share 2026-06-24 update health](audit/2026-06-24_a_share_update_health.md)
 - [LLM stock-decision architecture audit](audit/2026-06-21_llm_stock_decision_architecture_audit.json)
 - [LLM stock-context smoke](audit/2026-06-21_llm_stock_context_smoke.json)
 - [LLM decision-validator audit](audit/2026-06-21_llm_decision_validator_audit.json)
@@ -32,9 +33,13 @@ shell. It records how to validate a bounded industry-driven universe, lock
 upstream module commits, plan bounded data work, and prove fixture-level
 end-to-end behavior.
 
-Current 2026-06-20 evidence reports 100.0% current-MVP completion, 0.0%
-deviation, A-share actionable gap 0, BFF/API smoke under 1s, and DOCKCASE
-current-MVP data-quality actionable gap 0. The upstream locked-module status is
+Current 2026-06-24 update-health evidence reports DockCase `daily` and
+`daily_basic` current at 1,640 / 1,641 A-share overlay stocks, `moneyflow`
+current at 1,630 rows, `runtime/quant_score/A_share.json` asof 20260624, and
+`runtime/signal_5d/A_share.json` asof 20260624. The older 2026-06-20 evidence
+reports 100.0% current-MVP completion, 0.0% deviation, A-share actionable gap 0,
+BFF/API smoke under 1s, and DOCKCASE current-MVP data-quality actionable gap 0.
+The upstream locked-module status is
 contract-surface complete for this local MVP through artifact-backed adapters,
 an importable `contracts` dependency, and verified replacement paths; it is not
 a claim that every locked upstream module runs locally as a
@@ -56,9 +61,9 @@ Current storage split:
   12-date model evidence passes the aggressive gate, but the required 42-date
   evidence fails Brier-skill and rank-IC-vs-fallback, so the current production
   `probability_source` is `score_pct_linear_bin10` and the logistic output is
-  retained as `model_probability_shadow`. Current artifact evidence shows 1,610
-  rows, 1,100 validated rows, and 37 distinct 1-decimal validated
-  probabilities. Stale rows may show gray `过期预览` values for inspection, but
+  retained as `model_probability_shadow`. Current artifact evidence after the
+  2026-06-24 refresh shows 1,613 rows and 1,125 validated rows. Stale rows may
+  show gray `过期预览` values for inspection, but
   they remain invalid for signal counts.
 - `runtime/signal_up_5d/A_share.json` stores the parallel absolute A-share
   5-day upside artifact. Its target is `P(5d return > 0)` with

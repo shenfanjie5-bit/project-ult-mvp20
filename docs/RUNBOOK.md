@@ -107,7 +107,32 @@ specific tickers.
 
     Daily compaction (cron, 01:00):
     `python scripts/compact_history.py`
-12. **A-share 5d signal build** — the workbench "今日重点信号" probability
+12. **A-share EOD full refresh** — use the one-shot EOD chain for an operator
+    refresh. It now refreshes the fast Tushare core/macro rows, runs both
+    historical and snapshot derive layers, compiles overlays, rebuilds peer
+    context, and rebuilds quant / signal artifacts:
+
+    ```bash
+    .venv/bin/python scripts/run_eod_refresh.py
+    ```
+
+    If DockCase by-symbol archives lag the latest cross-sectional Tushare
+    snapshot, repair them with the cross-section write-back helper before
+    rebuilding quant/signal artifacts:
+
+    ```bash
+    .venv/bin/python scripts/refresh_dockcase_a_share_eod.py --trade-date YYYYMMDD --create-missing-full
+    .venv/bin/python scripts/build_quant_scores.py
+    .venv/bin/python scripts/build_signal_5d.py
+    .venv/bin/python scripts/build_signal_up_5d.py
+    ```
+
+    Current 2026-06-24 health evidence is written to
+    `docs/audit/2026-06-24_a_share_update_health.json` and `.md`. The expected
+    healthy shape is: DockCase `daily`/`daily_basic` at 1,640 current rows,
+    `moneyflow` at 1,630 current rows, `runtime/quant_score/A_share.json`
+    asof 20260624, and `runtime/signal_5d/A_share.json` asof 20260624.
+13. **A-share 5d signal build** — the workbench "今日重点信号" probability
     must come from the backend `signal_5d` artifact, not frontend industry-prior
     fallback. The production display target is relative:
     `P(5d return beats same-day liquid-universe median)`.
@@ -148,9 +173,8 @@ specific tickers.
     42-date run fails Brier skill and rank-IC-vs-fallback. The frozen
     `config/signal_5d_params.json` therefore sets `model.primary_enabled=false`
     and production artifacts use `score_pct_linear_bin10` while exposing the
-    logistic value as shadow. Current artifact evidence: asof 20260605, 1,610
-    rows, 1,100 validated rows, 364 distinct 4-decimal validated probabilities,
-    and 37 distinct 1-decimal validated probabilities. Stale rows may render a
+    logistic value as shadow. Current artifact evidence after the 2026-06-24
+    refresh: asof 20260624, 1,613 rows, 1,125 validated rows. Stale rows may render a
     gray `过期预览` value for inspection, but must remain `validated=false` and
     must not be counted as effective signals. Rows without previewable
     probability still render as `-- / 无有效信号`.
@@ -158,7 +182,7 @@ specific tickers.
     HK/US are intentionally not emitted by this artifact. They need separate
     history feeds, feature pipelines, and calibration evidence before the same
     endpoint can return validated rows.
-13. **A-share absolute 5d upside signal build** — this is a parallel signal,
+14. **A-share absolute 5d upside signal build** — this is a parallel signal,
     not a replacement for `signal_5d`. The target is absolute:
     `P(5d return > 0)` / `target_kind=absolute_up_5d`.
 
@@ -198,7 +222,7 @@ specific tickers.
     HK/US are intentionally not emitted by this artifact. They need separate
     history feeds, feature pipelines, and calibration evidence before the same
     endpoint can return validated rows.
-14. Run fixture and live evidence only through explicit gates.
+15. Run fixture and live evidence only through explicit gates.
 
 ## Current-MVP Audit Evidence
 

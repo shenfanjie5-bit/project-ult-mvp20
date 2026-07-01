@@ -19,6 +19,54 @@
 | **待 codex 真正决策 (C + D)** | **111** |
 | **机械默认 (A + B + E)** | **139** |
 
+### 0.1 当前非 LLM 生成口径（2026-06-24）
+
+2026-06-24 的 3 股 A/B 验收确认：原 `C + D` 的 111 个 LLM 候选字段中，有 55 个可以优先走非 LLM 主路径。这里统计的是完整 250 spec 字段口径，不是当前 `stock_overlay` YAML 已物化的 116 个节点口径。
+
+| 口径 | 数量 | 说明 |
+|---|---:|---|
+| 机械化非 LLM 生成 | 134 | `sqlite_hard` 106 + `derive` 28 |
+| 已验证 LLM 候选可转非 LLM 主路径 | 55 | parser / formula / event screen / industry applicability / local proxy first |
+| **当前非 LLM 生成字段** | **189 / 250** | `106 + 28 + 55`，占 75.6% |
+| 仍需 LLM 主路径 | 56 | 剩余 `C + D` 字段，含本地语义判断和 web/external evidence |
+| 非生成字段 | 5 | `skip` |
+| 不需要 LLM 的宽口径 | 194 / 250 | 非 LLM 生成 189 + `skip` 5 |
+
+验收依据：
+
+- `docs/audit/2026-06-24_a_share_3_stock_non_llm_vs_gpt55_xhigh_ab.json`
+- `docs/audit/2026-06-24_a_share_3_stock_non_llm_vs_gpt55_xhigh_ab.md`
+- `docs/audit/2026-06-24_a_share_non_llm_materialization.json`
+- `docs/audit/2026-06-24_a_share_non_llm_materialization.md`
+- 3 股样本：`300750.SZ`、`600999.SH`、`600754.SH`
+- A/B 结果：165 条记录，B 组 schema invalid 0，evidence issue 0，`A_RULE_NEEDS_REVIEW_OR_FIX` 0。
+
+### 0.2 A 股非 LLM 物化结果（2026-06-24）
+
+`scripts/materialize_a_share_non_llm_fields.py` 已将 55 个已验证 LLM 候选非 LLM-first 字段写入 A 股 `stock_overlay`。本节统计的是“公司 × 字段”的实际写入 cell，不改变上一节的单只股票 250 spec 字段路由口径。
+
+| 口径 | 数量 |
+|---|---:|
+| A 股 overlay 数 | 1,646 |
+| 本轮目标字段 | 55 |
+| 本轮目标 cell | 90,530 |
+| 已物化 cell | 90,530 |
+| 可用非 LLM candidate | 86,701 |
+| 本地证据不足 / review gate，已写成 `Unknown + missing_reason` | 3,829 |
+| schema invalid | 0 |
+| 2% 抽查样本 | 1,811 / 1,811 通过 |
+
+3,829 个 `Unknown` cell 不是 schema 错误，也没有伪装成 `Known` / `Proxy`。它们主要是底层本地证据缺失或仍需 review gate：
+
+- `missing capex or PPE`: 1,550
+- `missing L3.region.domestic_overseas runtime value`: 706
+- `no local extractor implemented`: 377
+- `main business text does not directly expose both domestic and overseas business lines`: 343
+- `missing forecast revisions and EPS consensus`: 338
+- `missing gross margin`: 278
+
+当前 overlay 状态复核：扫描 1,646 个 A 股 overlay 的 55 个目标字段，共 90,530 个节点，缺失节点 0，strict schema errors 0，`Unknown` 缺 `missing_reason` 0。
+
 ---
 
 ## 1. 决策框架
