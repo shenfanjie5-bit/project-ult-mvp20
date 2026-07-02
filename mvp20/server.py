@@ -2387,12 +2387,18 @@ def _load_or_build_llm_context(cfg: ServerConfig, body: dict) -> tuple[int, dict
         )
         horizon = normalize_horizon(str(body.get("horizon") or "5d"))
         market_raw = body.get("market")
-        market, _supported, _reason = normalize_market(
+        market, supported, reason = normalize_market(
             str(market_raw) if market_raw else market_for_ts_code(ts_code),
             ts_code,
         )
     except ValueError as exc:
         return 400, {"error": str(exc)}
+    # ``market`` is a path segment downstream (read_context_snapshot joins it
+    # under runtime/llm_contexts/); an unsupported value is the raw caller
+    # string (path-traversal vector), so refuse it here exactly like the GET
+    # handlers do instead of joining it.
+    if not supported:
+        return 400, {"error": reason or "unsupported market"}
     context_id = body.get("context_id")
     if context_id:
         from mvp20.llm_storage import read_context_snapshot
