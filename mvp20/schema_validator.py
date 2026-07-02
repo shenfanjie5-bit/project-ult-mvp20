@@ -1070,6 +1070,23 @@ def validate_overlay_node(
                 "and future_option_value"
             )
 
+    # Provenance hygiene (strict/writer gate only): an Unknown/Unavailable
+    # node has value=None — there is no derivation to attribute — so a
+    # ``*_derived`` data_source on it misleads any provenance-keyed consumer
+    # into treating the gap as a derived estimate. Historic fills carry this
+    # pattern (legacy blanket "llm_derived" stamps); the strict gate stops
+    # writers from producing new ones without failing default validation of
+    # existing overlays. See 图谱设计.md «data_source 取值约定».
+    if (
+        strict
+        and status in ("Unknown", "Unavailable")
+        and str(node.get("data_source") or "").endswith("_derived")
+    ):
+        errors.append(
+            "Unknown/Unavailable node must not carry a *_derived data_source "
+            "(no value to attribute); use null"
+        )
+
     # --- Layer 2: dp_id schema validation -------------------------------
     # Validate Known + populated Optionality slots. Unknown / N/A /
     # Inactive nodes legitimately have value=None or empty.

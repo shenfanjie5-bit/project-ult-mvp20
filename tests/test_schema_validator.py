@@ -573,3 +573,36 @@ def test_codex_high_vs_low_drift_rate_demonstration() -> None:
     assert any("product_categories" in e for e in low_errors)
     # AND it's missing required products list.
     assert any("products" in e and "missing required" in e for e in low_errors)
+
+
+# ---------------------------------------------------------------------------
+# Provenance hygiene (data_source vs data_status)
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_node_with_derived_data_source_fails_strict_only() -> None:
+    """Review #6: Unknown/Unavailable nodes carry value=None, so a
+    ``*_derived`` data_source misattributes a derivation that does not
+    exist. Strict (writer-gate) mode rejects it; default mode stays lenient
+    so existing overlays with the legacy pattern still load."""
+
+    node = {
+        "dp_id": "L4.eff.capacity_utilization",
+        "data_status": "Unknown",
+        "required_level": "conditional_required",
+        "missing_reason": "candidate_unavailable",
+        "data_source": "llm_derived",
+        "value": None,
+    }
+    strict_errors = schema_validator.validate_overlay_node(node, strict=True)
+    assert any("data_source" in e for e in strict_errors), strict_errors
+    assert schema_validator.validate_overlay_node(node, strict=False) == []
+
+    # Null provenance on an Unknown node is the approved shape.
+    node["data_source"] = None
+    assert schema_validator.validate_overlay_node(node, strict=True) == []
+
+    # Non-derived labels (raw feed names etc.) are untouched by the rule.
+    node["data_source"] = "tushare"
+    node["data_status"] = "Unavailable"
+    assert schema_validator.validate_overlay_node(node, strict=True) == []

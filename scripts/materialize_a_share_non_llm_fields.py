@@ -19,6 +19,7 @@ import datetime as dt
 import hashlib
 import json
 import math
+import os
 import sqlite3
 import sys
 import time
@@ -67,7 +68,12 @@ def _write_yaml(path: Path, payload: Mapping[str, Any]) -> None:
         "      Confidence × Time Factor × Surprise × Funding Amplifier - Priced-in Discount - Risk Discount",
         f"formula: {FORMULA_TEXT}",
     )
-    path.write_text(text, encoding="utf-8")
+    # Atomic replace (review #12): a crash mid-write must not leave a
+    # truncated overlay behind. Same-directory temp file so os.replace stays
+    # on one filesystem.
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def _json_safe(value: Any) -> Any:
@@ -164,6 +170,43 @@ def _candidate_period(candidate: Mapping[str, Any]) -> str | None:
     return None
 
 
+# data_source enum for non-LLM materialized nodes (spec: 图谱设计.md
+# «data_source 取值约定»). Every candidate emitted by
+# compare_llm_vs_non_llm_extractors carries method/category describing the
+# deterministic extractor that produced it; map those onto the enum instead
+# of the historical blanket "llm_derived" stamp (review finding #1/#6/#7).
+_EVENT_CATEGORIES = {"event_policy", "event_policy_gated"}
+_PARSER_CATEGORIES = {"cheap_extract_parser", "existing_deterministic_parser", "cheap_extract_rule"}
+_FORMULA_CATEGORIES = {"formula_proxy", "cheap_extract_formula", "parser_formula_first"}
+_PARSER_METHOD_TOKENS = ("parser", "regex", "_text", "rule_tagging", "script_fill")
+_FORMULA_METHOD_TOKENS = ("formula", "ratio", "proxy", "rank", "growth")
+
+
+def _source_from_candidate(candidate: Mapping[str, Any]) -> str | None:
+    """Derive the node ``data_source`` label from a non-LLM candidate.
+
+    Returns ``None`` (leave provenance unset) for Unknown/Unavailable
+    candidates — a null value has no derivation to attribute — and for any
+    method/category combination we cannot classify; never guess a label.
+    """
+    status = str(candidate.get("data_status") or "")
+    if status in {"Unknown", "Unavailable"}:
+        return None
+    method = str(candidate.get("method") or "")
+    category = str(candidate.get("category") or "")
+    # Order matters: event/runtime methods are the most specific signals,
+    # then parser-vs-formula keywords, then the category fallback.
+    if category in _EVENT_CATEGORIES or method.startswith("event_"):
+        return "non_llm_event"
+    if method.endswith("_runtime") or method in {"existing_runtime_or_derive", "macro_fx_only"}:
+        return "non_llm_runtime"
+    if any(token in method for token in _PARSER_METHOD_TOKENS) or category in _PARSER_CATEGORIES:
+        return "non_llm_parser"
+    if any(token in method for token in _FORMULA_METHOD_TOKENS) or category in _FORMULA_CATEGORIES:
+        return "non_llm_formula"
+    return None
+
+
 def _status_patch(
     *,
     node: Mapping[str, Any],
@@ -202,8 +245,13 @@ def _status_patch(
         "last_updated": now_iso,
     }
 
-    if not node.get("data_source"):
-        patch["data_source"] = "llm_derived"
+    # Provenance follows the candidate that produced the patched value, not a
+    # blanket "llm_derived" stamp: these candidates are deterministic
+    # parser/formula/event/runtime extractions. Unknown/Unavailable patches
+    # carry value=None, so they get data_source=None (missing_reason already
+    # explains the gap). Overwrites any pre-existing label because the node's
+    # value/evidence are replaced by this patch.
+    patch["data_source"] = _source_from_candidate(candidate)
     if status == "N/A":
         patch["missing_policy"] = "not_applicable_remove"
         patch["active_weight"] = 0.0
