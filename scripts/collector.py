@@ -356,6 +356,7 @@ def fetch_real_batch(universe: list[dict], tick: int) -> list[tuple]:
     """
 
     rows: list[tuple] = []
+    LAST_BATCH_SOURCE_FAILURES.clear()
     for label, fn in (
         ("tushare-core", fetch_tushare_core_batch),
         ("tushare-market-env", fetch_tushare_market_env_batch),
@@ -374,8 +375,18 @@ def fetch_real_batch(universe: list[dict], tick: int) -> list[tuple]:
             rows.extend(new_rows)
             print(f"[collector]   {label}: {len(new_rows)} rows", flush=True)
         except Exception as exc:  # noqa: BLE001
+            LAST_BATCH_SOURCE_FAILURES.append(label)
             print(f"[collector]   {label}: FAILED ({exc})", flush=True)
     return rows
+
+
+# Labels of sources whose fetch raised during the LAST fetch_real_batch call
+# (reset at the start of each call). The main loop downgrades the freshness
+# sync_status "ok" → "partial" when non-empty, so a partial source outage is
+# distinguishable from a clean run in freshness_meta (review finding #8).
+# Observability only: derive/aggregator gate per-row on updated_at, not on
+# this layer label.
+LAST_BATCH_SOURCE_FAILURES: list[str] = []
 
 
 SOURCE_DISPATCH = {
@@ -501,8 +512,17 @@ def main() -> int:
         batch = fetcher(universe, tick)
         if batch:
             n = upsert_realtime(args.hot_db, batch)
-            update_freshness(args.hot_db, layer="realtime", sync_status="ok",
-                             is_full=True)
+            # A cycle where some sources raised is NOT a clean run: label it
+            # "partial" so dashboards can tell a 1-of-11-sources outage apart
+            # from full freshness (review #8). Rows that did land are still
+            # upserted with their own updated_at.
+            failed_sources = list(LAST_BATCH_SOURCE_FAILURES)
+            sync_status = "partial" if failed_sources else "ok"
+            update_freshness(args.hot_db, layer="realtime",
+                             sync_status=sync_status, is_full=True)
+            if failed_sources:
+                print(f"[collector] tick={tick} sync_status=partial "
+                      f"failed_sources={','.join(failed_sources)}", flush=True)
             if history_writer is not None:
                 try:
                     out_path = history_writer(args.history_dir, batch)
