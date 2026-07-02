@@ -520,6 +520,7 @@ def build_single_stock_context(  # noqa: PLR0913, PLR0915
         realtime=realtime,
         ts_code=ts_code,
         industry_id=selected_industry,
+        now_dt=now_dt,
     )
     packets["score"] = _packet(
         packet_id="score",
@@ -724,15 +725,21 @@ def _derived_score_packets(
     realtime: Mapping[str, Any],
     ts_code: str,
     industry_id: str | None,
+    now_dt: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     if not overlay:
         return {}, {}, {}
     try:
         from mvp20.aggregator import aggregate_company_graph
+        # ref_now pins the aggregate recency decay to the frozen context
+        # clock — same determinism contract as _freeze_snapshot_ages. Without
+        # it two same-``now`` builds hash differently (the leaf recency
+        # multiplier drifts continuously with the wall clock).
         aggregate = aggregate_company_graph(
             overlay,
             industry_overlay or None,
             realtime_snapshot=realtime or None,
+            ref_now=now_dt,
         ) or {}
     except Exception as exc:  # noqa: BLE001
         aggregate = {"available": False, "error": str(exc)}

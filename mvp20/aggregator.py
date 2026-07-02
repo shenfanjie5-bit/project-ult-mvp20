@@ -2466,16 +2466,19 @@ def synthesize_realtime_nodes(
 # ---------------------------------------------------------------------------
 
 
-def _leaf_score(node: dict) -> dict:
+def _leaf_score(node: dict, *, ref_now: datetime | None = None) -> dict:
     """Compute a leaf node's own (direction × strength × confidence × recency)
-    intrinsic score, plus the three-horizon mix."""
+    intrinsic score, plus the three-horizon mix.
+
+    ``ref_now`` pins the recency clock (see ``aggregate_company_graph``);
+    None keeps the live wall-clock behaviour."""
 
     status = _node_status(node)
     direction = _direction_sign(node.get("direction"))
     confidence = node.get("confidence")
     confidence = float(confidence) if confidence is not None else 0.5
     base_confidence = confidence
-    recency = _recency(node.get("last_updated"))
+    recency = _recency(node.get("last_updated"), ref_now=ref_now)
     score_enabled = _node_score_enabled(node)
     confidence_penalty = float(node.get("confidence_penalty") or 1.0)
     missing_balance = "known"
@@ -2721,6 +2724,7 @@ def aggregate_company_graph(
     *,
     realtime_snapshot: dict | None = None,
     peer_context: Mapping[str, Sequence[float]] | None = None,
+    ref_now: datetime | None = None,
 ) -> dict[str, dict]:
     """Compute parent-node scores + three-horizon mix for every node in a
     stock overlay. Returns ``{node_id: {...}}``.
@@ -2737,6 +2741,13 @@ def aggregate_company_graph(
     shape is unambiguous is synthesized into a standalone leaf node (see
     ``synthesize_realtime_nodes``) and folded into the same aggregation. When
     ``None`` (default), behaviour is identical to before — pure back-compat.
+
+    ``ref_now`` pins the leaf ``_recency`` decay clock. The frozen-context
+    builder (``mvp20.llm_context``) passes its snapshot ``now`` so that two
+    builds with identical inputs hash identically; without it the recency
+    multiplier drifts continuously with the wall clock (observed as the
+    input_hash flipping between two same-``now`` builds). ``None`` keeps the
+    live-clock behaviour for the /score serving path.
     """
 
     # Synthetic realtime nodes need governance (score_target / participates_in
@@ -2883,7 +2894,7 @@ def aggregate_company_graph(
             }
         else:
             # Leaf
-            leaf = _leaf_score(node)
+            leaf = _leaf_score(node, ref_now=ref_now)
             weight = _effective_weight(node)
             # Stand-alone leaves also get reported in the result map so the
             # caller can inspect single-node scores.
