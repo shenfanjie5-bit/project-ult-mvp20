@@ -120,11 +120,15 @@ def _walk(root: Path, prunes: tuple[str, ...]) -> Iterable[Path]:
     for current, dirs, names in os.walk(root):
         current_path = Path(current)
         rel_current = "" if current_path == root else _rel(current_path, root)
-        dirs[:] = [
+        # Sort both so the walk order (and therefore the sampled rows /
+        # max-files boundaries in the reports) is deterministic across
+        # filesystems — ext4 readdir order differs from APFS and flipped
+        # the sampled files on CI.
+        dirs[:] = sorted(
             d for d in dirs
             if not _should_prune(f"{rel_current}/{d}".strip("/"), prunes)
-        ]
-        for name in names:
+        )
+        for name in sorted(names):
             path = current_path / name
             rel = _rel(path, root)
             if not _should_prune(rel, prunes):

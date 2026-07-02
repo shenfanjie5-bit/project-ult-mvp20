@@ -458,8 +458,13 @@ def build_report(
     symbols: tuple[str, ...],
     index_files: tuple[str, ...],
     max_rows_per_file: int,
+    today: date | None = None,
 ) -> dict:
-    today = date.today()
+    # ``today`` is injectable so tests with fixed fixture dates don't turn
+    # into wall-clock time bombs via the freshness_lag_gt_30d check (the
+    # hardcoded 20260601 fixtures started flagging exactly 31 days after
+    # they were written).
+    today = today or date.today()
     datasets = [
         _audit_dataset(
             cfg,

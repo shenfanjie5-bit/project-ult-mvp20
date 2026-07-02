@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 from scripts import audit_a_share_data_semantics as audit
@@ -46,6 +47,10 @@ def test_a_share_data_semantics_reports_clean_core_sources(tmp_path: Path) -> No
         symbols=("000001.SZ",),
         index_files=("000001.SH+上证指数.csv",),
         max_rows_per_file=0,
+        # Pin the freshness reference: fixture dates are fixed (20260601+),
+        # so a live date.today() turns this test into a time bomb once the
+        # 30-day freshness lag threshold is crossed (bit CI on 2026-07-02).
+        today=date(2026, 6, 20),
     )
 
     assert report["summary"]["dataset_count"] == 6
@@ -73,6 +78,10 @@ def test_a_share_data_semantics_flags_bad_values_and_missing_file(tmp_path: Path
         symbols=("000001.SZ",),
         index_files=("000001.SH+上证指数.csv",),
         max_rows_per_file=0,
+        # Pin the freshness reference: fixture dates are fixed (20260601+),
+        # so a live date.today() turns this test into a time bomb once the
+        # 30-day freshness lag threshold is crossed (bit CI on 2026-07-02).
+        today=date(2026, 6, 20),
     )
     daily = next(item for item in report["datasets"] if item["dataset_id"] == "daily_bar")
     issue_codes = {issue["code"] for issue in daily["issues"]}

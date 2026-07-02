@@ -143,11 +143,15 @@ def _walk_csv(root: Path, prunes: tuple[str, ...]) -> Iterable[Path]:
     for current, dirs, names in os.walk(root):
         current_path = Path(current)
         rel_current = "" if current_path == root else _rel(current_path, root)
-        dirs[:] = [
+        # Sort both so scan order (and the shard/max-files boundaries built
+        # on it) is deterministic across filesystems — ext4 readdir order
+        # differs from APFS and changed which files a bounded scan skipped
+        # on CI.
+        dirs[:] = sorted(
             d for d in dirs
             if not _should_prune(f"{rel_current}/{d}".strip("/"), prunes)
-        ]
-        for name in names:
+        )
+        for name in sorted(names):
             if name.startswith("._"):
                 continue
             if not name.lower().endswith(".csv"):
