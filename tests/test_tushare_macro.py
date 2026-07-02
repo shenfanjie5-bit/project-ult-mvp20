@@ -110,6 +110,7 @@ class _StubPro:
     def cn_cpi(self, **kw):              return self._dispatch("cn_cpi", **kw)
     def cn_ppi(self, **kw):              return self._dispatch("cn_ppi", **kw)
     def daily_basic(self, **kw):         return self._dispatch("daily_basic", **kw)
+    def index_daily(self, **kw):         return self._dispatch("index_daily", **kw)
     def moneyflow_ind_ths(self, **kw):   return self._dispatch("moneyflow_ind_ths", **kw)
     def moneyflow_hsgt(self, **kw):      return self._dispatch("moneyflow_hsgt", **kw)
     def fund_basic(self, **kw):          return self._dispatch("fund_basic", **kw)
@@ -123,9 +124,13 @@ def _clear_macro_cache():
 
     tushare_source._LAST_MACRO_FETCH["ts"] = 0
     tushare_source._LAST_MACRO_FETCH["rows"] = []
+    tushare_source._CN_PMI_LATEST_CACHE = None
+    tushare_source._CN_PRICE_INDEX_LATEST_CACHE = None
     yield
     tushare_source._LAST_MACRO_FETCH["ts"] = 0
     tushare_source._LAST_MACRO_FETCH["rows"] = []
+    tushare_source._CN_PMI_LATEST_CACHE = None
+    tushare_source._CN_PRICE_INDEX_LATEST_CACHE = None
 
 
 # ---------------------------------------------------------------------------
@@ -136,15 +141,33 @@ def _clear_macro_cache():
 def test_supported_dp_ids_includes_phase_b8_macro() -> None:
     expected = {
         "L10.industry.pmi",
+        "L10.industry.inventory_orders",
         "L7.env.rates",
         "L9.macro.rates",
         "L7.env.liquidity",
         "L9.macro.liquidity",
         "L9.macro.cpi_employment",
+        "L10.industry.sales_price",
+        "L7.env.market_trend",
         "L10.val.historical_quantile",
         "L10.industry.fund_flow",
     }
     assert expected.issubset(tushare_source.SUPPORTED_DP_IDS)
+
+
+def test_tushare_timeout_seconds_uses_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TUSHARE_TIMEOUT_SECONDS", "3.5")
+    assert tushare_source._tushare_timeout_seconds() == 3.5
+
+
+def test_tushare_timeout_seconds_falls_back_on_invalid_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TUSHARE_TIMEOUT_SECONDS", "bad")
+    assert (
+        tushare_source._tushare_timeout_seconds()
+        == tushare_source.DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    )
 
 
 def test_industry_to_ths_name_keys_match_present_industry_slugs() -> None:
@@ -162,6 +185,95 @@ def test_industry_to_ths_name_keys_match_present_industry_slugs() -> None:
 def test_industry_to_ths_name_has_at_least_five_real_mappings() -> None:
     real = [k for k, v in tushare_source.INDUSTRY_TO_THS_NAME.items() if v]
     assert len(real) >= 5, f"Only {len(real)} real mappings: {real}"
+
+
+# ---------------------------------------------------------------------------
+# _emit_market_trend -> L7.env.market_trend (MARKET:CN)
+# ---------------------------------------------------------------------------
+
+
+def test_emit_market_trend_returns_market_cn_row() -> None:
+    def _index_daily(**kw):
+        base = 1000.0
+        return _StubDF([
+            {"ts_code": kw["ts_code"], "trade_date": f"202605{i:02d}",
+             "close": base + i * 2.0, "pct_chg": 0.2}
+            for i in range(70, 0, -1)
+        ])
+
+    pro = _StubPro(index_daily=_index_daily)
+    rows = tushare_source._emit_market_trend(pro, now=1700000000)
+    assert len(rows) == 1
+    ts_code, dp_id, value_json, status, conf, source, _ = rows[0]
+    assert ts_code == "MARKET:CN"
+    assert dp_id == "L7.env.market_trend"
+    assert status == "Known"
+    assert conf == 0.8
+    assert source == "tushare:index_daily"
+    payload = json.loads(value_json)
+    assert payload["regime"] in {"bull", "range", "bear"}
+    assert payload["sse_last"] is not None
+    assert payload["sse_1d_pct"] == pytest.approx(0.002)
+    assert payload["csi300_20d_pct"] is not None
+
+
+# ---------------------------------------------------------------------------
+# _market_index_payload / _ratio_change — unit contract (regression).
+#
+# Guards against a past bug where ``pct_chg_1d`` was left in PERCENTAGE POINTS
+# (e.g. 2.5) while the multi-day window fields (d5/d20/d60) were decimal ratios
+# (e.g. 0.02) — a ~100x unit mismatch inside the SAME payload. Tushare reports
+# ``pct_chg`` in percentage points, so the payload must divide it by 100 to put
+# the 1-day field on the same decimal scale as the window changes.
+# ---------------------------------------------------------------------------
+
+
+def test_ratio_change_returns_decimal_ratio() -> None:
+    # +2% move expressed as a decimal ratio, not "2" percentage points.
+    assert tushare_source._ratio_change(100.0, 102.0) == pytest.approx(0.02)
+    # Symmetric down move.
+    assert tushare_source._ratio_change(100.0, 98.0) == pytest.approx(-0.02)
+
+
+def test_market_index_payload_1d_and_window_share_decimal_scale() -> None:
+    # 6 trading days, oldest -> newest. Closes chosen so the 5-day window change
+    # is hand-computable: latest close 102.0, close 5 rows back 100.0.
+    #   d5_pct = 102.0 / 100.0 - 1 = 0.02 (decimal)
+    # Latest-day pct_chg is given in PERCENTAGE POINTS (2.5 == +2.5%):
+    #   pct_chg_1d = 2.5 / 100 = 0.025 (decimal)
+    latest_pct_chg = 2.5  # percentage points, as Tushare reports it
+    records = [
+        {"trade_date": "20260520", "close": 100.0, "pct_chg": 1.0},  # 5 rows back
+        {"trade_date": "20260521", "close": 100.5, "pct_chg": 0.5},
+        {"trade_date": "20260522", "close": 101.0, "pct_chg": 0.5},
+        {"trade_date": "20260523", "close": 101.5, "pct_chg": 0.5},
+        {"trade_date": "20260526", "close": 99.5, "pct_chg": -2.0},
+        {"trade_date": "20260527", "close": 102.0, "pct_chg": latest_pct_chg},  # latest
+    ]
+
+    payload = tushare_source._market_index_payload(records)
+    assert payload is not None
+
+    # 1-day field must be the DECIMAL ratio (2.5 / 100), not the raw 2.5.
+    assert payload["pct_chg_1d"] == pytest.approx(latest_pct_chg / 100.0)
+    assert payload["pct_chg_1d"] == pytest.approx(0.025)
+
+    # 5-day window change, hand-computed: 102/100 - 1 = 0.02.
+    assert payload["d5_pct"] == pytest.approx(0.02)
+
+    # Unit lock: a normal daily/weekly move is well under 1.0 as a decimal. A
+    # percentage-point value (e.g. 2.5) would fail this, so dropping the /100
+    # conversion would break the test. Both fields must be on the same scale.
+    assert abs(payload["pct_chg_1d"]) < 1.0
+    assert abs(payload["d5_pct"]) < 1.0
+
+    # Other fields behave: latest close surfaced, full history counted, and the
+    # longer windows are absent because we only supplied 6 rows.
+    assert payload["last"] == pytest.approx(102.0)
+    assert payload["latest_date"] == "20260527"
+    assert payload["history_days"] == len(records)
+    assert payload["d20_pct"] is None
+    assert payload["d60_pct"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +309,35 @@ def test_emit_pmi_returns_empty_on_api_failure() -> None:
     pro = _StubPro(cn_pmi=RuntimeError("permission denied"))
     rows = tushare_source._emit_pmi(pro, now=1700000000)
     assert rows == []
+
+
+def test_emit_industry_inventory_orders_from_pmi_subindices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tushare_source,
+        "_active_industry_ids",
+        lambda: ["AI_COMPUTE", "FINANCIAL_HIGH_DIVIDEND", "SEMI_EQUIPMENT"],
+    )
+    pro = _StubPro(cn_pmi=_StubDF([
+        {"month": "202604", "pmi010000": 50.4, "pmi010100": 51.0,
+         "pmi010200": 52.1, "pmi010400": 49.5, "pmi010500": 47.8,
+         "pmi010900": 48.6, "pmi020100": 51.2, "pmi030000": 50.9},
+    ]))
+    rows = tushare_source._emit_industry_inventory_orders(pro, now=1700000000)
+    assert [r[0] for r in rows] == [
+        "INDUSTRY:AI_COMPUTE",
+        "INDUSTRY:SEMI_EQUIPMENT",
+    ]
+    assert all(r[1] == "L10.industry.inventory_orders" for r in rows)
+    payload = json.loads(rows[0][2])
+    assert payload["scope"] == "macro_manufacturing_proxy"
+    assert payload["new_orders_pmi"] == 52.1
+    assert payload["finished_goods_inventory_pmi"] == 47.8
+    assert payload["orders_minus_finished_inventory"] == pytest.approx(4.3)
+    assert payload["source_fields"]["new_orders"] == "pmi010200"
+    assert rows[0][3] == "Proxy"
+    assert rows[0][5] == "tushare:cn_pmi.industry_validation"
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +385,7 @@ def test_emit_rates_marks_event_known_when_lpr_moves() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_emit_money_supply_threshold_marks_event_inactive() -> None:
+def test_emit_money_supply_small_change_marks_event_known_neutral() -> None:
     pro = _StubPro(cn_m=_StubDF([
         {"month": "202604", "m0": 12, "m0_yoy": 4.0,
          "m1": 70, "m1_yoy": 1.5, "m2": 290, "m2_yoy": 8.4},
@@ -255,10 +396,13 @@ def test_emit_money_supply_threshold_marks_event_inactive() -> None:
     state = next(r for r in rows if r[1] == "L7.env.liquidity")
     event = next(r for r in rows if r[1] == "L9.macro.liquidity")
     assert state[3] == "Known"
-    assert event[3] == "Inactive"
+    assert event[3] == "Known"
     payload = json.loads(state[2])
     assert payload["m2_yoy_pct"] == 8.4
     assert payload["m1_yoy_pct"] == 1.5
+    event_payload = json.loads(event[2])
+    assert event_payload["m2_yoy_change_pct"] == pytest.approx(0.1)
+    assert event_payload["event_significant"] is False
 
 
 def test_emit_money_supply_threshold_marks_event_known_when_m2_moves() -> None:
@@ -271,6 +415,7 @@ def test_emit_money_supply_threshold_marks_event_known_when_m2_moves() -> None:
     rows = tushare_source._emit_money_supply(pro, now=1700000000)
     event = next(r for r in rows if r[1] == "L9.macro.liquidity")
     assert event[3] == "Known"
+    assert json.loads(event[2])["event_significant"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +439,41 @@ def test_emit_cpi_ppi_merges_both_endpoints() -> None:
     assert payload["ppi_yoy_pct"] == -2.5
     assert payload["latest_month"] == "202604"
     assert payload["employment_unemployment_pct"] is None  # TODO sentinel
+
+
+def test_emit_industry_sales_price_from_price_indices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        tushare_source,
+        "_active_industry_ids",
+        lambda: ["AI_COMPUTE", "DOMESTIC_CONSUMPTION", "FINANCIAL_HIGH_DIVIDEND"],
+    )
+    pro = _StubPro(
+        cn_cpi=_StubDF([{"month": "202604", "nt_yoy": 0.4, "nt_mom": 0.2}]),
+        cn_ppi=_StubDF([{
+            "month": "202604", "ppi_yoy": -2.5, "ppi_mom": -0.1,
+            "ppi_mp_yoy": -3.0, "ppi_mp_mom": -0.2,
+            "ppi_mp_rm_yoy": -4.1, "ppi_mp_rm_mom": -0.4,
+            "ppi_cg_yoy": -1.2, "ppi_cg_mom": 0.1,
+            "ppi_cg_adu_yoy": -0.8, "ppi_cg_adu_mom": 0.2,
+        }]),
+    )
+    rows = tushare_source._emit_industry_sales_price(pro, now=1700000000)
+    assert [r[0] for r in rows] == [
+        "INDUSTRY:AI_COMPUTE",
+        "INDUSTRY:DOMESTIC_CONSUMPTION",
+    ]
+    assert all(r[1] == "L10.industry.sales_price" for r in rows)
+    payload = json.loads(rows[0][2])
+    assert payload["scope"] == "macro_price_proxy"
+    assert payload["proxy_scope"] == "national_cpi_ppi_proxy_not_industry_asp_or_sales"
+    assert payload["ppi_yoy_pct"] == -2.5
+    assert payload["raw_material_yoy_pct"] == -4.1
+    assert payload["durable_consumer_goods_mom_pct"] == 0.2
+    assert payload["cpi_yoy_pct"] == 0.4
+    assert rows[0][3] == "Proxy"
+    assert rows[0][5] == "tushare:cn_ppi+cn_cpi.industry_validation"
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +562,8 @@ def test_fetch_macro_china_batch_returns_sentinel_ts_codes(
     pro = _StubPro(
         cn_pmi=_StubDF([
             {"month": "202604", "pmi010000": 50.1, "pmi020100": 51.0,
-             "pmi030000": 50.5},
+             "pmi030000": 50.5, "pmi010100": 51.4, "pmi010200": 52.0,
+             "pmi010400": 49.2, "pmi010500": 47.5, "pmi010900": 48.1},
         ]),
         shibor_lpr=_StubDF([
             {"date": "20260420", "1y": 3.45, "5y": 3.95,
@@ -396,7 +577,11 @@ def test_fetch_macro_china_batch_returns_sentinel_ts_codes(
             {"month": "202604", "nt_yoy": 0.4, "nt_mom": 0.2},
         ]),
         cn_ppi=_StubDF([
-            {"month": "202604", "ppi_yoy": -2.5},
+            {"month": "202604", "ppi_yoy": -2.5, "ppi_mom": -0.1,
+             "ppi_mp_yoy": -3.0, "ppi_mp_mom": -0.2,
+             "ppi_mp_rm_yoy": -4.1, "ppi_mp_rm_mom": -0.4,
+             "ppi_cg_yoy": -1.2, "ppi_cg_mom": 0.1,
+             "ppi_cg_adu_yoy": -0.8, "ppi_cg_adu_mom": 0.2},
         ]),
         daily_basic=_StubDF([
             {"ts_code": f"{i:06d}.SH", "trade_date": "20260506",
@@ -423,7 +608,7 @@ def test_fetch_macro_china_batch_returns_sentinel_ts_codes(
         assert len(row) == 7
         ts_code, dp_id, value_json, status, conf, source, updated_at = row
         json.loads(value_json)  # parseable
-        assert status in {"Known", "Inactive"}
+        assert status in {"Known", "Proxy", "Inactive"}
         assert 0.0 <= conf <= 1.0
         assert source.startswith("tushare:")
         assert isinstance(updated_at, int) and updated_at > 0
@@ -433,6 +618,7 @@ def test_fetch_macro_china_batch_returns_sentinel_ts_codes(
         "L10.industry.pmi", "L7.env.rates", "L9.macro.rates",
         "L7.env.liquidity", "L9.macro.liquidity",
         "L9.macro.cpi_employment", "L10.val.historical_quantile",
+        "L10.industry.inventory_orders", "L10.industry.sales_price",
         "L10.industry.fund_flow",
     }
     assert expected.issubset(seen), f"missing: {expected - seen}"
@@ -458,6 +644,7 @@ def test_fetch_macro_china_batch_emits_zero_rows_on_total_failure(
         cn_cpi=RuntimeError("403 permission"),
         cn_ppi=RuntimeError("403 permission"),
         daily_basic=RuntimeError("403 permission"),
+        index_daily=RuntimeError("403 permission"),
         moneyflow_ind_ths=RuntimeError("403 permission"),
     )
     _patch_pro(monkeypatch, pro)
@@ -474,7 +661,8 @@ def test_fetch_macro_china_batch_caches_within_ttl(
     pro = _StubPro(
         cn_pmi=_StubDF([
             {"month": "202604", "pmi010000": 50.1, "pmi020100": 51.0,
-             "pmi030000": 50.5},
+             "pmi030000": 50.5, "pmi010100": 51.4, "pmi010200": 52.0,
+             "pmi010400": 49.2, "pmi010500": 47.5, "pmi010900": 48.1},
         ]),
         shibor_lpr=_StubDF([
             {"date": "20260420", "1y": 3.45, "5y": 3.95,
@@ -488,7 +676,7 @@ def test_fetch_macro_china_batch_caches_within_ttl(
             {"month": "202604", "nt_yoy": 0.4, "nt_mom": 0.2},
         ]),
         cn_ppi=_StubDF([
-            {"month": "202604", "ppi_yoy": -2.5},
+            {"month": "202604", "ppi_yoy": -2.5, "ppi_mom": -0.1},
         ]),
         daily_basic=_StubDF([]),  # too few samples → no L10.val row, fine
         moneyflow_ind_ths=_StubDF([

@@ -53,6 +53,7 @@ from mvp20.fingerprint import (  # noqa: E402
     is_refresh_triggered,
 )
 from mvp20.storage import read_hot_snapshot  # noqa: E402
+from mvp20.schema_validator import DP_SCHEMA, _type_name  # noqa: E402
 
 
 GOVERNANCE_PATH = ROOT / "config" / "llm_field_governance.yaml"
@@ -120,6 +121,8 @@ def _is_fillable(
     event_driven_dp_ids: frozenset[str] | None = None,
     db_path: Path | None = None,
     ts_code: str | None = None,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> tuple[bool, str | None]:
     """Decide whether this node should be included in the codex prompt.
 
@@ -147,6 +150,13 @@ def _is_fillable(
       8. ``data_status == Optionality`` with non-empty value → skip
          (preserved by Z1a).
       9. Optional tier filter: governance.model_tier mismatch → skip.
+      10. If ``refresh_baseline_missing`` is false, legacy Known/Inactive
+          nodes that lack ``source_fingerprint_at_fill`` are preserved for
+          audit instead of being re-prompted just to establish a baseline.
+      11. If ``preserve_unknown_no_local_evidence`` is true, an Unknown node
+          previously filled as ``missing_reason: no_local_evidence`` is also
+          fingerprint-gated so unchanged local evidence is not sent back to
+          the LLM repeatedly.
     """
 
     dp_id = node.get("dp_id") or ""
@@ -168,8 +178,21 @@ def _is_fillable(
         if entry_tier != model_tier_filter:
             return False, f"tier_mismatch_{entry_tier}"
 
-    # Rule 3: Unknown → fill
+    # Rule 3: Unknown → fill, unless a previous no-evidence fill already
+    # established a current source fingerprint for this exact source state.
     if status == "Unknown":
+        if (
+            preserve_unknown_no_local_evidence
+            and node.get("missing_reason") == "no_local_evidence"
+        ):
+            if db_path is None or ts_code is None:
+                return False, "preserved_unknown_no_local_evidence:no_db_context"
+            need_refresh, reason = is_refresh_triggered(
+                node, governance_entry, db_path, ts_code
+            )
+            if need_refresh:
+                return True, f"refresh:{reason}"
+            return False, f"preserved_unknown_no_local_evidence:{reason}"
         return True, None
 
     # Rule 4: Optionality with empty value → fill
@@ -209,6 +232,8 @@ def _is_fillable(
             node, governance_entry, db_path, ts_code
         )
         if need_refresh:
+            if reason == "fingerprint_baseline_missing" and not refresh_baseline_missing:
+                return False, "inactive_event_baseline_missing_preserved"
             return True, f"refresh:{reason}"
         return False, f"inactive_event_no_change:{reason}"
 
@@ -220,6 +245,8 @@ def _is_fillable(
             node, governance_entry, db_path, ts_code
         )
         if need_refresh:
+            if reason == "fingerprint_baseline_missing" and not refresh_baseline_missing:
+                return False, "preserved_known:fingerprint_baseline_missing"
             return True, f"refresh:{reason}"
         return False, f"preserved_known:{reason}"
 
@@ -239,6 +266,8 @@ def _filter_nodes(
     model_tier_filter: str = "all",
     db_path: Path | None = None,
     ts_code: str | None = None,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> tuple[list[dict], list[tuple[str, str]]]:
     """Apply governance + status filter to a node list.
 
@@ -267,6 +296,8 @@ def _filter_nodes(
             event_driven_dp_ids=triggers,
             db_path=db_path,
             ts_code=ts_code,
+            refresh_baseline_missing=refresh_baseline_missing,
+            preserve_unknown_no_local_evidence=preserve_unknown_no_local_evidence,
         )
         if ok:
             fillable.append(node)
@@ -354,8 +385,10 @@ CLOSED_LOOP_RULES = """## 严格闭环规则（X5 closed-loop — 必读 / 必�
 
 本任务**严格**禁止访问外部网络。codex 只能用以下 3 类信息：
 
-1. **本地 SQLite dp_id** —— 由本 prompt 在下方 inline 注入（包括 X5 新增的 3 条文本披露：
-   `L1.company.main_business` / `L9.disclosure.qa_recent` / `L8.gov.management_table`）。
+1. **本地 SQLite dp_id** —— 由本 prompt 在下方 inline 注入（包括 Tushare
+   本地事实：`L1.company.main_business` / `L9.disclosure.qa_recent` /
+   `L8.gov.management_table`，以及已落库的 `L9.disclosure.annual_report`
+   章节摘录、公告/问答/主营/管理层等 `tushare:*` source 行）。
 2. **本地 overlay yaml** —— 本任务编辑文件 + 已填的行业/公司 overlay。
 3. **行业框架推断** —— 行业级常识（如"半导体行业上行周期 24 个月"），但
    `confidence` 必须 ≤ 0.5 且 `evidence_quality: low`，标 `kind: industry_inference`。
@@ -367,9 +400,13 @@ CLOSED_LOOP_RULES = """## 严格闭环规则（X5 closed-loop — 必读 / 必�
 - 引用 prompt 内没出现过的研报 / 年报 / 新闻
 
 **evidence_sources schema**：仅允许 3 种 kind：
-- `local_dp_id`：`{"kind": "local_dp_id", "dp_id": "...", "excerpt": "..."}`
+- `local_dp_id`：`{"kind": "local_dp_id", "dp_id": "...", "source": "tushare:* 或本地派生源", "excerpt": "..."}`
 - `local_overlay`：`{"kind": "local_overlay", "path": "config/...", "dp_id": "..."}`
 - `industry_inference`：`{"kind": "industry_inference", "framework": "...", "confidence": 0.4}`
+
+`local_dp_id` 可以引用 Tushare/AKShare/FMP 已经写入 `runtime/hot.sqlite` 的本地
+事实，但不能写 `url` 字段；即使原始公告 URL 存在于本地 value 中，也只引用本地
+dp_id、source 和 verbatim excerpt。
 
 找不到本地证据 → `data_status: Unknown` + `missing_reason: "no_local_evidence"`，
 **绝不 hallucinate URL**。
@@ -526,6 +563,139 @@ def _format_fillable_table(
 
 
 # ---------------------------------------------------------------------------
+# Strict output_schema block (C1 hardening). Low-effort codex frequently
+# invented field names / wrong types (101 schema_drift across 8/10 AI_COMPUTE
+# A-shares). Referencing llm_derived_nodes.md by name was not enough — we now
+# inline each fillable dp_id's exact ``DP_SCHEMA`` shape (the same registry the
+# verifier's --check-schema validates against) so the model sees the allowed
+# fields + types right next to the field list.
+# ---------------------------------------------------------------------------
+
+_PROMPT_SCHEMA_GUIDANCE: dict[str, tuple[str, ...]] = {
+    "L1.role.tag": (
+        "标签只写 `value.tags` 列表；不要写 `role` / `category` / `summary` 等额外字段。",
+        "`last_filled_period` 用最近本地事实源期间；只有主营/问答文本时可用 `2026Q1`。",
+    ),
+    "L1.model.tag": (
+        "标签只写 `value.tags` 列表；不要写 `model` / `business_model` / `summary` 等额外字段。",
+        "`last_filled_period` 用最近本地事实源期间；只有主营/问答文本时可用 `2026Q1`。",
+    ),
+    "L1.moat.tags": (
+        "标签只写 `value.tags`，可选 `notes`；护城河弱也填保守标签，不要编造强护城河。",
+        "证据不足时降低 `confidence`，不要用行业常识替代本地公司证据。",
+    ),
+    "L1.stock_attr.tags": (
+        "标签只写 `value.tags`，可选 `notes`；可引用 `L6.path.tag`、收入增速、主营文本。",
+        "只能把 `L6.path.tag` 的文字标签作为证据；不要把 PE/PB 分位、估值倍数、百分位数字写成标签或挂在 `L6.path.tag` 证据下。",
+        "自然语言说明也不要写“未把估值倍数/分位数/百分位写入标签”这类治理提示词；改写为“未使用具体估值数值或相对位置作为标签”。",
+        "不要把估值/主题标签写成顶层字段。",
+    ),
+    "L1.position.growth_rank": (
+        "禁止旧字段：`growth_pct` / `rank_bucket` / `growth_metric` / `value_pct` / `growth_tier` / `rank_label`。",
+        "`rank` 和 `share_pct` 只有本地证据直接披露行业排名/份额时才可填数字；否则必须为 `null`。",
+        "`trend` 只允许 `modest_growth` / `decline` / `mixed`：收入同比正增长写 `modest_growth`，负增长写 `decline`，口径冲突或缺失写 `mixed`。",
+        "无排名/份额直接证据时 `confidence <= 0.52` 且 `evidence_quality: low`；优先引用 `L5.is.revenue_growth` 与 `L5.fina.revenue_yoy`，不要用 `local_overlay` 伪造排名证据。",
+    ),
+    "L3.channel.mix": (
+        "只有年报/本地文本直接披露直销、经销/分销、电商、其他渠道占比，或同一张销售模式表披露可直接映射的收入金额时，才填 `Known`。",
+        "若同表披露直销、经销/分销、电商、其他等销售模式收入金额和可核对合计，可用金额做确定性占比计算；工业模式、其他模式等非标准销售模式归入 `others_pct`，内部抵消不当作渠道模式。",
+        "若披露“销售模式均为直销”或等价表述，可填 direct_pct=100，其余为 0；否则 Unknown/no_local_evidence，四个占比都写 null。",
+        "业务线、客户类型、区域、收入结构不等于渠道结构，不能据此推算渠道占比。",
+        "线上/线下、境内/境外、产品/服务类型也不能映射为 ecommerce/others；除非文本直接披露“电商渠道”或 direct/distributor/ecommerce/other 口径，否则保持 Unknown。",
+        "`value.trend` 不写中文自由文本；仅用短枚举式字符串，例如 `direct_sales_dominant`、`direct_share_up`、`direct_share_slightly_down`、`flat`、`mixed`，无趋势证据写 `null`。",
+        "若 `direct_pct`、`distributor_pct`、`ecommerce_pct`、`others_pct` 全部为 `null`，或节点仍是 Unknown，则 `value.trend` 也必须写 `null`；定性“直销为主/经销为辅”只写在 notes。",
+    ),
+}
+
+
+def _schema_one_line(node: dict) -> str | None:
+    """Compact one-line schema spec for a fillable node, or None.
+
+    Optionality-status nodes are special-cased: the compiler requires the
+    ``value`` to split into ``current_contribution`` + ``future_option_value``
+    (two objects), regardless of what the flat DP_SCHEMA field list says — so
+    we render that contract instead of the flat fields to avoid steering the
+    model into the shape that fails compile.
+    """
+
+    dp_id = node.get("dp_id") or ""
+    if str(node.get("data_status")) == "Optionality":
+        return (
+            "required{current_contribution:dict, future_option_value:dict} "
+            "（Optionality：两个键都必须是对象；当前贡献放 current_contribution，"
+            "催化后期权价值放 future_option_value，各对象内可含 level/factors/"
+            "catalyst_required 等说明字段）"
+        )
+    sch = DP_SCHEMA.get(dp_id)
+    if not sch:
+        # Review #5: a fillable dp_id can be governance-registered without a
+        # DP_SCHEMA entry (34 such slots today). Silently omitting the row
+        # left codex free to invent field names with no validator backstop
+        # (validate_value returns [] for unregistered dp_ids). Emit an
+        # explicit conservative contract instead of no contract.
+        return (
+            "⚠️ 该 dp_id 未注册 DP_SCHEMA（schema_validator 不校验其 value 形状）。"
+            "保守输出：优先沿用 overlay 中该节点既有 value 的字段名与类型；"
+            "若既有 value 为空，用 {notes:str}（中文结论写入 notes）；"
+            "禁止发明新的字段名或复杂嵌套结构。"
+        )
+    parts: list[str] = []
+    req = sch.get("required") or {}
+    opt = sch.get("optional") or {}
+    parts.append(
+        "required{" + ", ".join(f"{k}:{_type_name(v)}" for k, v in req.items()) + "}"
+    )
+    if opt:
+        parts.append(
+            "optional{" + ", ".join(f"{k}:{_type_name(v)}" for k, v in opt.items()) + "}"
+        )
+    # Nested list element schemas: keys named "<field>_item_schema".
+    for key, val in sch.items():
+        if key.endswith("_item_schema") and isinstance(val, dict):
+            base = key[: -len("_item_schema")]
+            parts.append(
+                f"{base}[]=每元素{{"
+                + ", ".join(f"{k}:{_type_name(v)}" for k, v in val.items())
+                + "}"
+            )
+    return "; ".join(parts)
+
+
+def _format_schema_block(nodes: list[dict]) -> list[str]:
+    """Render the strict per-dp_id output_schema enforcement block."""
+
+    rows: list[str] = []
+    for n in nodes:
+        dp_id = n.get("dp_id") or ""
+        spec = _schema_one_line(n)
+        if spec:
+            rows.append(f"- `{dp_id}`: {spec}")
+            for guidance in _PROMPT_SCHEMA_GUIDANCE.get(dp_id, ()):
+                rows.append(f"  - {guidance}")
+    if not rows:
+        return []
+    return [
+        "### 各待填字段 output_schema（强约束 — value 必须严格匹配）",
+        "",
+        "**铁律**：每个 dp_id 的 `value` **只能包含下列字段名**，类型必须匹配。"
+        "**禁止新增 schema 之外的任何字段，禁止改字段类型** —— 额外字段 / 错类型会被 "
+        "`schema_validator` 拒绝、导致节点编译失败。`required` 字段必须出现"
+        "（无数据填 `null`，不要省略也不要换名）；`optional` 字段可省略。",
+        "类型记号：`float|int` = 数字，`str` = 字符串，`null` = JSON null，"
+        "`dict` = JSON 对象，`list` = JSON 数组，`bool` = 布尔。",
+        "自然语言说明（如 `evidence_summary`、`notes`、`missing_reason`）必须使用中文；"
+        "不要输出英文句子。枚举值、dp_id、source 名称、`no_local_evidence` 可保持原格式。",
+        "自然语言说明不要复述 schema 字段名或枚举 key，例如 `rank`、`share_pct`、`trend`、"
+        "`path.tag`、`decline`、`modest_growth`；应改写成中文“排名、份额、趋势、路径标签、下降、温和增长”。",
+        "Optionality 节点（schema 含 `current_contribution` + `future_option_value`）"
+        "的 `value` 必须同时含这两个键、各为对象，**不要写成扁平结构**。",
+        "",
+        *rows,
+        "",
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Fix B (B1) — inline source dp_id values into the prompt so the LLM
 # can quote them verbatim instead of paraphrasing. The A/B test showed
 # codex_low produced ``evidence_sources[kind=local_dp_id]`` with
@@ -541,11 +711,300 @@ def _format_fillable_table(
 _INLINE_VALUE_MAXLEN = 600
 
 
+# ---------------------------------------------------------------------------
+# Industry-level source aggregation (P-fix: industry L0 prompt evidence).
+#
+# Root cause this block addresses
+# --------------------------------
+# An industry-level L0 prompt looks up its ``source_dependencies`` against the
+# ``INDUSTRY:<id>`` sentinel ts_code. But the realtime collectors store those
+# deps in TWO other places, never under ``INDUSTRY:<id>``:
+#
+#   * Per-stock fundamentals/text (``L5.is.*`` / ``L5.bs.*`` / ``L5.cf.*`` /
+#     ``L4.*`` / ``L9.disclosure.qa_recent`` / ``L9.media.social_buzz`` /
+#     ``L1.company.main_business``) are keyed by the constituent ts_code
+#     (``000063.SZ`` …) — 221-328 rows each.
+#   * Market-wide catalyst/macro feeds (``L9.media.report`` /
+#     ``L9.industry.compete_risk`` / ``L9.industry.policy_change`` /
+#     ``L9.macro.*``) are keyed by the ``MARKET:CN`` sentinel — exactly 1 row
+#     each (the shared 财联社 telegraph stream).
+#
+# ``read_hot_snapshot('INDUSTRY:AI_COMPUTE')`` resolves NEITHER (the sentinel
+# fan-out only adds ``MARKET:<market>`` for *real* stock ts_codes via
+# ``_ts_code_to_market``, which returns ``None`` for an ``INDUSTRY:`` key), so
+# every L0 dep rendered as "(missing in SQLite)" and codex correctly refused
+# to fabricate → 27 Unknown / no_local_evidence nodes.
+#
+# The fix: for the industry path, resolve each dep through a tier ladder:
+#   1. industry-sentinel direct hit (already industry-level, e.g.
+#      ``L0.cost.raw_material`` from the akshare commodity fetch),
+#   2. AGGREGATE across the industry's constituents (mean/median + per-member
+#      sample for numeric scalars; per-member latest text for dict/text deps),
+#   3. fall back to the ``MARKET:CN`` sentinel row (market-wide feeds).
+# ---------------------------------------------------------------------------
+
+
+# Deps that are inherently market-wide (single MARKET:<market> sentinel row,
+# no per-constituent fan-out). For an industry prompt these resolve via the
+# MARKET:CN fallback rather than constituent aggregation.
+_MARKET_LEVEL_DEP_PREFIXES = (
+    "L9.media.report",
+    "L9.industry.",
+    "L9.macro.",
+)
+
+# How many constituents to surface verbatim in a per-member sample (keeps the
+# prompt bounded — the aggregate stats already summarise the whole set).
+_INDUSTRY_SAMPLE_N = 6
+
+
+def _load_industry_constituents(industry_id: str, root: Path) -> list[str]:
+    """Return the constituent ts_codes whose ``industry_ids`` include
+    ``industry_id`` (read from ``config/mvp20.universe.yaml``).
+
+    Mirrors the universe-read pattern used in ``mvp20.audit`` /
+    ``mvp20.onboard``. Returns ``[]`` on missing / unparseable universe so
+    the caller degrades gracefully (deps just render "(missing …)" as before).
+    """
+
+    universe_path = root / "config" / "mvp20.universe.yaml"
+    if not universe_path.exists():
+        return []
+    try:
+        data = yaml.safe_load(universe_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return []
+    out: list[str] = []
+    for c in data.get("constituents") or []:
+        ts = c.get("ts_code")
+        if not ts:
+            continue
+        ids = c.get("industry_ids") or []
+        if isinstance(ids, list) and industry_id in [str(i) for i in ids]:
+            out.append(str(ts))
+    return out
+
+
+def _is_market_level_dep(dep: str) -> bool:
+    return any(
+        dep == p or dep.startswith(p) for p in _MARKET_LEVEL_DEP_PREFIXES
+    )
+
+
+def _primary_numeric(value: Any) -> tuple[float, str] | None:
+    """Extract the headline numeric from a source value dict, if any.
+
+    Returns ``(number, field_name)`` or ``None``. Recognises the value
+    shapes the fundamentals collectors emit:
+      * ``{"scalar": N, "unit": ...}``   → most L5.is.* / L5.cf.* / L5.bs.*
+      * ``{"yoy_pct": N, ...}``          → L5.is.revenue_growth
+      * ``{"sga_rd_ratio_revenue": N}``  → L5.is.sga_rd
+    Falls back to the first finite numeric leaf so unknown-but-numeric deps
+    still aggregate instead of silently degrading to a text list.
+    """
+
+    if not isinstance(value, dict):
+        return None
+    for key in ("scalar", "yoy_pct", "sga_rd_ratio_revenue", "ratio", "value"):
+        v = value.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            f = float(v)
+            if f == f:  # not NaN
+                return f, key
+    for k, v in value.items():
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            f = float(v)
+            if f == f:
+                return f, k
+    return None
+
+
+def _fmt_num(n: float) -> str:
+    """Compact human number: keep ratios precise, abbreviate large counts."""
+
+    if abs(n) >= 1e8:
+        return f"{n / 1e8:.2f}亿"
+    if abs(n) >= 1e4:
+        return f"{n / 1e4:.2f}万"
+    if abs(n) < 1 and n != 0:
+        return f"{n:.4f}"
+    return f"{n:.2f}"
+
+
+def _aggregate_industry_dep_value(
+    dep: str,
+    constituents: list[str],
+    db_path: Path,
+    *,
+    snapshot_cache: dict[str, dict] | None = None,
+) -> str | None:
+    """Aggregate one source dep across an industry's constituents.
+
+    Reads each constituent's per-stock value (via ``read_hot_snapshot`` so
+    sentinel fan-out still applies per member) and produces an inline-able
+    summary string:
+
+      * Numeric deps → ``n=K members; mean=…; median=…; latest_period=…;
+        members[ts=val,…]`` so the LLM sees the cross-constituent
+        distribution AND can quote an individual member's exact figure.
+      * Text/dict deps → ``n=K members; <ts>: <compact value>; …`` for the
+        first ``_INDUSTRY_SAMPLE_N`` members that have the dep.
+
+    ``snapshot_cache`` memoises ``read_hot_snapshot`` per ts_code so a whole
+    prompt (many deps × the same constituents) reads each member once.
+
+    Returns ``None`` when no constituent has the dep (caller then falls back
+    to the MARKET sentinel / "(missing …)").
+    """
+
+    if not constituents:
+        return None
+
+    # (ts_code, value) for every member that actually has this dep.
+    present: list[tuple[str, Any]] = []
+    for ts in constituents:
+        if snapshot_cache is not None:
+            snap = snapshot_cache.get(ts)
+            if snap is None:
+                snap = read_hot_snapshot(db_path, ts)
+                snapshot_cache[ts] = snap
+        else:
+            snap = read_hot_snapshot(db_path, ts)
+        entry = snap.get(dep)
+        if entry is None:
+            continue
+        present.append((ts, entry.get("value")))
+    if not present:
+        return None
+
+    # Numeric path: aggregate when a majority of members expose a headline
+    # number (defends against a stray numeric leaf in an otherwise-text dep).
+    numerics: list[tuple[str, float, str]] = []
+    periods: set[str] = set()
+    for ts, val in present:
+        pn = _primary_numeric(val)
+        if pn is not None:
+            numerics.append((ts, pn[0], pn[1]))
+        if isinstance(val, dict):
+            p = val.get("period") or val.get("current_period") or val.get(
+                "end_date"
+            )
+            if p:
+                periods.add(str(p))
+
+    if numerics and len(numerics) >= max(2, len(present) // 2):
+        field = numerics[0][2]
+        vals = sorted(v for _, v, _ in numerics)
+        k = len(vals)
+        mean = sum(vals) / k
+        mid = k // 2
+        median = vals[mid] if k % 2 else (vals[mid - 1] + vals[mid]) / 2
+        sample = "; ".join(
+            f"{ts}={_fmt_num(v)}" for ts, v, _ in numerics[:_INDUSTRY_SAMPLE_N]
+        )
+        period_note = (
+            f"; latest_period={sorted(periods)[-1]}" if periods else ""
+        )
+        more = (
+            f"; (+{len(numerics) - _INDUSTRY_SAMPLE_N} more)"
+            if len(numerics) > _INDUSTRY_SAMPLE_N
+            else ""
+        )
+        return (
+            f"[industry-aggregate over {k} constituents] field={field}; "
+            f"mean={_fmt_num(mean)}; median={_fmt_num(median)}; "
+            f"min={_fmt_num(vals[0])}; max={_fmt_num(vals[-1])}{period_note}; "
+            f"members[{sample}{more}]"
+        )
+
+    # Text / dict path: list each member's compact value (capped).
+    parts: list[str] = [
+        f"[industry-aggregate over {len(present)} constituents (text)]"
+    ]
+    for ts, val in present[:_INDUSTRY_SAMPLE_N]:
+        try:
+            vs = json.dumps(val, ensure_ascii=False)
+        except (TypeError, ValueError):
+            vs = str(val)
+        if len(vs) > 180:
+            vs = vs[:180] + "…"
+        parts.append(f"{ts}: {vs}")
+    if len(present) > _INDUSTRY_SAMPLE_N:
+        parts.append(f"(+{len(present) - _INDUSTRY_SAMPLE_N} more constituents)")
+    return " ｜ ".join(parts)
+
+
+def _resolve_dep_value_text(
+    dep: str,
+    snapshot: dict,
+    *,
+    industry_constituents: list[str] | None,
+    db_path: Path,
+    snapshot_cache: dict[str, dict] | None = None,
+) -> str:
+    """Resolve one source dep to an inline value string.
+
+    Company path (``industry_constituents is None``): legacy behaviour —
+    direct snapshot lookup, "(missing in SQLite)" when absent.
+
+    Industry path: tier ladder — industry-sentinel direct hit → constituent
+    aggregate → MARKET:CN sentinel fallback → "(missing …)".
+    """
+
+    entry = snapshot.get(dep)
+    if entry is not None:
+        v = entry.get("value")
+        try:
+            value_str = json.dumps(v, ensure_ascii=False)
+        except (TypeError, ValueError):
+            value_str = str(v)
+        if len(value_str) > _INLINE_VALUE_MAXLEN:
+            value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+        return value_str
+
+    # Company prompt: no aggregation, preserve original semantics.
+    if industry_constituents is None:
+        return "(missing in SQLite)"
+
+    # Industry prompt — market-wide feeds resolve via MARKET:CN; everything
+    # else aggregates across constituents.
+    if not _is_market_level_dep(dep):
+        agg = _aggregate_industry_dep_value(
+            dep, industry_constituents, db_path, snapshot_cache=snapshot_cache
+        )
+        if agg is not None:
+            value_str = agg
+            if len(value_str) > _INLINE_VALUE_MAXLEN:
+                value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+            return value_str
+
+    # MARKET:CN sentinel fallback (market-wide catalyst / macro deps, or a
+    # per-stock dep that no constituent happened to carry).
+    market_snap = read_hot_snapshot(db_path, "MARKET:CN", include_sentinels=False)
+    m_entry = market_snap.get(dep)
+    if m_entry is not None:
+        v = m_entry.get("value")
+        try:
+            value_str = json.dumps(v, ensure_ascii=False)
+        except (TypeError, ValueError):
+            value_str = str(v)
+        status = m_entry.get("data_status")
+        prefix = f"[MARKET:CN, status={status}] " if status else "[MARKET:CN] "
+        value_str = prefix + value_str
+        if len(value_str) > _INLINE_VALUE_MAXLEN:
+            value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+        return value_str
+
+    return "(missing in SQLite)"
+
+
 def _build_source_value_table(
     fillable_nodes: list[dict],
     governance: dict,
     ts_code: str,
     db_path: Path,
+    *,
+    industry_constituents: list[str] | None = None,
 ) -> list[tuple[str, str, str]]:
     """For each (fillable dp_id, source_dependency) pair, look up the
     current SQLite value and format it for inlining into the prompt.
@@ -554,33 +1013,150 @@ def _build_source_value_table(
     (``INDUSTRY:<id>`` / ``MARKET:<x>``) already in place naturally
     resolves industry/macro-level dependencies for company dp_ids.
 
-    Returns a list of ``(dp_id, source_dp_id, value_text)`` rows. The
-    value text is a compact JSON dump truncated to ``_INLINE_VALUE_MAXLEN``
-    chars. Missing rows surface ``"(missing in SQLite)"`` so codex sees
-    explicitly that no local evidence exists for that dependency — better
-    than silently dropping the row, which would invite hallucination.
+    When ``industry_constituents`` is supplied (industry-level prompt), each
+    dep is resolved through the tier ladder in ``_resolve_dep_value_text``:
+    industry-sentinel direct hit → aggregate across constituents → MARKET:CN
+    fallback. This surfaces REAL evidence for industry L0 fields whose deps
+    are only ever stored per-stock or under MARKET:CN, not under the
+    ``INDUSTRY:<id>`` key the snapshot is read against.
+
+    Returns a list of ``(dp_id, source_dp_id, value_text)`` rows. Missing
+    rows surface ``"(missing in SQLite)"`` so codex sees explicitly that no
+    local evidence exists for that dependency — better than silently dropping
+    the row, which would invite hallucination.
     """
 
     snapshot = read_hot_snapshot(db_path, ts_code) if db_path.exists() else {}
+    # Memoise per-constituent snapshots so a whole industry prompt reads each
+    # member once across all (dep × constituent) aggregations.
+    snapshot_cache: dict[str, dict] = {}
     rows: list[tuple[str, str, str]] = []
     for node in fillable_nodes:
         dp_id = node.get("dp_id") or ""
         gov_entry = (governance.get("data_points") or {}).get(dp_id) or {}
         deps = gov_entry.get("source_dependencies") or []
         for dep in deps:
-            entry = snapshot.get(dep)
-            if entry is None:
-                value_str = "(missing in SQLite)"
-            else:
-                v = entry.get("value")
-                try:
-                    value_str = json.dumps(v, ensure_ascii=False)
-                except (TypeError, ValueError):
-                    value_str = str(v)
-                if len(value_str) > _INLINE_VALUE_MAXLEN:
-                    value_str = value_str[: _INLINE_VALUE_MAXLEN] + "...(truncated)"
+            value_str = _resolve_dep_value_text(
+                dep,
+                snapshot,
+                industry_constituents=industry_constituents,
+                db_path=db_path,
+                snapshot_cache=snapshot_cache,
+            )
             rows.append((dp_id, dep, value_str))
     return rows
+
+
+# A1 Phase: which annual-report sections each fillable dp_id should see.
+# Conservative — only fields where the AR章节 actually adds signal beyond
+# what L9.disclosure.qa_recent / L1.company.main_business already gives.
+_AR_SECTION_BY_DP_ID: dict[str, tuple[str, ...]] = {
+    "L3.customer.segment_mix": ("customer_segment", "revenue_structure"),
+    "L3.channel.mix": ("revenue_structure", "customer_segment"),
+    "L3.region.tier_mix": ("region_distribution", "revenue_structure"),
+    "L3.product.lifecycle": ("business_overview", "revenue_structure"),
+    "L2.segment.industry_exposure": ("revenue_structure", "customer_segment"),
+    "L2.segment.compete_landscape": ("business_overview", "risk_disclosure"),
+    "L2.segment.business_risk": ("risk_disclosure",),
+    "L4.eff.conversion_retention": ("customer_segment",),
+    "L4.share.customer_channel": ("customer_segment", "revenue_structure"),
+    "L1.position.channel_edge": ("revenue_structure", "business_overview"),
+    "L1.position.market_share": ("business_overview", "revenue_structure"),
+    "L1.position.brand": ("business_overview",),
+    "L1.position.tech_barrier": ("business_overview", "risk_disclosure"),
+    "L3.customer.solvency": ("customer_segment",),
+    "L3.channel.overseas": ("region_distribution", "revenue_structure"),
+    "L3.region.domestic_overseas": ("region_distribution", "revenue_structure"),
+    "L3.region.fx_geo": ("region_distribution", "risk_disclosure"),
+    "L3.region.key_risk": ("region_distribution", "risk_disclosure"),
+    "L4.cost.rent_energy_logistics": ("business_overview", "risk_disclosure"),
+    "L4.eff.store_labor": ("business_overview", "revenue_structure"),
+    "L4.price.asp_aov_arpu": ("revenue_structure",),
+    "L4.price.subscription": ("business_overview", "revenue_structure"),
+    "L4.share.market": ("business_overview", "revenue_structure"),
+    "L4.volume.orders": ("customer_segment", "revenue_structure"),
+    "L4.volume.users": ("customer_segment", "revenue_structure"),
+}
+
+
+def _build_annual_report_block(
+    fillable_nodes: list[dict],
+    realtime: dict,
+) -> list[str]:
+    """A1 Phase: when ``L9.disclosure.annual_report`` exists in the snapshot
+    AND at least one fillable dp_id maps to AR sections, surface the relevant
+    section excerpts so codex can quote them verbatim.
+
+    Returns markdown lines (possibly empty). Lives between the source-value
+    table and the preserved list so codex sees AR excerpts as the strongest
+    text-evidence channel.
+    """
+
+    ar_entry = realtime.get("L9.disclosure.annual_report")
+    if not ar_entry:
+        return []
+
+    ar_value = ar_entry.get("value") or {}
+    sections = ar_value.get("sections") or {}
+    if not isinstance(sections, dict) or not sections:
+        return []
+
+    # Which dp_ids will actually use AR sections? Only emit those rows.
+    relevant: dict[str, set[str]] = {}
+    for n in fillable_nodes:
+        dp_id = n.get("dp_id") or ""
+        wanted = _AR_SECTION_BY_DP_ID.get(dp_id)
+        if not wanted:
+            continue
+        relevant[dp_id] = set(wanted)
+    if not relevant:
+        return []
+
+    used_sections: set[str] = set()
+    for s in relevant.values():
+        used_sections.update(s)
+
+    ar_year = ar_value.get("ar_year")
+    src = ar_entry.get("source", "")
+
+    parts: list[str] = []
+    parts.append(
+        f"### 年报章节摘录（{ar_year} 年报）— A1 inline 文本证据"
+    )
+    parts.append("")
+    parts.append(
+        f"以下章节来自本地 SQLite dp_id `L9.disclosure.annual_report` (source={src})。"
+        "这些章节包含具体客户结构 / 收入构成 / 区域分布 / 业务概览 / 风险因素披露 — "
+        "**填充以下 D bucket / 公司画像字段时，必须从对应章节抽取证据**：（详见下表）。"
+    )
+    parts.append("")
+    parts.append("| dp_id | 应引用的年报章节 |")
+    parts.append("|---|---|")
+    for dp_id in sorted(relevant.keys()):
+        section_names = ", ".join(sorted(relevant[dp_id]))
+        parts.append(f"| `{dp_id}` | {section_names} |")
+    parts.append("")
+
+    # Render each used section's text verbatim
+    for sec_name in sorted(used_sections):
+        text = (sections.get(sec_name) or "").strip()
+        if not text:
+            continue
+        parts.append(f"#### 章节：`{sec_name}`（{len(text)} 字符）")
+        parts.append("")
+        parts.append("```")
+        parts.append(text)
+        parts.append("```")
+        parts.append("")
+
+    parts.append(
+        "**写入 `evidence_sources` 时**：使用 `kind=local_dp_id`，"
+        "`dp_id=L9.disclosure.annual_report`，`source=annual_report:cninfo:*`，"
+        "`excerpt` 从上面章节文本里 verbatim 复制对应数字 / 描述。"
+        "**不要写 `url` 字段**；closed-loop verifier 会把任何 http(s) 字段当作 web evidence。"
+    )
+    parts.append("")
+    return parts
 
 
 def _format_source_value_section(
@@ -608,8 +1184,9 @@ def _format_source_value_section(
         "以及对应字段当前在 SQLite 的完整 value 文本。"
         "**强制规则**：你写 `evidence_sources` 时，"
         "`kind=local_dp_id` 的 `excerpt` 字段必须从对应 source 的 value 文本里"
-        " **verbatim 复制片段**（保留数字格式 / 单位 / 引号等）。"
-        "禁止 paraphrase，禁止改数字格式。"
+        " **verbatim 复制语义值片段**（保留数字格式 / 单位）。"
+        "不要复制 JSON key 名、外层引号、冒号或 `\\n` 转义符；"
+        "多行文本请写成真实换行。禁止 paraphrase，禁止改数字格式。"
     )
     parts.append("")
     parts.append(
@@ -645,6 +1222,20 @@ def _format_preserved_section(preserved: list[tuple[str, str]]) -> list[str]:
     return parts
 
 
+def _format_company_verification_boundary(industry_id: str, ts_code: str) -> list[str]:
+    """Render self-check limits for company-level LLM subprocesses."""
+
+    overlay_path = f"config/stock_overlays/{industry_id}/{ts_code}.yaml"
+    return [
+        "**自检边界（节省时间 / 降低噪音）**：",
+        "",
+        "- 不要运行 `scripts/verify_overlay_closed_loop.py` 的默认全量扫描，也不要对整个行业目录扫描；外层 batch runner 会统一跑全量 verifier、`validate-overlays` 和 pytest。",
+        f"- 如需在子流程内自检，只检查当前目标文件 `{overlay_path}`：把它复制到 `/tmp` 下只含这一只股票的临时 `stock_overlays/{industry_id}/` 目录，再用 `--stock-overlays-dir` 指向该临时单文件目录。",
+        "- 子流程自检必须保持只读；不要因为历史 soft warning 修改 preserved/排除字段。",
+        "",
+    ]
+
+
 def build_industry_prompt(
     industry_id: str,
     *,
@@ -652,6 +1243,8 @@ def build_industry_prompt(
     model_tier_filter: str = "all",
     governance: dict | None = None,
     include_source_values: bool = True,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> str:
     """Build a prompt for filling L0 fields in an industry_overlay file."""
 
@@ -677,6 +1270,8 @@ def build_industry_prompt(
         model_tier_filter=model_tier_filter,
         db_path=db_path,
         ts_code=industry_ts_code,
+        refresh_baseline_missing=refresh_baseline_missing,
+        preserve_unknown_no_local_evidence=preserve_unknown_no_local_evidence,
     )
     preserved_l0 = _preserved_dp_ids(nodes, governance, layer_prefix="L0.")
 
@@ -694,27 +1289,22 @@ def build_industry_prompt(
     parts.append("")
     parts.append(_render_evidence_rules(fillable_l0, governance).rstrip())
     parts.append("")
-    parts.append("## 输入文件（必读）")
+    parts.append("## 本地上下文（已内联优先，必要时才打开文件）")
     parts.append("")
     parts.append(
-        "1. **`docs/codex/codex_fill_guide.md`** — 总指南，字段语义 / 状态机 / 不要做的事"
+        "1. **本 prompt 已内联的 output_schema / source value / 指纹表** — 最高优先级"
     )
-    parts.append("2. **`图谱设计.md`** — v2 spec 12 层")
+    parts.append("2. **`config/industry_overlays/{0}.yaml`** — 该行业 overlay，也是你要编辑的文件".format(industry_id))
     parts.append(
-        "3. **`docs/data_sources/llm_derived_nodes.md`** Section 3 — 行业级 L0 字段的 prompt 模板 + output_schema"
-    )
-    parts.append(
-        "4. **`config/industry_graphs/{0}.yaml`** — 该行业的因果图，含已填的行业层 priors（state_probabilities / valuation_mix / tail_risk）".format(
+        "3. **`config/industry_graphs/{0}.yaml`** — 该行业的因果图，仅作行业层上下文".format(
             industry_id
         )
     )
     parts.append(
-        "5. **`config/industry_overlays/{0}.yaml`** — **你要编辑的文件**".format(
-            industry_id
-        )
+        "4. **`config/llm_field_governance.yaml`** — governance；prompt 已摘取本次相关字段"
     )
     parts.append(
-        "6. **`config/llm_field_governance.yaml`** — governance（route / model_tier / refresh_trigger / source_dependencies）"
+        "不要为了找 schema 再读旧 docs 或历史 overlay 样本；如需打开文件，只打开本任务列出的本地文件。"
     )
     parts.append("")
 
@@ -769,6 +1359,7 @@ def build_industry_prompt(
         )
     )
     parts.append("")
+    parts.extend(_format_schema_block(fillable_l0))
     parts.append("#### 节点元信息")
     parts.append("")
     for n in fillable_l0:
@@ -781,10 +1372,16 @@ def build_industry_prompt(
     parts.append("")
 
     # Fix B (B1): inline upstream SQLite values so codex can quote them
-    # verbatim. Industry-level ts_code is the INDUSTRY:<id> sentinel.
+    # verbatim. Industry-level ts_code is the INDUSTRY:<id> sentinel; the
+    # L0 deps are stored per-constituent (L5.*/L9.disclosure.*/…) or under
+    # MARKET:CN (L9.media.report/L9.industry.*), never under INDUSTRY:<id>.
+    # Passing the universe constituents lets _build_source_value_table
+    # AGGREGATE per-constituent evidence + fall back to MARKET:CN.
     if include_source_values:
+        constituents = _load_industry_constituents(industry_id, root)
         source_rows = _build_source_value_table(
             fillable_l0, governance, industry_ts_code, db_path,
+            industry_constituents=constituents,
         )
         parts.extend(_format_source_value_section(source_rows))
 
@@ -849,6 +1446,8 @@ def build_company_prompt(
     model_tier_filter: str = "all",
     governance: dict | None = None,
     include_source_values: bool = True,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> str:
     """Build a prompt for filling L1-L5 fields in a company stock_overlay."""
 
@@ -874,6 +1473,8 @@ def build_company_prompt(
         model_tier_filter=model_tier_filter,
         db_path=db_path,
         ts_code=ts_code,
+        refresh_baseline_missing=refresh_baseline_missing,
+        preserve_unknown_no_local_evidence=preserve_unknown_no_local_evidence,
     )
     preserved_company = _preserved_dp_ids(
         nodes, governance, layer_exclude=("L0.",)
@@ -889,21 +1490,20 @@ def build_company_prompt(
     parts.append("")
     parts.append(_render_evidence_rules(fillable_company, governance).rstrip())
     parts.append("")
-    parts.append("## 输入文件（必读）")
+    parts.append("## 本地上下文（已内联优先，必要时才打开文件）")
     parts.append("")
-    parts.append("1. **`docs/codex/codex_fill_guide.md`** — 总指南")
-    parts.append("2. **`图谱设计.md`** — v2 spec")
+    parts.append("1. **本 prompt 已内联的 output_schema / source value / 年报摘录 / 指纹表** — 最高优先级")
     parts.append(
-        "3. **`docs/data_sources/llm_derived_nodes.md`** Section 4 — 公司级字段 prompt + output_schema"
+        f"2. **`config/stock_overlays/{industry_id}/{ts_code}.yaml`** — **你要编辑的文件**"
     )
     parts.append(
-        f"4. **`config/industry_overlays/{industry_id}.yaml`** — 该行业 overlay 已填的 L0 上下文（作为公司判断的输入参考）"
+        f"3. **`config/industry_overlays/{industry_id}.yaml`** — 行业 overlay L0 上下文"
     )
     parts.append(
-        f"5. **`config/stock_overlays/{industry_id}/{ts_code}.yaml`** — **你要编辑的文件**"
+        "4. **`config/llm_field_governance.yaml`** — governance；prompt 已摘取本次相关字段"
     )
     parts.append(
-        "6. **`config/llm_field_governance.yaml`** — governance（route / model_tier / refresh_trigger / source_dependencies）"
+        "不要为了找 schema 再读旧 docs 或历史 overlay 样本；如需打开文件，只打开本任务列出的本地文件。"
     )
     parts.append("")
 
@@ -1027,6 +1627,7 @@ def build_company_prompt(
         )
     )
     parts.append("")
+    parts.extend(_format_schema_block(fillable_company))
     parts.append("#### 按层分组")
     parts.append("")
     by_layer: dict[str, list[dict]] = {}
@@ -1056,15 +1657,44 @@ def build_company_prompt(
         )
         parts.extend(_format_source_value_section(source_rows))
 
+    # A1 Phase: when L9.disclosure.annual_report exists in realtime,
+    # inline the relevant section excerpts for D-bucket / company-portrait
+    # fields so codex has real text evidence (not just qa_recent snippets).
+    parts.extend(_build_annual_report_block(fillable_company, realtime))
+
     parts.extend(_format_preserved_section(preserved_company))
 
     parts.append("## 任务")
     parts.append("")
     parts.append(f"编辑 `config/stock_overlays/{industry_id}/{ts_code}.yaml`：")
     parts.append("")
+    parts.append("**操作边界（防 schema drift）**：")
+    parts.append("")
     parts.append(
-        "对上面 N 条节点，按 `llm_derived_nodes.md` Section 4 各 dp_id 的 "
-        "`output_schema` 输出 `value` 字段。判断时要参考："
+        "- 不要用 `rg` / `grep` 搜索其它 overlay 样本来模仿字段形状；历史 overlay "
+        "可能包含旧 schema，本 prompt 下方的 output_schema 才是最高优先级。"
+    )
+    parts.append(
+        "- 除非本 prompt 明确缺证据，不要再阅读 `docs/data_sources/llm_derived_nodes.md` "
+        "或旧审计/旧 patch；这里已经内联了本次需要的 schema、source value 和年报摘录。"
+    )
+    parts.append(
+        "- 只生成并应用本次待填 dp_id 的 patch；不要改 preserved/排除字段，也不要顺手修其它股票。"
+    )
+    parts.append("")
+    parts.append(
+        "**强制编辑方式**：不要用宽上下文 `apply_patch` 直接改 overlay。"
+        "同一文件中很多 node 块字段布局相同，容易误命中相邻 dp_id。"
+        "请先生成只含本次待填 dp_id 的 YAML patch（顶层 `nodes:`，每项含 `dp_id`），"
+        "再运行 `scripts/apply_yaml_patch.py --strict-schema config/stock_overlays/"
+        f"{industry_id}/{ts_code}.yaml <patch-file>` 按 dp_id 合并。"
+        "应用后必须用结构 diff 确认只改了本 prompt 列出的 dp_id。"
+    )
+    parts.append("")
+    parts.extend(_format_company_verification_boundary(industry_id, ts_code))
+    parts.append(
+        "对上面 N 条节点，按本 prompt 已内联的 output_schema 输出 `value` 字段。"
+        "判断时要参考："
     )
     parts.append("")
     parts.append("1. 已注入的财务/估值数据（事实背景）")
@@ -1086,6 +1716,37 @@ def build_company_prompt(
     parts.append(
         "- Optionality 字段（如 L2.newbiz.*）→ 填 `value.current_contribution` 或 "
         "`value.future_option_value`，保留 `data_status: Optionality`"
+    )
+    parts.append(
+        "- `evidence_quality` 是顶层字符串枚举，只能写 `low` / `medium` / `high`；"
+        "禁止写 0.7、0.55 等数字。`confidence` 才是 0-1 数值。"
+    )
+    parts.append(
+        "- `value.evidence_summary`、`value.notes`、`missing_reason` 等自然语言说明必须使用中文；"
+        "不要输出英文句子。枚举值、dp_id、source 名称、`no_local_evidence` 可保持原格式。"
+    )
+    parts.append(
+        "- 自然语言说明不要复述 schema 字段名或枚举 key，例如 `rank`、`share_pct`、`trend`、"
+        "`path.tag`、`decline`、`modest_growth`；应改写成中文“排名、份额、趋势、路径标签、下降、温和增长”。"
+    )
+    parts.append(
+        "- `L3.channel.mix` 必须有直接披露的直销/经销/电商/其他渠道占比才可填 "
+        "`Known`；如果同一张年报销售模式表披露直销、经销/分销、电商、其他等"
+        "可直接映射模式的收入金额和可核对合计，可用金额做确定性占比计算；"
+        "工业模式、其他模式等非标准销售模式归入 `others_pct`，内部抵消不当作渠道模式。"
+        "如果只有业务线、客户结构、区域或收入结构，而没有这些渠道占比或销售模式金额，"
+        "或仅有线上/线下、境内/境外、产品/服务类型结构，"
+        "保持 `status/data_status: Unknown`、`missing_reason: no_local_evidence`、"
+        "`evidence_sources: []`，并按 schema 写四个占比 `null`。"
+    )
+    parts.append(
+        "- `L1.stock_attr.tags` 可引用 `L6.path.tag` 的文字标签（如估值扩张/估值修复），"
+        "但不要把 PE/PB 分位、估值倍数、百分位数字写成 `value.tags`，也不要把这些数字"
+        "挂在 `L6.path.tag` evidence excerpt 下。"
+    )
+    parts.append(
+        "- `L1.stock_attr.tags.value.evidence_summary/notes` 也不要写“未把估值倍数/"
+        "分位数/百分位写入标签”这类治理提示词；改写为“未使用具体估值数值或相对位置作为标签”。"
     )
     parts.append("- **不要 hallucinate** — 数字必须有出处")
     parts.append("")
@@ -1110,6 +1771,8 @@ def build_list_only_report(
     root: Path = ROOT,
     model_tier_filter: str = "all",
     governance: dict | None = None,
+    refresh_baseline_missing: bool = True,
+    preserve_unknown_no_local_evidence: bool = False,
 ) -> str:
     """Return a compact dry-run summary of which dp_ids would be filled."""
 
@@ -1142,6 +1805,8 @@ def build_list_only_report(
         model_tier_filter=model_tier_filter,
         db_path=db_path,
         ts_code=scope_ts_code,
+        refresh_baseline_missing=refresh_baseline_missing,
+        preserve_unknown_no_local_evidence=preserve_unknown_no_local_evidence,
     )
 
     lines: list[str] = []
@@ -1240,6 +1905,29 @@ def main() -> int:
             "legacy path; use only when comparing prompt sizes)."
         ),
     )
+    parser.add_argument(
+        "--preserve-known-baseline-missing",
+        dest="refresh_baseline_missing",
+        action="store_false",
+        default=True,
+        help=(
+            "Preserve Known / event-driven Inactive nodes whose only refresh "
+            "reason is missing source_fingerprint_at_fill. This avoids "
+            "re-prompting legacy LLM content just to establish a fingerprint "
+            "baseline; true source_changed refreshes still enter the prompt."
+        ),
+    )
+    parser.add_argument(
+        "--preserve-unknown-no-local-evidence",
+        action="store_true",
+        help=(
+            "Preserve Unknown nodes previously filled as "
+            "missing_reason=no_local_evidence when their source fingerprint "
+            "is unchanged. This prevents repeated LLM calls for already "
+            "audited no-evidence cases; true source_changed refreshes still "
+            "enter the prompt."
+        ),
+    )
     args = parser.parse_args()
 
     if args.list_only:
@@ -1247,6 +1935,8 @@ def main() -> int:
             args.industry,
             args.ts_code,
             model_tier_filter=args.model_tier,
+            refresh_baseline_missing=args.refresh_baseline_missing,
+            preserve_unknown_no_local_evidence=args.preserve_unknown_no_local_evidence,
         )
     elif args.ts_code:
         prompt = build_company_prompt(
@@ -1254,12 +1944,16 @@ def main() -> int:
             args.ts_code,
             model_tier_filter=args.model_tier,
             include_source_values=args.include_source_values,
+            refresh_baseline_missing=args.refresh_baseline_missing,
+            preserve_unknown_no_local_evidence=args.preserve_unknown_no_local_evidence,
         )
     else:
         prompt = build_industry_prompt(
             args.industry,
             model_tier_filter=args.model_tier,
             include_source_values=args.include_source_values,
+            refresh_baseline_missing=args.refresh_baseline_missing,
+            preserve_unknown_no_local_evidence=args.preserve_unknown_no_local_evidence,
         )
 
     if args.out:

@@ -88,7 +88,7 @@ VALID_CAPABILITIES: frozenset[str] = frozenset(
         # Round 4 (FMP audit — uniquely-FMP useful capabilities that
         # complement priors.valuation_mix and risk paths)
         "dcf_valuation",           # FMP /discounted-cash-flow + levered DCF
-        "treasury_rates",          # FMP /treasury — risk-free rate for DCF / Sharpe
+        "treasury_rates",          # FMP /stable/treasury-rates — risk-free rate for DCF / Sharpe
         "corporate_actions",       # FMP /historical-stock-split + M&A history
         "esg_score",               # FMP /esg-environmental-social-governance-data
         "government_trading",      # FMP /senate-trading + /house-disclosure (alpha edge)

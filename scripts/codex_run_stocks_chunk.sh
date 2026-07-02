@@ -20,7 +20,17 @@ cd "$ROOT"
 
 PYTHON=".venv/bin/python"
 PROMPT_DIR=/tmp/codex_prompts
+PROMPT_FLAGS="${PROMPT_FLAGS:---preserve-known-baseline-missing --preserve-unknown-no-local-evidence}"
+MODEL_TIER="${MODEL_TIER:-all}"
+A_SHARE_ONLY="${A_SHARE_ONLY:-false}"
 mkdir -p "$PROMPT_DIR"
+
+is_a_share_ts_code() {
+  case "$1" in
+    *.SH|*.SZ|*.BJ) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 DIR="config/stock_overlays/$IND"
 if [ ! -d "$DIR" ]; then
@@ -35,9 +45,12 @@ fi
 
 for f in $LIST; do
   TS=$(basename "$f" .yaml)
+  if [ "$A_SHARE_ONLY" = true ] && ! is_a_share_ts_code "$TS"; then
+    continue
+  fi
   OUT="$PROMPT_DIR/stock_${IND}_${TS}.md"
-  $PYTHON scripts/codex_prompt_gen.py --industry "$IND" --ts-code "$TS" --out "$OUT" || continue
-  if grep -q "✅ 已全部填完" "$OUT"; then
+  $PYTHON scripts/codex_prompt_gen.py --industry "$IND" --ts-code "$TS" --model-tier "$MODEL_TIER" $PROMPT_FLAGS --out "$OUT" || continue
+  if grep -q "✅ 已全部填完\|✅ 没有可填字段\|没有可填字段" "$OUT"; then
     echo "[$ORDER $(date +%H:%M:%S)] ✓ skip $IND/$TS (filled)"
     continue
   fi

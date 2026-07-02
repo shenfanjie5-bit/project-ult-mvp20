@@ -107,6 +107,24 @@ def test_closed_loop_with_local_only_is_ok() -> None:
     assert result["errors"] == []
 
 
+def test_closed_loop_with_local_tushare_fact_is_ok() -> None:
+    """Tushare rows are closed-loop evidence when cited as local_dp_id."""
+
+    gov = _governance({"L3.channel.mix": "cheap_extract"})
+    node = _node(
+        "L3.channel.mix",
+        evidence=[{
+            "kind": "local_dp_id",
+            "dp_id": "L9.disclosure.qa_recent",
+            "source": "tushare:irm_qa_sz",
+            "excerpt": "公司渠道以直销为主，经销为辅。",
+        }],
+    )
+    result = v.scan_node(node, gov)
+    assert result["status"] == "ok"
+    assert result["errors"] == []
+
+
 def test_web_analysis_with_complete_triad_is_ok() -> None:
     """Test #3: web_analysis tier with url+checksum+fetched_at → ok."""
 
@@ -396,3 +414,54 @@ def test_auto_demote_does_not_touch_web_warnings(tmp_path: Path) -> None:
     # Re-read: data_status untouched
     out = yaml.safe_load((industry_dir / "X.yaml").read_text())
     assert out["nodes"][0]["data_status"] == "Known"
+
+
+# ---------------------------------------------------------------------------
+# _decode_value_json — CJK excerpt matching (regression for the --check-excerpt
+# bug where Chinese annual-report / IR citations false-failed because SQLite
+# stores value_json ascii-escaped and PDF section text carries embedded
+# newlines).
+# ---------------------------------------------------------------------------
+
+
+def test_decode_value_json_decodes_ascii_escaped_cjk() -> None:
+    import json
+
+    # realtime_current rows are written with ensure_ascii=True (json default),
+    # so CJK lands as \uXXXX. The verifier must decode before substring match.
+    raw = json.dumps({"sections": {"risk": "汇率波动的风险"}}, ensure_ascii=True)
+    assert "\\u" in raw  # precondition: the stored form really is escaped
+    decoded = v._decode_value_json(raw)
+    assert "汇率波动的风险" in decoded
+    # the exact path the excerpt check uses
+    assert v._normalize_text("汇率波动的风险") in v._normalize_text(decoded)
+
+
+def test_decode_value_json_newline_in_cjk_does_not_break_match() -> None:
+    import json
+
+    # PDF text extraction routinely injects newlines/spaces mid-phrase. A
+    # json.dumps round-trip would re-escape the newline as a literal "\n"
+    # whose stripped backslash leaves a stray "n" that splits the CJK run and
+    # breaks the match — flattening keeps real whitespace instead.
+    raw = json.dumps(
+        {"sections": {"risk": "汇率的大幅波动将会对公司的进出口业务产生\n直接影响"}},
+        ensure_ascii=True,
+    )
+    decoded = v._decode_value_json(raw)
+    excerpt = "汇率的大幅波动将会对公司的进出口业务产生直接影响"
+    assert v._normalize_text(excerpt) in v._normalize_text(decoded)
+
+
+def test_decode_value_json_numbers_preserved_for_numeric_fallback() -> None:
+    import json
+
+    raw = json.dumps({"scalar": 35470325836.04, "unit": "元"}, ensure_ascii=True)
+    decoded = v._decode_value_json(raw)
+    assert "35470325836.04" in decoded
+    assert "元" in decoded
+
+
+def test_decode_value_json_passthrough_on_non_json() -> None:
+    assert v._decode_value_json("not json {") == "not json {"
+    assert v._decode_value_json("") == ""

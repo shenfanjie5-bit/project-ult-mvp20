@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-06-19T21:12:04+0800",
+  "scope": "local production preview browser probe after StockDetail request-ordering and BFF derived-response cache changes",
+  "base_url": "http://127.0.0.1:1422",
+  "api_base_url": "http://127.0.0.1:8799/api",
+  "route": "/stock/300750.SZ?data_mode=projectUlt",
+  "threshold_ms": 1000,
+  "summary": {
+    "h1_ready_ms": 173,
+    "coverage_response_ms": 710,
+    "score_response_ms": 836,
+    "path_graph_ready_ms": 965,
+    "path_graph_ready_under_1000ms": true,
+    "console_error_warn_count": 0,
+    "body_chars_after_probe": 5130,
+    "nonblocking_late_responses": {
+      "technicals_ms": 897,
+      "aggregate_ms": 989,
+      "history_ms": 1014,
+      "stock_overlay_ms": 1018
+    }
+  },
+  "request_ordering_change": {
+    "core_requests": [
+      "score",
+      "coverage"
+    ],
+    "deferred_until_core_settled": [
+      "stock-overlay",
+      "realtime stream",
+      "aggregate",
+      "technicals",
+      "history"
+    ],
+    "path_graph_loading_condition": "score only; aggregate enriches the rendered graph when it arrives",
+    "bff_cache": "short TTL derived-response cache keyed by overlay, industry overlay, hot DB, peer context, and quant artifact fingerprints"
+  },
+  "responses": [
+    {
+      "ms": 121,
+      "status": 200,
+      "url": "/api/project-ult/health"
+    },
+    {
+      "ms": 121,
+      "status": 200,
+      "url": "/api/project-ult/profiles?ts_code=300750.SZ"
+    },
+    {
+      "ms": 121,
+      "status": 200,
+      "url": "/api/project-ult/industry-graphs?industry_id=STORAGE_GRID"
+    },
+    {
+      "ms": 710,
+      "status": 200,
+      "url": "/api/project-ult/coverage?ts_code=300750.SZ&industry_id=STORAGE_GRID"
+    },
+    {
+      "ms": 836,
+      "status": 200,
+      "url": "/api/project-ult/score?ts_code=300750.SZ&industry_id=STORAGE_GRID"
+    },
+    {
+      "ms": 880,
+      "status": 200,
+      "url": "/api/project-ult/stream/realtime?ts_code=300750.SZ&poll_seconds=5&industry_id=STORAGE_GRID"
+    },
+    {
+      "ms": 897,
+      "status": 200,
+      "url": "/api/project-ult/technicals?ts_code=300750.SZ&return_series=30"
+    },
+    {
+      "ms": 989,
+      "status": 200,
+      "url": "/api/project-ult/aggregate?ts_code=300750.SZ&industry_id=STORAGE_GRID"
+    },
+    {
+      "ms": 1014,
+      "status": 200,
+      "url": "/api/project-ult/history?ts_code=300750.SZ&dp_id=L7.flow.netbuy&since=1781788315&limit=5000"
+    },
+    {
+      "ms": 1018,
+      "status": 200,
+      "url": "/api/project-ult/stock-overlay?ts_code=300750.SZ&include_static=0&industry_id=STORAGE_GRID"
+    }
+  ],
+  "remaining_risk": [
+    "This is one local production-preview browser sample, not a full cold-start or multi-device benchmark.",
+    "History and stock overlay still arrived just after 1 second in this sample, but they no longer block route identity or the path graph canvas."
+  ]
+}

@@ -26,14 +26,15 @@ from mvp20.sources import akshare_source
 
 
 def test_supported_dp_ids_covers_tier1() -> None:
+    # intraday_announcement / media_social / social_buzz / mood.theme /
+    # cap.outflow_cut were MOVED off akshare onto Tushare
+    # (tushare_source.fetch_akshare_replacement_batch) so they are no longer
+    # akshare Tier-1 fields. akshare keeps only the news-based intraday_news
+    # (Tushare ``news`` is empty for this account) and the bucket-A block-trade
+    # signal.
     expected_tier1 = {
         "L9.event.intraday_news",
-        "L9.event.intraday_announcement",
-        "L7.mood.media_social",
-        "L9.media.social_buzz",
-        "L7.mood.theme",
-        # Bucket A append (per A-share fund-flow + block-trade signals).
-        "L8.cap.outflow_cut",
+        # Bucket A append (per A-share block-trade signal).
         "L9.capital.etf_block",
     }
     assert expected_tier1.issubset(akshare_source.SUPPORTED_DP_IDS)
@@ -46,16 +47,24 @@ def test_supported_dp_ids_covers_market_level() -> None:
         "L9.media.report",
         "L9.industry.policy_change",
         "L9.industry.compete_risk",
+        "L9.macro.geo",
     }
     assert expected_market.issubset(akshare_source.SUPPORTED_DP_IDS)
     assert expected_market == akshare_source.MARKET_LEVEL_DP_IDS
 
 
-def test_supported_dp_ids_includes_tier2_stubs() -> None:
-    # Tier-2 stubs are declared so collector can list akshare as a
-    # primary-source hint, even though the fetcher is a TODO.
-    assert "L0.cost.raw_material" in akshare_source.SUPPORTED_DP_IDS
-    assert "L0.sentiment.sector_heat" in akshare_source.SUPPORTED_DP_IDS
+def test_tier2_industry_ids_moved_off_akshare_to_tushare() -> None:
+    # The former Tier-2 industry stubs (L0.cost.raw_material /
+    # L0.sentiment.sector_heat) were MOVED off akshare onto permitted Tushare
+    # endpoints (fut_daily / moneyflow_ind_ths) via
+    # tushare_source.fetch_akshare_replacement_batch. akshare must no longer
+    # claim them (the two sources would otherwise race on the (ts_code, dp_id)
+    # UPSERT primary key); Tushare now owns them.
+    from mvp20.sources import tushare_source
+
+    for dp_id in ("L0.cost.raw_material", "L0.sentiment.sector_heat"):
+        assert dp_id not in akshare_source.SUPPORTED_DP_IDS
+        assert dp_id in tushare_source.SUPPORTED_DP_IDS
 
 
 # ---------------------------------------------------------------------------
@@ -148,14 +157,14 @@ def _stub_l8_outflow(a_codes, now):
 def _stub_l9_block(a_codes, now):
     return [
         (ts, "L9.capital.etf_block",
-         json.dumps({"events_count": 0}),
-         "Inactive", 0.5, "akshare:stock_dzjy_mrmx", now)
+         json.dumps({"events_count": 0, "event_active": False}),
+         "Known", 0.6, "akshare:stock_dzjy_mrmx", now)
         for ts in a_codes
     ]
 
 
 def _stub_cls_telegraph(now):
-    """3-row MARKET:CN stub mirroring the real ``fetch_cls_telegraph_batch``."""
+    """MARKET:CN stub mirroring the real ``fetch_cls_telegraph_batch``."""
 
     return [
         ("MARKET:CN", "L9.media.report",
@@ -166,6 +175,9 @@ def _stub_cls_telegraph(now):
          "Known", 0.55, "akshare:stock_info_global_cls", now),
         ("MARKET:CN", "L9.industry.compete_risk",
          json.dumps({"count_24h": 1, "top_headlines": []}),
+         "Known", 0.55, "akshare:stock_info_global_cls", now),
+        ("MARKET:CN", "L9.macro.geo",
+         json.dumps({"count_24h": 0, "top_headlines": []}),
          "Known", 0.55, "akshare:stock_info_global_cls", now),
     ]
 
@@ -190,16 +202,13 @@ def _patch_x2_batches(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_fetch_batch_emits_seven_tuples_for_a_share_only(
     fake_universe: list[dict], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # akshare's fetch_batch now only wires the news-based intraday_news plus
+    # the bucket-A block-trade signal per-stock — intraday_announcement /
+    # media_social+theme / social_buzz / outflow_cut were MOVED to Tushare
+    # (tushare_source.fetch_akshare_replacement_batch) and are no longer run
+    # here, so monkeypatching them would be a no-op.
     monkeypatch.setattr(akshare_source, "fetch_intraday_news",
                         _stub_intraday_news)
-    monkeypatch.setattr(akshare_source, "fetch_intraday_announcement",
-                        _stub_intraday_announcement)
-    monkeypatch.setattr(akshare_source, "fetch_media_social_and_theme",
-                        _stub_media_social_theme)
-    monkeypatch.setattr(akshare_source, "fetch_social_buzz",
-                        _stub_social_buzz)
-    monkeypatch.setattr(akshare_source, "fetch_l8_cap_outflow_cut",
-                        _stub_l8_outflow)
     monkeypatch.setattr(akshare_source, "fetch_l9_capital_etf_block",
                         _stub_l9_block)
     monkeypatch.setattr(akshare_source, "fetch_cls_telegraph_batch",
@@ -209,8 +218,8 @@ def test_fetch_batch_emits_seven_tuples_for_a_share_only(
     rows = akshare_source.fetch_batch(fake_universe, tick=0)
 
     assert rows, "fetch_batch must emit at least one row"
-    # 2 A-share × (news + announcement + 2 mood + buzz + 2 bucket-A) + 3 MARKET:CN = 17
-    assert len(rows) == 17
+    # 2 A-share × (news + bucket-A block) + 4 MARKET:CN = 8
+    assert len(rows) == 8
 
     # Every row is a 7-tuple in the expected shape
     valid_keys = {"300750.SZ", "600519.SH", "MARKET:CN"}
@@ -228,7 +237,7 @@ def test_fetch_batch_emits_seven_tuples_for_a_share_only(
         assert source.startswith("akshare:")
         assert isinstance(updated_at, int) and updated_at > 0
         seen_dp_ids.add(dp_id)
-    # All Tier-1 + 3 market-level dp_ids represented
+    # All Tier-1 + market-level dp_ids represented
     assert seen_dp_ids == (akshare_source.TIER1_DP_IDS
                            | akshare_source.MARKET_LEVEL_DP_IDS)
 
@@ -258,8 +267,8 @@ def test_fetch_batch_skips_when_no_a_share_codes(
         [{"ts_code": "AAPL.US"}, {"ts_code": "00700.HK"}], tick=1,
     )
     # No A-share constituents → Tier-1 fetchers skipped, but the
-    # market-level CLS telegraph still emits its 3 MARKET:CN rows.
-    assert len(rows) == 3
+    # market-level CLS telegraph still emits its MARKET:CN rows.
+    assert len(rows) == 4
     assert {r[0] for r in rows} == {"MARKET:CN"}
     assert {r[1] for r in rows} == akshare_source.MARKET_LEVEL_DP_IDS
 
@@ -272,15 +281,10 @@ def test_fetch_batch_isolates_per_fetcher_failures(
     def boom(*_a, **_k):
         raise RuntimeError("simulated upstream HTML break")
 
+    # intraday_announcement / media_social+theme / social_buzz / outflow_cut
+    # moved to Tushare and are no longer wired into akshare's fetch_batch — the
+    # remaining akshare per-stock fetcher is the bucket-A block-trade signal.
     monkeypatch.setattr(akshare_source, "fetch_intraday_news", boom)
-    monkeypatch.setattr(akshare_source, "fetch_intraday_announcement",
-                        _stub_intraday_announcement)
-    monkeypatch.setattr(akshare_source, "fetch_media_social_and_theme",
-                        _stub_media_social_theme)
-    monkeypatch.setattr(akshare_source, "fetch_social_buzz",
-                        _stub_social_buzz)
-    monkeypatch.setattr(akshare_source, "fetch_l8_cap_outflow_cut",
-                        _stub_l8_outflow)
     monkeypatch.setattr(akshare_source, "fetch_l9_capital_etf_block",
                         _stub_l9_block)
     monkeypatch.setattr(akshare_source, "fetch_cls_telegraph_batch",
@@ -289,10 +293,9 @@ def test_fetch_batch_isolates_per_fetcher_failures(
 
     rows = akshare_source.fetch_batch(fake_universe, tick=2)
     dp_ids = {r[1] for r in rows}
-    # intraday_news skipped due to RuntimeError, others still flowed.
+    # intraday_news skipped due to RuntimeError, the others still flowed.
     assert "L9.event.intraday_news" not in dp_ids
-    assert {"L9.event.intraday_announcement", "L7.mood.media_social",
-            "L7.mood.theme", "L9.media.social_buzz"}.issubset(dp_ids)
+    assert "L9.capital.etf_block" in dp_ids
     # CLS catalysts also still flowed.
     assert akshare_source.MARKET_LEVEL_DP_IDS.issubset(dp_ids)
 
@@ -648,13 +651,51 @@ def test_fetch_sector_heat_batch_empty_when_summary_fails(
     assert rows == []
 
 
-def test_supported_dp_ids_covers_x2_industry_ids() -> None:
-    """SUPPORTED_DP_IDS already had the three X2 ids declared (Tier-2 stub).
-    Confirm they are still present after the X2 wire-up."""
+def test_x2_industry_ids_moved_off_akshare_to_tushare() -> None:
+    """The three X2 industry/market dp_ids were MOVED off akshare onto
+    permitted Tushare endpoints (fut_daily / moneyflow_ind_ths) in
+    tushare_source.fetch_akshare_replacement_batch. Confirm akshare no longer
+    declares them and Tushare now owns them (so the two sources don't race on
+    the (ts_code, dp_id) UPSERT primary key)."""
 
-    expected = {
+    from mvp20.sources import tushare_source
+
+    moved = {
         "L0.cost.raw_material",
         "L0.cost.energy_logistics",
         "L0.sentiment.sector_heat",
     }
-    assert expected.issubset(akshare_source.SUPPORTED_DP_IDS)
+    assert moved.isdisjoint(akshare_source.SUPPORTED_DP_IDS)
+    assert moved.issubset(tushare_source.SUPPORTED_DP_IDS)
+
+
+# ---------------------------------------------------------------------------
+# _ak_call — per-call hard timeout (B2): a stuck akshare endpoint must never
+# block the collector. Regression for the observed 74-minute / kill -9 hang.
+# ---------------------------------------------------------------------------
+
+
+def test_ak_call_returns_value_under_budget() -> None:
+    assert akshare_source._ak_call("fast", lambda: 42) == 42
+
+
+def test_ak_call_propagates_underlying_exception() -> None:
+    def boom():
+        raise RuntimeError("upstream 502")
+
+    with pytest.raises(RuntimeError, match="upstream 502"):
+        akshare_source._ak_call("boom", boom)
+
+
+def test_ak_call_times_out_and_raises() -> None:
+    import time as _t
+
+    # Worker overruns the 0.2s budget → AkshareTimeout; the daemon worker is
+    # abandoned (still sleeping) but does not block the test.
+    with pytest.raises(akshare_source.AkshareTimeout):
+        akshare_source._ak_call("slow", lambda: _t.sleep(5), timeout=0.2)
+
+
+def test_ak_call_disabled_when_timeout_nonpositive() -> None:
+    # timeout<=0 runs inline (no worker thread) — explicit opt-out.
+    assert akshare_source._ak_call("inline", lambda: "ok", timeout=0) == "ok"

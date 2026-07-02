@@ -20,11 +20,15 @@ Network is never actually touched; ``_get_api_key`` is also stubbed.
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from mvp20.sources import fmp_source
+
+_UPCOMING_EARNINGS_DATE = (
+    datetime.now(timezone.utc).date() + timedelta(days=30)
+).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +57,10 @@ def _price_series(symbol: str, *, days: int = 60,
     return list(reversed(rows))
 
 
-def _earnings_upcoming(symbol: str = "NVDA",
-                       upcoming_date: str = "2026-05-20") -> list[dict]:
+def _earnings_upcoming(
+    symbol: str = "NVDA",
+    upcoming_date: str = _UPCOMING_EARNINGS_DATE,
+) -> list[dict]:
     return [
         {"symbol": symbol, "date": upcoming_date, "epsActual": None,
          "epsEstimated": 1.76, "revenueActual": None,
@@ -261,7 +267,7 @@ def test_preprice_known_when_earnings_dated(monkeypatch, fake_api_key):
              "run_up_20d_pct", "spx_relative_5d", "spx_relative_10d",
              "is_upcoming"):
         assert k in payload, k
-    assert payload["earnings_date"] == "2026-05-20"
+    assert payload["earnings_date"] == _UPCOMING_EARNINGS_DATE
     assert payload["is_upcoming"] is True
     # Stock spike at the last bar → positive 5d run-up.
     assert payload["run_up_5d_pct"] is not None

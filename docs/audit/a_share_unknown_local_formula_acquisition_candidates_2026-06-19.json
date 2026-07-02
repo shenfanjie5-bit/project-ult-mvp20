@@ -1,0 +1,249 @@
+{
+  "generated_at": "2026-06-19T13:30:26+08:00",
+  "elapsed_s": 0.009,
+  "inputs": {
+    "backlog_path": "docs/audit/a_share_unknown_acquisition_backlog_2026-06-19.json",
+    "source_review_path": "docs/audit/a_share_local_structured_source_review_packets_2026-06-19.json",
+    "unknown_options_path": "docs/audit/a_share_local_structured_unknown_source_options_2026-06-19.json",
+    "data_root": "/Volumes/dockcase2tb/database_all"
+  },
+  "summary": {
+    "local_formula_acquisition_task_count": 2,
+    "runtime_dependency_ready_count": 2,
+    "sample_csv_files_checked": 6,
+    "sample_csv_files_existing": 6,
+    "sample_csv_read_error_count": 0,
+    "formula_input_group_count": 8,
+    "formula_input_group_ready_count": 0,
+    "rows_with_candidate_numerator_count": 2,
+    "rows_with_direct_denominator_count": 0,
+    "rows_with_quantity_or_price_index_count": 0,
+    "rows_with_formula_policy_count": 0,
+    "formula_inputs_ready_count": 0,
+    "ready_for_known_draft_count": 0,
+    "ready_for_approval_count": 0,
+    "packet_contract_valid_count": 2,
+    "packet_contract_invalid_count": 0,
+    "runtime_write_allowed_count": 0,
+    "production_write_allowed_count": 0,
+    "score_mutation": "none; this audit is read-only and does not alter realtime_current"
+  },
+  "rows": [
+    {
+      "task_id": "ashare_unknown_acquire_L0_cost_rent",
+      "dp_id": "L0.cost.rent",
+      "score_target": "fundamental_score",
+      "data_status": "Unknown",
+      "acquisition_track": "local_structured_formula_source",
+      "source_priority": "lease_burden_formula_inputs",
+      "source_review_packet_status": "review_candidate_ready",
+      "candidate_columns": [
+        "use_right_asset_dep"
+      ],
+      "empty_candidate_columns": [
+        "fa_fnc_leases"
+      ],
+      "missing_formula_inputs": [
+        "rent expense or lease payment amount",
+        "lease-liability denominator or revenue denominator",
+        "reviewed conservative proxy formula and score bounds"
+      ],
+      "runtime_dependency_ready": true,
+      "runtime_dependency_count": 2,
+      "csv_sample_evidence": {
+        "files_checked": 3,
+        "files_existing": 3,
+        "rows_sampled": 30,
+        "column_present_files": {
+          "use_right_asset_dep": 3,
+          "fa_fnc_leases": 3
+        },
+        "column_non_empty": {
+          "use_right_asset_dep": 6,
+          "fa_fnc_leases": 0
+        },
+        "bz_item_samples": [],
+        "bz_item_product_like_count": 0,
+        "bz_item_geography_like_count": 0,
+        "bz_item_industry_like_count": 0,
+        "read_error_count": 0,
+        "read_errors": []
+      },
+      "formula_input_groups": [
+        {
+          "name": "lease_proxy_numerator",
+          "status": "review_candidate",
+          "evidence": "use_right_asset_dep non-empty sample rows=6",
+          "blockers": [
+            "proxy semantics require review because use-right asset depreciation is not rent expense"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "direct_lease_payment",
+          "status": "missing",
+          "evidence": "fa_fnc_leases non-empty sample rows=0",
+          "blockers": [
+            "direct lease payment/rent expense is empty or absent in sampled files"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "denominator",
+          "status": "missing",
+          "evidence": "runtime dependencies ready=True; dependency count=2",
+          "blockers": [
+            "current ready runtime dependencies are context only and do not define a reviewed rent-burden denominator"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "formula_policy",
+          "status": "missing",
+          "evidence": "no reviewed cap/floor or denominator policy in source-review packet",
+          "blockers": [
+            "reviewed conservative proxy policy is required before Known scoring"
+          ],
+          "ready_for_formula": false
+        }
+      ],
+      "formula_input_group_count": 4,
+      "formula_input_group_ready_count": 0,
+      "formula_inputs_ready": false,
+      "formula_candidate_status": "proxy_available_denominator_policy_missing",
+      "ready_for_known_draft": false,
+      "ready_for_approval": false,
+      "review_required": true,
+      "safe_to_upsert_without_review": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "packet_contract_valid": true,
+      "packet_validation_errors": []
+    },
+    {
+      "task_id": "ashare_unknown_acquire_L0_price_product_asp",
+      "dp_id": "L0.price.product_asp",
+      "score_target": "fundamental_score",
+      "data_status": "Unknown",
+      "acquisition_track": "local_structured_formula_source",
+      "source_priority": "product_quantity_or_price_index",
+      "source_review_packet_status": "supporting_candidate_needs_quantity_source",
+      "candidate_columns": [
+        "bz_item",
+        "bz_sales",
+        "bz_profit",
+        "bz_cost"
+      ],
+      "empty_candidate_columns": [],
+      "missing_formula_inputs": [
+        "unit volume, shipment volume, or product quantity",
+        "product-level price index when volume is unavailable",
+        "reviewed mapping from business-segment item to ASP-bearing product"
+      ],
+      "runtime_dependency_ready": true,
+      "runtime_dependency_count": 2,
+      "csv_sample_evidence": {
+        "files_checked": 3,
+        "files_existing": 3,
+        "rows_sampled": 36,
+        "column_present_files": {
+          "bz_item": 3,
+          "bz_sales": 3,
+          "bz_profit": 3,
+          "bz_cost": 3,
+          "unit_volume": 0,
+          "shipment_volume": 0,
+          "product_quantity": 0
+        },
+        "column_non_empty": {
+          "bz_item": 36,
+          "bz_sales": 36,
+          "bz_profit": 30,
+          "bz_cost": 30,
+          "unit_volume": 0,
+          "shipment_volume": 0,
+          "product_quantity": 0
+        },
+        "bz_item_samples": [
+          "其他主营业务",
+          "光互联产品",
+          "光通信设备行业",
+          "国外",
+          "中国大陆",
+          "经销",
+          "直销",
+          "4.25G以上",
+          "PON光模块",
+          "4.25G以下",
+          "技术服务",
+          "其他业务",
+          "企业级SSD",
+          "RAID卡",
+          "存储业务(行业)",
+          "非终端客户",
+          "终端客户",
+          "材料销售",
+          "超薄膜",
+          "薄型膜"
+        ],
+        "bz_item_product_like_count": 13,
+        "bz_item_geography_like_count": 2,
+        "bz_item_industry_like_count": 5,
+        "read_error_count": 0,
+        "read_errors": []
+      },
+      "formula_input_groups": [
+        {
+          "name": "product_revenue_numerator",
+          "status": "supporting_candidate",
+          "evidence": "bz_sales non-empty sample rows=36",
+          "blockers": [
+            "revenue numerator is available but cannot form ASP without volume or price index"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "product_mapping",
+          "status": "review_required",
+          "evidence": "bz_item samples product_like=13, geography_like=2, industry_like=5",
+          "blockers": [
+            "bz_item rows mix product, geography, industry, and other segment labels"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "quantity_or_price_index",
+          "status": "missing",
+          "evidence": "unit/shipment/product quantity non-empty sample rows=0",
+          "blockers": [
+            "no unit volume, shipment volume, product quantity, or governed price index column is present"
+          ],
+          "ready_for_formula": false
+        },
+        {
+          "name": "formula_policy",
+          "status": "missing",
+          "evidence": "runtime dependencies ready=True; dependency count=2",
+          "blockers": [
+            "reviewed ASP formula and bounds are required before Known scoring"
+          ],
+          "ready_for_formula": false
+        }
+      ],
+      "formula_input_group_count": 4,
+      "formula_input_group_ready_count": 0,
+      "formula_inputs_ready": false,
+      "formula_candidate_status": "revenue_mix_available_quantity_missing",
+      "ready_for_known_draft": false,
+      "ready_for_approval": false,
+      "review_required": true,
+      "safe_to_upsert_without_review": false,
+      "runtime_write_allowed": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "packet_contract_valid": true,
+      "packet_validation_errors": []
+    }
+  ]
+}

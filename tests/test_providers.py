@@ -190,8 +190,8 @@ def test_endpoint_csvs_exist_and_have_expected_rows() -> None:
 
     with open(docs_dir / "tushare_endpoints.csv", encoding="utf-8") as f:
         rows = list(_csv.DictReader(f))
-    # 138 endpoints from the user-supplied snapshot
-    assert len(rows) == 138
+    # 145 endpoint rows: user-supplied snapshot plus current code-path additions.
+    assert len(rows) == 145
 
     with open(docs_dir / "fmp_endpoints.csv", encoding="utf-8") as f:
         rows = list(_csv.DictReader(f))

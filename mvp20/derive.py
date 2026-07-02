@@ -2,7 +2,7 @@
 
 Spec v2 designates a large class of dp_ids as **derived** (not directly
 available from any data source) — they are functions of other dp_ids and
-short historical windows. ~124 of the 250 spec dp_ids carry
+short historical windows. A large subset of the 256 spec dp_ids carry
 ``source_status: ○ (possible_but_not_integrated)`` which means: at least
 one source contributes partial info, but a derive/aggregate step is
 required to produce the final value.
@@ -67,12 +67,24 @@ import math
 import os
 import sqlite3
 import statistics
+import inspect
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 log = logging.getLogger("mvp20.derive")
+
+DEFAULT_TUSHARE_TIMEOUT_SECONDS = 10.0
+
+# L6.priced.news_age time-decay calibration.
+#   * HALFLIFE: a catalyst loses ~half its priced-in magnitude every ~30
+#     calendar days, decaying to ~0 by ~90 days (exp(-90/30) ≈ 0.05).
+#   * PEAK: routine A-share filings are common and the priced_in_discount
+#     cluster is already strong, so we damp the freshest-announcement peak to
+#     0.6 rather than letting it auto-saturate at 1.0 (FU-2 calibration).
+_NEWS_AGE_HALFLIFE_DAYS = 30.0
+_NEWS_AGE_PEAK = 0.6
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +119,39 @@ def _read_realtime_value(conn: sqlite3.Connection, ts_code: str, dp_id: str) -> 
         (ts_code, dp_id),
     ).fetchone()
     return _safe_load(row[0]) if row else None
+
+
+def _is_mock_source(source: Any) -> bool:
+    """True when a realtime_current row originates from a fabricated/mock
+    feed (``source`` starting ``"mock:"``). Such rows carry placeholder
+    scalars and must never feed quantitative derives."""
+
+    return isinstance(source, str) and source.startswith("mock:")
+
+
+def _value_if_not_mock(value: Any, source: Any) -> Any:
+    """Pure mock guard: return ``value`` unless ``source`` is a mock feed,
+    in which case return ``None``. Kept tiny + side-effect free so it can be
+    unit-tested offline without a Tushare client or live DB."""
+
+    return None if _is_mock_source(source) else value
+
+
+def _read_realtime_value_with_source(
+    conn: sqlite3.Connection, ts_code: str, dp_id: str
+) -> tuple[Any, str | None]:
+    """Like :func:`_read_realtime_value` but also returns the row's ``source``
+    so callers can reject mock feeds. Returns ``(value, source)``; ``value``
+    is ``None`` when the row is absent or its source is ``mock:*``."""
+
+    row = conn.execute(
+        "SELECT value_json, source FROM realtime_current WHERE ts_code = ? AND dp_id = ?",
+        (ts_code, dp_id),
+    ).fetchone()
+    if not row:
+        return None, None
+    source = row[1]
+    return _value_if_not_mock(_safe_load(row[0]), source), source
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
@@ -389,6 +434,9 @@ def derive_l7_mood_fomo(
 
 def derive_l10_val_expansion_compression(
     state_expansion: Mapping[str, Any] | None,
+    mult_pe: Mapping[str, Any] | None = None,
+    historical_quantile: Mapping[str, Any] | None = None,
+    historical_pct: Mapping[str, Any] | None = None,
 ) -> dict | None:
     """L10.val.expansion_compression — 10-layer verification view that mirrors
     ``L6.state.expansion_compression``.
@@ -396,13 +444,275 @@ def derive_l10_val_expansion_compression(
     The 10-layer macro audit re-reports the same valuation expansion/compression
     state at the market verification layer so consumers can cross-check whether
     the stock-level state is consistent with the macro view.
+
+    For A-share, the primary input is the Tushare-emitted
+    ``L6.state.expansion_compression`` payload (PE vs 60d / 250d MA regime).
+
+    For US/HK stocks where no upstream emits that dp_id, fall back to
+    composing a regime label from FMP-driven inputs: current PE
+    (``L6.mult.pe``) compared against the historical PE quantile
+    (``L10.val.historical_quantile`` or ``L6.state.historical_percentile``)
+    so the verification view still has something to report.
     """
 
-    if not isinstance(state_expansion, Mapping):
+    # Primary path: mirror upstream state_expansion verbatim.
+    if isinstance(state_expansion, Mapping):
+        out = dict(state_expansion)
+        out["mirror_of"] = "L6.state.expansion_compression"
+        return out
+
+    # Fallback path: synthesise a regime label from PE + quantile inputs
+    # (used when upstream L6.state.expansion_compression is unavailable, e.g.
+    # US stocks without the Tushare history fetcher).
+    pe_current: float | None = None
+    if isinstance(mult_pe, Mapping):
+        pe_current = mult_pe.get("scalar")
+        if pe_current is None:
+            pe_current = mult_pe.get("pe_ttm") or mult_pe.get("value")
+        pe_current = _coerce_float(pe_current, 0.0) or None
+
+    pe_pct: float | None = None
+    for src in (historical_pct, historical_quantile):
+        if isinstance(src, Mapping):
+            cand = src.get("pe_percentile")
+            if cand is not None:
+                pe_pct = _coerce_float(cand)
+                break
+
+    if pe_current is None and pe_pct is None:
         return None
-    out = dict(state_expansion)  # mirror
-    out["mirror_of"] = "L6.state.expansion_compression"
-    return out
+
+    if pe_pct is not None:
+        if pe_pct >= 0.75:
+            regime = "expanded"
+        elif pe_pct <= 0.25:
+            regime = "compressed"
+        else:
+            regime = "neutral"
+    else:
+        regime = "neutral"
+
+    return {
+        "pe_current": pe_current,
+        "pe_percentile": pe_pct,
+        "regime": regime,
+        "mirror_of": "L6.state.expansion_compression",
+        "fallback": "fmp_pe_quantile",
+    }
+
+
+def derive_l6_priced_run_up_snapshot(
+    surprise_preprice: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.priced.run_up — snapshot fallback when Tushare history is absent.
+
+    For A-shares, this dp_id is populated by the Tier 0 history derive
+    (`derive_run_up` over Tushare daily closes). For US stocks we don't run
+    that path; instead FMP's `/earnings` + `/historical-price-eod` already
+    produce `L5.surprise.preprice` carrying ``run_up_5d_pct`` /
+    ``run_up_10d_pct`` / ``run_up_20d_pct``. Re-shape those into the
+    standard ``d5_pct``/``d20_pct``/``d60_pct`` payload so downstream
+    derives (`L6.path.second_derivative`, `L8.val.priced_in`) work
+    unchanged on US tickers.
+
+    Returns ``None`` when no preprice payload is available (so the
+    DeriveRunner emits Inactive). When called for an A-share that already
+    has a Tier 0 emit, the runner's skip-on-existing-known guard prevents
+    this fallback from clobbering the better value.
+    """
+
+    if not isinstance(surprise_preprice, Mapping):
+        return None
+    d5 = surprise_preprice.get("run_up_5d_pct")
+    d10 = surprise_preprice.get("run_up_10d_pct")
+    d20 = surprise_preprice.get("run_up_20d_pct")
+    if d5 is None and d10 is None and d20 is None:
+        return None
+    payload: dict[str, Any] = {
+        "d5_pct": _coerce_float(d5) if d5 is not None else None,
+        "d10_pct": _coerce_float(d10) if d10 is not None else None,
+        "d20_pct": _coerce_float(d20) if d20 is not None else None,
+        "d60_pct": None,
+        "source": "L5.surprise.preprice",
+    }
+    return payload
+
+
+def _parse_yyyymmdd_to_epoch_day(value: Any) -> int | None:
+    """Parse a ``"YYYYMMDD"`` string into a UTC day-ordinal (days since epoch).
+
+    Returns ``None`` for anything that does not parse as an 8-digit calendar
+    date. Used by the news-age decay to compute whole-day deltas without
+    intra-day jitter.
+    """
+
+    if value is None:
+        return None
+    s = str(value).strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        dt = datetime.strptime(s, "%Y%m%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return int(dt.timestamp() // 86400)
+
+
+def derive_l6_priced_news_age(
+    intraday_announcement: Mapping[str, Any] | None,
+    now: int | None = None,
+) -> dict | None:
+    """L6.priced.news_age — time-decayed "still being priced-in" discount.
+
+    A FRESH catalyst/announcement is still being absorbed by the market
+    (higher magnitude); the discount DECAYS toward 0 as the news ages. The
+    magnitude ∈ [0, _NEWS_AGE_PEAK] feeds the ``priced_in_discount`` cluster.
+
+    Inputs come from ``L9.event.intraday_announcement`` whose payload carries
+    ``top_announcements`` (most-recent-first; each item has ``ann_date`` as a
+    ``"YYYYMMDD"`` string) and ``count_recent``. We take the freshest parseable
+    ``ann_date`` as the catalyst date.
+
+    Formula (exponential decay, half-life ≈ 30 calendar days)::
+
+        age_days  = max(0, today − latest_ann_date)
+        magnitude = _NEWS_AGE_PEAK * 0.5 ** (age_days / _NEWS_AGE_HALFLIFE_DAYS)
+
+    Calibration (FU-2): the peak is damped to ``_NEWS_AGE_PEAK`` (0.6) rather
+    than 1.0 so routine filings — the common case, and ``type`` is usually
+    null so we cannot upweight only material ones — do not auto-saturate an
+    already-strong priced_in_discount cluster. A same-day announcement scores
+    0.6; ~30d → 0.3; ~90d → ~0.075; the result is clipped to [0, 1].
+
+    "today" is taken from the runner's ``now`` epoch (passed by
+    ``DeriveRunner._run_one`` to formulas that declare a ``now`` parameter),
+    keeping the derive deterministic. When called without ``now`` (e.g. a unit
+    test), it falls back to the payload's ``as_of`` timestamp if present and
+    finally to ``time.time()``.
+
+    Returns ``None`` (=> Inactive) when there is no announcement payload or no
+    parseable ``ann_date``.
+    """
+
+    if not isinstance(intraday_announcement, Mapping):
+        return None
+    top = intraday_announcement.get("top_announcements")
+    if not isinstance(top, (list, tuple)) or not top:
+        return None
+
+    # top_announcements is most-recent-first; take the freshest parseable
+    # ann_date but scan the rest in case the first item lacks a date.
+    latest_day: int | None = None
+    latest_ann_date: str | None = None
+    for item in top:
+        if not isinstance(item, Mapping):
+            continue
+        day = _parse_yyyymmdd_to_epoch_day(item.get("ann_date"))
+        if day is not None and (latest_day is None or day > latest_day):
+            latest_day = day
+            latest_ann_date = str(item.get("ann_date")).strip()
+    if latest_day is None:
+        return None
+
+    # Resolve "today" deterministically: runner now -> payload as_of -> wall.
+    now_epoch = now
+    if now_epoch is None:
+        as_of = intraday_announcement.get("as_of")
+        as_of_day = _parse_yyyymmdd_to_epoch_day(as_of)
+        if as_of_day is not None:
+            now_epoch = as_of_day * 86400
+        else:
+            now_epoch = int(time.time())
+    today_day = int(now_epoch // 86400)
+
+    age_days = max(0, today_day - latest_day)
+    magnitude = _NEWS_AGE_PEAK * (0.5 ** (age_days / _NEWS_AGE_HALFLIFE_DAYS))
+    magnitude = _clip(magnitude, 0.0, 1.0)
+
+    return {
+        "scalar": round(magnitude, 4),
+        "magnitude": round(magnitude, 4),
+        "age_days": age_days,
+        "latest_ann_date": latest_ann_date,
+        "halflife_days": _NEWS_AGE_HALFLIFE_DAYS,
+        "peak": _NEWS_AGE_PEAK,
+        "count_recent": intraday_announcement.get("count_recent"),
+        "source": "L9.event.intraday_announcement",
+    }
+
+
+def derive_l8_val_overvalued_snapshot(
+    historical_quantile: Mapping[str, Any] | None,
+    historical_pct: Mapping[str, Any] | None,
+    mult_peg: Mapping[str, Any] | None = None,
+    mult_pe: Mapping[str, Any] | None = None,
+) -> dict | None:
+    """L8.val.overvalued — snapshot fallback when Tier 0 history is absent.
+
+    Composes the same overvalued boolean + severity label that
+    ``derive_overvalued`` produces from PE/PB percentile data — but works
+    on snapshot inputs only:
+
+      * Prefer ``L10.val.historical_quantile`` (per-stock PE/PB percentile
+        within own history; populated by Tushare A-share Tier 0 OR FMP key
+        metrics aggregations for US tickers).
+      * Fall back to ``L6.state.historical_percentile`` (alias, same shape).
+      * As a last resort, use PEG (``L6.mult.peg``) banding: PEG >= 2 =>
+        high, PEG >= 1.5 => elevated, PEG < 1.0 with positive growth =>
+        normal. This gives US stocks at least one severity classification
+        even when no PE history is available yet.
+
+    Returns ``None`` only when every source is missing.
+    """
+
+    pe_pct = pb_pct = None
+    src_payload = historical_quantile if isinstance(historical_quantile, Mapping) else historical_pct
+    if isinstance(src_payload, Mapping):
+        pe_pct = src_payload.get("pe_percentile")
+        pb_pct = src_payload.get("pb_percentile")
+
+    if pe_pct is not None or pb_pct is not None:
+        max_pct = max(
+            (p for p in (_coerce_float(pe_pct, -1.0), _coerce_float(pb_pct, -1.0)) if p >= 0),
+            default=None,
+        )
+        if max_pct is not None:
+            severity = (
+                "extreme" if max_pct > 0.95 else
+                "high" if max_pct > 0.80 else
+                "elevated" if max_pct > 0.60 else
+                "normal"
+            )
+            return {
+                "is_overvalued": max_pct > 0.80,
+                "severity": severity,
+                "max_quantile": max_pct,
+                "pe_pct": _coerce_float(pe_pct, 0.0) if pe_pct is not None else None,
+                "pb_pct": _coerce_float(pb_pct, 0.0) if pb_pct is not None else None,
+                "source": "historical_quantile",
+            }
+
+    # PEG fallback (US stocks without PE/PB history). PEG > 2 ≈ rich, < 1 ≈ cheap.
+    peg = None
+    if isinstance(mult_peg, Mapping):
+        peg = mult_peg.get("scalar") or mult_peg.get("value")
+    if peg is not None:
+        pegf = _coerce_float(peg)
+        if pegf > 0:
+            severity = (
+                "high" if pegf >= 2.0 else
+                "elevated" if pegf >= 1.5 else
+                "normal" if pegf >= 1.0 else
+                "normal"
+            )
+            return {
+                "is_overvalued": pegf >= 2.0,
+                "severity": severity,
+                "peg": pegf,
+                "source": "L6.mult.peg",
+            }
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -644,27 +954,59 @@ def derive_l6_path_tag(
 def derive_l6_path_second_derivative(
     historical_pct: Mapping[str, Any] | None,
     run_up: Mapping[str, Any] | None,
+    surprise_preprice: Mapping[str, Any] | None = None,
 ) -> dict | None:
     """L6.path.second_derivative — rate-of-change of valuation expansion.
 
     Uses 20d vs 60d run-up as a proxy for valuation acceleration. Positive
     => accelerating expansion, negative => decelerating.
+
+    For A-share the primary input is ``L6.priced.run_up`` (Tushare history
+    derived) which carries ``d20_pct`` / ``d60_pct``. For US stocks where
+    that Tier 0 derive is not run, fall back to FMP's
+    ``L5.surprise.preprice`` payload which carries ``run_up_5d_pct`` /
+    ``run_up_10d_pct`` / ``run_up_20d_pct`` so we still get an
+    acceleration signal at the shorter horizons.
     """
 
-    if not isinstance(run_up, Mapping):
+    d20: float | None = None
+    d60: float | None = None
+    d5: float | None = None
+    source = "L6.priced.run_up"
+
+    if isinstance(run_up, Mapping):
+        d20 = run_up.get("d20_pct")
+        d60 = run_up.get("d60_pct")
+        if d20 is None and d60 is None and "run_up_20d_pct" in run_up:
+            # Tolerate caller passing a preprice-shaped payload directly.
+            d20 = run_up.get("run_up_20d_pct")
+            d5 = run_up.get("run_up_5d_pct")
+
+    # Fallback: US side via L5.surprise.preprice (FMP). Only consult when
+    # the primary run_up payload didn't yield numbers.
+    if d20 is None and d60 is None and isinstance(surprise_preprice, Mapping):
+        d20 = surprise_preprice.get("run_up_20d_pct")
+        d5 = surprise_preprice.get("run_up_5d_pct")
+        source = "L5.surprise.preprice"
+
+    if d20 is None and d60 is None and d5 is None:
         return None
 
-    d20 = run_up.get("d20_pct")
-    d60 = run_up.get("d60_pct")
-    if d20 is None and d60 is None:
-        return None
-
-    d20f = _coerce_float(d20)
-    d60f = _coerce_float(d60)
-    # Annualized "acceleration" — d20 daily rate vs d60 daily rate
+    d20f = _coerce_float(d20) if d20 is not None else 0.0
+    d60f = _coerce_float(d60) if d60 is not None else 0.0
+    d5f = _coerce_float(d5) if d5 is not None else 0.0
     d20_daily = d20f / 20.0 if d20 is not None else 0.0
     d60_daily = d60f / 60.0 if d60 is not None else 0.0
-    second_deriv = d20_daily - d60_daily
+    d5_daily = d5f / 5.0 if d5 is not None else 0.0
+
+    if d60 is not None and d20 is not None:
+        second_deriv = d20_daily - d60_daily
+    elif d20 is not None and d5 is not None:
+        # No 60d horizon — compare 5d daily rate vs 20d daily rate. Same
+        # sign convention (faster recent = accelerating).
+        second_deriv = d5_daily - d20_daily
+    else:
+        second_deriv = d20_daily or d5_daily
 
     label = (
         "accelerating" if second_deriv > 0.002 else
@@ -676,6 +1018,7 @@ def derive_l6_path_second_derivative(
         "d20_daily": d20_daily,
         "d60_daily": d60_daily,
         "label": label,
+        "source": source,
     }
 
 
@@ -711,17 +1054,88 @@ def _l6_sens_factor(
 def derive_l6_sens_growth_margin(
     fina_gross_margin: Mapping[str, Any] | None,
     fina_revenue_yoy: Mapping[str, Any] | None,
+    is_gross_margin: Mapping[str, Any] | None = None,
+    is_revenue_growth: Mapping[str, Any] | None = None,
 ) -> dict | None:
     """L6.sens.growth_margin — valuation sensitivity to growth+margin.
 
     Higher margin and higher YoY growth => valuation supports premium
     multipliers.
+
+    Inputs in priority order:
+      * A-share (Tushare ``fina_indicator``): ``L5.fina.gross_margin``
+        carries ``value`` as percent (e.g. 28.27 => 28.27%); ``L5.fina.revenue_yoy``
+        likewise pct.
+      * US (FMP ``income-statement`` / ``financial-growth``):
+        ``L5.is.gross_margin`` carries ``scalar`` as ratio (0.71 => 71%);
+        ``L5.is.revenue_growth`` carries ``yoy_pct`` as ratio (0.06 => 6%).
+
+    We normalise both onto a percent scale (e.g. 28.27 or 71.0) before
+    feeding ``_l6_sens_factor`` so the same baseline (25% margin, 10% YoY)
+    is meaningful across markets.
     """
 
-    return _l6_sens_factor([
-        (fina_gross_margin, 0.5, 25.0),     # baseline gross margin 25%
-        (fina_revenue_yoy, 0.5, 10.0),      # baseline revenue YoY 10%
-    ])
+    margin_pct: float | None = None
+    margin_conf: float | None = None
+    if isinstance(fina_gross_margin, Mapping):
+        v = fina_gross_margin.get("value")
+        if v is not None:
+            margin_pct = _coerce_float(v)
+            margin_conf = _coerce_float(fina_gross_margin.get("confidence"), 0.5)
+    if margin_pct is None and isinstance(is_gross_margin, Mapping):
+        scalar = is_gross_margin.get("scalar")
+        if scalar is None:
+            scalar = is_gross_margin.get("value")
+        if scalar is not None:
+            f = _coerce_float(scalar)
+            # FMP emits ratio (0..1) — convert to percent for baseline parity.
+            margin_pct = f * 100.0 if abs(f) <= 1.5 else f
+            margin_conf = _coerce_float(is_gross_margin.get("confidence"), 0.5)
+
+    revenue_pct: float | None = None
+    revenue_conf: float | None = None
+    if isinstance(fina_revenue_yoy, Mapping):
+        v = fina_revenue_yoy.get("value")
+        if v is not None:
+            revenue_pct = _coerce_float(v)
+            revenue_conf = _coerce_float(fina_revenue_yoy.get("confidence"), 0.5)
+    if revenue_pct is None and isinstance(is_revenue_growth, Mapping):
+        yoy = is_revenue_growth.get("yoy_pct")
+        if yoy is None:
+            yoy = is_revenue_growth.get("value")
+        if yoy is not None:
+            f = _coerce_float(yoy)
+            # FMP emits ratio (0.06 => 6%) — convert to percent.
+            revenue_pct = f * 100.0 if abs(f) <= 5.0 else f
+            revenue_conf = _coerce_float(is_revenue_growth.get("confidence"), 0.5)
+
+    if margin_pct is None and revenue_pct is None:
+        return None
+
+    # Compose multiplier directly so we can record the normalised inputs.
+    factor = 1.0
+    drivers: list[str] = []
+    if margin_pct is not None:
+        delta = (margin_pct - 25.0) / 25.0
+        factor *= 1.0 + _clip(delta, -0.5, 0.5) * 0.5
+        drivers.append(f"gm={margin_pct:.2f}%")
+    if revenue_pct is not None:
+        delta = (revenue_pct - 10.0) / 10.0
+        factor *= 1.0 + _clip(delta, -0.5, 0.5) * 0.5
+        drivers.append(f"rev_yoy={revenue_pct:.2f}%")
+
+    factor = _clip(factor, 0.5, 1.5)
+    out: dict[str, Any] = {
+        "multiplier": factor,
+        "drivers": drivers,
+        "gross_margin_pct": margin_pct,
+        "revenue_yoy_pct": revenue_pct,
+    }
+    if margin_conf is not None or revenue_conf is not None:
+        confs = [c for c in (margin_conf, revenue_conf) if c is not None]
+        if confs:
+            out["confidence"] = _decay(min(confs), 0.9)
+    return out
 
 
 def derive_l6_sens_cashflow(
@@ -804,6 +1218,200 @@ def derive_l6_sens_risk_narrative(
         elif sells > buys:
             factor *= 0.90
     return {"multiplier": _clip(factor, 0.5, 1.5), "drivers": drivers}
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: L6 valuation multiples (snapshot-derive)
+#
+# These compose persisted hard data already in ``realtime_current`` into the
+# spec's valuation_rerating multiples that no single collector emits because
+# their inputs live across several collect functions:
+#
+#   * ``L6.mult.ev_ebitda``  — (mcap + debt − cash) / EBITDA
+#   * ``L6.mult.forward_pe`` — mcap / (consensus forward EPS × shares)
+#   * ``L6.mult.peg``        — trailing PE / earnings-growth-percent
+#   * ``L6.state.peg_match`` — banded interpretation of PEG
+#
+# mcap (``total_mv_cny``, 元) and ``total_share`` (raw shares) are carried in
+# the ``L6.mult.pe`` payload by the Tushare daily_basic collector. EBITDA
+# comes from ``L8.fin.debt_pressure.ebitda_cny`` (which is often persisted
+# Inactive for low-leverage names — see ``_INACTIVE_TOLERANT_INPUTS`` in the
+# DeriveRunner so this formula can still read it). cash/debt come from
+# ``L5.bs.cash_debt``; forward EPS from ``L5.fcst.eps_cf.eps_avg``.
+# ---------------------------------------------------------------------------
+
+
+def derive_l6_mult_ev_ebitda(
+    mult_pe: Mapping[str, Any] | None,
+    debt_pressure: Mapping[str, Any] | None,
+    cash_debt: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.mult.ev_ebitda — Enterprise Value / EBITDA.
+
+    EV = market cap + total debt − cash. EBITDA (元) is read from
+    ``L8.fin.debt_pressure.ebitda_cny``. mcap (``total_mv_cny``) comes from
+    the ``L6.mult.pe`` payload (Tushare daily_basic). cash/debt come from
+    ``L5.bs.cash_debt`` (元).
+
+    Returns ``None`` (=> Inactive) when mcap or EBITDA is missing or EBITDA
+    is non-positive (EV/EBITDA is meaningless for non-positive EBITDA).
+    """
+
+    if not isinstance(mult_pe, Mapping) or not isinstance(debt_pressure, Mapping):
+        return None
+    mcap = mult_pe.get("total_mv_cny")
+    ebitda = debt_pressure.get("ebitda_cny")
+    if mcap is None or ebitda is None:
+        return None
+    mcap_f = _coerce_float(mcap, default=-1.0)
+    ebitda_f = _coerce_float(ebitda, default=0.0)
+    if mcap_f <= 0 or ebitda_f <= 0:
+        return None
+
+    cash = debt = 0.0
+    if isinstance(cash_debt, Mapping):
+        cash = _coerce_float(cash_debt.get("cash"), 0.0)
+        debt = _coerce_float(cash_debt.get("debt"), 0.0)
+
+    ev = mcap_f + debt - cash
+    ratio = ev / ebitda_f
+    return {
+        "scalar": round(ratio, 4),
+        "unit": "ratio",
+        "ev_cny": round(ev, 2),
+        "mcap_cny": mcap_f,
+        "debt_cny": debt,
+        "cash_cny": cash,
+        "ebitda_cny": ebitda_f,
+        "source": "L6.mult.pe+L8.fin.debt_pressure+L5.bs.cash_debt",
+    }
+
+
+def derive_l6_mult_forward_pe(
+    mult_pe: Mapping[str, Any] | None,
+    fcst_eps: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.mult.forward_pe — forward P/E = price / consensus forward EPS.
+
+    Computed in the share-unit-safe equivalent form
+    ``mcap / (eps_avg × total_share)`` so we never have to materialise a
+    per-share price. mcap (``total_mv_cny``) and ``total_share`` (raw shares)
+    are read from the ``L6.mult.pe`` payload; the consensus next-period EPS
+    (``eps_avg``) from ``L5.fcst.eps_cf``.
+
+    Returns ``None`` (=> Inactive) when mcap/shares/eps_avg are missing or
+    when eps_avg is non-positive (forward P/E is undefined for loss-making
+    consensus).
+    """
+
+    if not isinstance(mult_pe, Mapping) or not isinstance(fcst_eps, Mapping):
+        return None
+    mcap = mult_pe.get("total_mv_cny")
+    shares = mult_pe.get("total_share")
+    eps_avg = fcst_eps.get("eps_avg")
+    if mcap is None or shares is None or eps_avg is None:
+        return None
+    mcap_f = _coerce_float(mcap, default=-1.0)
+    shares_f = _coerce_float(shares, default=0.0)
+    eps_f = _coerce_float(eps_avg, default=0.0)
+    if mcap_f <= 0 or shares_f <= 0 or eps_f <= 0:
+        return None
+
+    price = mcap_f / shares_f
+    fwd_earnings = eps_f * shares_f
+    ratio = mcap_f / fwd_earnings  # == price / eps_avg
+    return {
+        "scalar": round(ratio, 4),
+        "unit": "ratio",
+        "price_cny": round(price, 4),
+        "eps_avg": eps_f,
+        "source": "L6.mult.pe+L5.fcst.eps_cf",
+    }
+
+
+def derive_l6_mult_peg(
+    mult_pe: Mapping[str, Any] | None,
+    revenue_growth: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.mult.peg — PEG = trailing PE / earnings-growth-percent.
+
+    PEG conventionally divides the P/E by the *earnings* growth rate (in
+    percent). There is no clean per-stock forward-earnings-growth dp_id in the
+    snapshot, so we use revenue YoY growth (``L5.is.revenue_growth.yoy_pct``,
+    already a percent) as the growth proxy and flag it via ``growth_basis``.
+    PE is the trailing ``L6.mult.pe.scalar`` (pe_ttm).
+
+    Returns ``None`` (=> Inactive) when PE or growth is missing, or when
+    growth_pct <= 0 (PEG is undefined / not meaningful for flat-or-shrinking
+    growth).
+    """
+
+    if not isinstance(mult_pe, Mapping) or not isinstance(revenue_growth, Mapping):
+        return None
+    pe = mult_pe.get("scalar")
+    growth_pct = revenue_growth.get("yoy_pct")
+    if pe is None or growth_pct is None:
+        return None
+    pe_f = _coerce_float(pe, default=0.0)
+    growth_f = _coerce_float(growth_pct, default=0.0)
+    if pe_f <= 0 or growth_f <= 0:
+        return None
+
+    peg = pe_f / growth_f
+    return {
+        "scalar": round(peg, 4),
+        "unit": "ratio",
+        "pe": pe_f,
+        "growth_pct": growth_f,
+        "growth_basis": "revenue_yoy",
+        "source": "L6.mult.pe+L5.is.revenue_growth",
+    }
+
+
+def derive_l6_state_peg_match(
+    mult_peg: Mapping[str, Any] | None,
+) -> dict | None:
+    """L6.state.peg_match — banded interpretation of PEG.
+
+    Bands follow the GARP convention already used by
+    ``derive_l8_val_overvalued_snapshot`` (PEG >= 2 rich, < 1 cheap):
+
+      * PEG <  1.0  -> "undervalued"  (score +1.0 — growth cheap vs price)
+      * 1.0 <= PEG <= 2.0 -> "fair"   (linearly scored +1..-1 across the band)
+      * PEG >  2.0  -> "expensive"    (score -1.0 — price rich vs growth)
+
+    The numeric ``score`` (∈ [-1, 1], positive = attractive) is what the
+    valuation_rerating aggregator consumes. Returns ``None`` (=> Inactive)
+    when PEG is unavailable.
+    """
+
+    if not isinstance(mult_peg, Mapping):
+        return None
+    peg = mult_peg.get("scalar")
+    if peg is None:
+        peg = mult_peg.get("value")
+    if peg is None:
+        return None
+    peg_f = _coerce_float(peg, default=-1.0)
+    if peg_f <= 0:
+        return None
+
+    if peg_f < 1.0:
+        band, score = "undervalued", 1.0
+    elif peg_f <= 2.0:
+        band = "fair"
+        # Linear: PEG 1.0 -> +1.0, PEG 2.0 -> -1.0.
+        score = _clip(1.0 - 2.0 * (peg_f - 1.0), -1.0, 1.0)
+    else:
+        band, score = "expensive", -1.0
+
+    return {
+        "scalar": round(score, 4),
+        "score": round(score, 4),
+        "band": band,
+        "peg": peg_f,
+        "source": "L6.mult.peg",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1071,11 +1679,21 @@ def derive_l11_trade_signal(
     long_score: Mapping[str, Any] | None,
     mode: Mapping[str, Any] | None,
 ) -> dict | None:
-    """L11.trade.signal — BUY/HOLD/WATCH/AVOID label.
+    """L11.trade.signal — BUY/HOLD/WATCH/AVOID label (derive-layer diagnostic).
 
-    Spec §27.4: derived from L11.short/mid/long.score + L11.mode.
-    Thresholds mirror ``scoring._trading_signal_from_mix``.
+    Spec §27.4: a label over L11.short/mid/long.score (a derive-Tier-1
+    aggregation) under the §27.4 horizon weights, with L11.mode overrides. It
+    SHARES score_company's absolute BUY/HOLD/WATCH cut points (imported below so
+    they can't silently drift apart again — the previous hard-coded
+    0.45/0.10/-0.20 had diverged from scoring's), but it is computed on a
+    DIFFERENT input than ``score_company.base_score`` and carries mode overrides,
+    so it can legitimately disagree with the user-facing ``trading_signal``. This
+    node is ``participates_in_score=false`` (audit_only): it does NOT feed the
+    score and is not surfaced in the score / server response.
     """
+    from mvp20.scoring import (
+        SIGNAL_BUY_THRESHOLD, SIGNAL_HOLD_THRESHOLD, SIGNAL_WATCH_THRESHOLD,
+    )
 
     if not any(x for x in (short_score, mid_score, long_score)):
         return None
@@ -1092,11 +1710,11 @@ def derive_l11_trade_signal(
         signal = "AVOID"
     elif mode_label == "wait_for_confirmation":
         signal = "WATCH"
-    elif mix >= 0.45:
+    elif mix >= SIGNAL_BUY_THRESHOLD:
         signal = "BUY"
-    elif mix >= 0.10:
+    elif mix >= SIGNAL_HOLD_THRESHOLD:
         signal = "HOLD"
-    elif mix >= -0.20:
+    elif mix >= SIGNAL_WATCH_THRESHOLD:
         signal = "WATCH"
     else:
         signal = "AVOID"
@@ -1127,37 +1745,400 @@ def _get_pro_api():
     if not token:
         return None
     ts.set_token(token)
-    return ts.pro_api()
+    return ts.pro_api(timeout=_tushare_timeout_seconds())
 
 
-def _fetch_a_share_history(pro, ts_code: str, days: int = 90) -> dict:
-    """Pull last N days of close + turnover_rate + PE + PB from Tushare."""
+def _tushare_timeout_seconds() -> float:
+    raw = os.environ.get("TUSHARE_TIMEOUT_SECONDS")
+    if not raw:
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    try:
+        timeout = float(raw)
+    except ValueError:
+        log.warning(
+            "[derive] invalid TUSHARE_TIMEOUT_SECONDS=%r; using %.1fs",
+            raw,
+            DEFAULT_TUSHARE_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    if timeout <= 0:
+        log.warning(
+            "[derive] non-positive TUSHARE_TIMEOUT_SECONDS=%r; using %.1fs",
+            raw,
+            DEFAULT_TUSHARE_TIMEOUT_SECONDS,
+        )
+        return DEFAULT_TUSHARE_TIMEOUT_SECONDS
+    return timeout
+
+
+def _fetch_a_share_history(
+    pro, ts_code: str, days: int = 90, pe_pb_days: int = 250,
+) -> dict:
+    """Pull last N days of OHLCV + turnover_rate + PE + PB from Tushare.
+
+    Returns a dict with:
+
+    * ``close``         — desc list of close prices (latest first; used by
+      legacy tier-0 derives)
+    * ``turnover_rate`` — desc list (used for crowdedness)
+    * ``pe_ttm`` / ``pb`` — desc lists (used for historical_quantile)
+    * ``bars``          — **asc** list of full OHLCV Bar dicts ready to
+      feed ``technicals.compute_all`` (oldest → latest)
+
+    Splits the call into ``pro.daily`` (OHLCV) and ``pro.daily_basic``
+    (turnover / valuation) — two calls but cheap with the existing
+    cap and ``_BUCKET_A_SLEEP_S`` rate-limit.
+
+    H-3 fix — valuation-percentile window unification. The OHLCV /
+    technicals / crowdedness derives use the short ``days`` window
+    (default 90 calendar days ≈ 54 trading days). The PE/PB historical
+    percentile fed to ``derive_historical_quantile`` →
+    ``L10.val.historical_quantile`` / ``L8.val.overvalued`` previously
+    reused that same 90-calendar-day window, yielding only ~54 trading
+    days of history — too short to call "historical", and *contradicting*
+    the sibling dp_id ``L6.state.historical_percentile`` which is computed
+    by ``tushare_source._fetch_a_share_historical_percentile`` over a
+    ``history_days=250`` (≈183 trading day) window. Same stock, same
+    metric, two windows → opposite "extreme overvalued" vs "compression"
+    calls (the live 0.87-vs-0.388 discrepancy the audit found).
+
+    Fix: pull the ``daily_basic`` (PE/PB/turnover) series over the LONGER
+    ``pe_pb_days`` window (default 250, matching the L6.state path) and use
+    the full series for PE/PB. ``turnover_rate`` (crowdedness) is sliced
+    back to the short ``days``-equivalent so crowdedness behaviour is
+    unchanged; only the valuation-percentile look-back is widened/unified.
+    """
 
     end = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+    # OHLCV / technicals stay on the short window.
     start = (datetime.now(tz=timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
-    out: dict[str, list] = {"close": [], "turnover_rate": [], "pe_ttm": [], "pb": []}
+    # PE/PB valuation history uses the longer, unified window (+30d buffer
+    # for non-trading days, mirroring _fetch_a_share_historical_percentile).
+    pe_pb_start = (
+        datetime.now(tz=timezone.utc) - timedelta(days=pe_pb_days + 30)
+    ).strftime("%Y%m%d")
+    out: dict[str, list] = {
+        "close": [], "turnover_rate": [], "pe_ttm": [], "pb": [],
+        "bars": [],
+    }
     try:
-        # pro.daily for close prices
-        df_p = pro.daily(ts_code=ts_code, start_date=start, end_date=end,
-                          fields="ts_code,trade_date,close")
+        # pro.daily for full OHLCV — we now use high/low/vol too.
+        df_p = pro.daily(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,open,high,low,close,vol",
+        )
         if df_p is not None and len(df_p) > 0:
-            df_p = df_p.sort_values("trade_date", ascending=False)
-            out["close"] = [float(x) for x in df_p["close"].dropna().tolist()]
-        # pro.daily_basic for PE/PB/turnover_rate
-        df_b = pro.daily_basic(ts_code=ts_code, start_date=start, end_date=end,
+            # L3 correctness fix: ``pro.daily`` is UNADJUSTED, so run_up /
+            # technicals / MAs spike falsely across ex-div / split dates (high-
+            # dividend names worst). Apply ``adj_factor`` → hfq (back-adjusted)
+            # so multi-day price math is consistent through corporate actions.
+            # hfq vs qfq is irrelevant for a return ratio as long as it is used
+            # consistently. PE/PB/turnover (daily_basic, below) are already
+            # adjustment-independent, so only OHLC is scaled. vol is left raw.
+            try:
+                df_a = pro.adj_factor(ts_code=ts_code, start_date=start, end_date=end)
+                fac = {
+                    str(r.get("trade_date")): float(r.get("adj_factor"))
+                    for _, r in df_a.iterrows()
+                    if r.get("trade_date") and r.get("adj_factor") is not None
+                } if df_a is not None else {}
+            except Exception:  # noqa: BLE001 — degrade to raw if adj_factor missing
+                fac = {}
+            if fac:
+                df_p = df_p.copy()
+                f = df_p["trade_date"].astype(str).map(fac).fillna(1.0)
+                for _col in ("open", "high", "low", "close"):
+                    df_p[_col] = df_p[_col] * f
+            df_desc = df_p.sort_values("trade_date", ascending=False)
+            out["close"] = [float(x) for x in df_desc["close"].dropna().tolist()]
+            # technicals.compute_all expects ascending bars (oldest → latest).
+            df_asc = df_p.sort_values("trade_date", ascending=True)
+            bars: list[dict] = []
+            for _, row in df_asc.iterrows():
+                try:
+                    bars.append({
+                        "date": str(row.get("trade_date") or ""),
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "vol": float(row["vol"]) if row.get("vol") is not None else 0.0,
+                    })
+                except (TypeError, ValueError, KeyError):
+                    continue
+            out["bars"] = bars
+        # pro.daily_basic for PE/PB/turnover_rate over the longer PE/PB window.
+        df_b = pro.daily_basic(ts_code=ts_code, start_date=pe_pb_start, end_date=end,
                                 fields="ts_code,trade_date,turnover_rate,pe_ttm,pb")
         if df_b is not None and len(df_b) > 0:
             df_b = df_b.sort_values("trade_date", ascending=False)
-            out["turnover_rate"] = [float(x) for x in df_b["turnover_rate"].dropna().tolist()]
+            # PE/PB: full long series → historical percentile parity with
+            # L6.state.historical_percentile.
             out["pe_ttm"] = [float(x) for x in df_b["pe_ttm"].dropna().tolist()]
             out["pb"] = [float(x) for x in df_b["pb"].dropna().tolist()]
+            # turnover_rate (crowdedness): keep the short recent window so
+            # crowding percentile is unchanged by the PE/PB widening.
+            turnover_full = [float(x) for x in df_b["turnover_rate"].dropna().tolist()]
+            out["turnover_rate"] = turnover_full[:days]
     except Exception as e:  # noqa: BLE001
         log.warning("[derive] history %s failed: %s", ts_code, e)
     return out
 
 
+def _fetch_a_share_weekly_history(pro, ts_code: str, weeks: int = 120) -> list[dict]:
+    """Pull ``weeks`` of weekly OHLCV bars via ``pro.weekly``.
+
+    Returns ascending (oldest → latest) bar dicts shaped like
+    ``_fetch_a_share_history``'s ``bars`` so the same technicals layer
+    consumes them unchanged. Empty list on any error / missing token.
+
+    Tushare ``pro.weekly`` schema:
+        ts_code / trade_date / open / high / low / close / vol / amount
+    """
+
+    end = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+    # Generous: 120 weeks ≈ 840 days; pad to 870 to absorb non-trading weeks.
+    start = (datetime.now(tz=timezone.utc) - timedelta(days=weeks * 7 + 30)).strftime("%Y%m%d")
+    try:
+        df = pro.weekly(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,open,high,low,close,vol",
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("[derive] weekly history %s failed: %s", ts_code, e)
+        return []
+    if df is None or len(df) == 0:
+        return []
+    df_asc = df.sort_values("trade_date", ascending=True)
+    bars: list[dict] = []
+    for _, row in df_asc.iterrows():
+        try:
+            bars.append({
+                "date": str(row.get("trade_date") or ""),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "vol": float(row["vol"]) if row.get("vol") is not None else 0.0,
+            })
+        except (TypeError, ValueError, KeyError):
+            continue
+    return bars
+
+
+def _fetch_a_share_monthly_history(pro, ts_code: str, months: int = 36) -> list[dict]:
+    """Pull ``months`` of monthly OHLCV bars via ``pro.monthly``.
+
+    Same shape as the weekly fetcher — ascending Bar dicts.
+    """
+
+    end = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
+    start = (datetime.now(tz=timezone.utc) - timedelta(days=months * 31 + 30)).strftime("%Y%m%d")
+    try:
+        df = pro.monthly(
+            ts_code=ts_code, start_date=start, end_date=end,
+            fields="ts_code,trade_date,open,high,low,close,vol",
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("[derive] monthly history %s failed: %s", ts_code, e)
+        return []
+    if df is None or len(df) == 0:
+        return []
+    df_asc = df.sort_values("trade_date", ascending=True)
+    bars: list[dict] = []
+    for _, row in df_asc.iterrows():
+        try:
+            bars.append({
+                "date": str(row.get("trade_date") or ""),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "vol": float(row["vol"]) if row.get("vol") is not None else 0.0,
+            })
+        except (TypeError, ValueError, KeyError):
+            continue
+    return bars
+
+
+def _derive_technicals_for_period(
+    bars: list[dict],
+    period_suffix: str,
+    conf_factor: float = 1.0,
+) -> list[tuple[str, dict, str]]:
+    """Compute the 5 weekly/monthly tech sub-dicts on ``bars`` and return
+    emit specs ready to UPSERT.
+
+    ``period_suffix`` ∈ ``("_weekly", "_monthly")``. Produces ``L11.tech.{name}{suffix}``
+    dp_ids for the indicators that carry useful information at lower
+    frequency — **MA / MACD / RSI / KDJ / BOLL**. ATR / OBV / VOL_MA are
+    intentionally skipped because their interpretation depends on the
+    daily-trading frequency they were calibrated for (周线 ATR ≈ daily
+    ATR×√5, but the absolute scalar loses meaning to consumers wired up
+    against the daily product).
+
+    ``conf_factor`` lets callers gently down-weight (e.g. ~0.93 for weekly
+    → ~0.88 effective vs 0.95 daily) to reflect data-update latency at
+    week / month closes.
+
+    Returns a list of ``(dp_id, payload, source)``. Sub-payloads that are
+    wholly-None (e.g. MACD on <35 weekly bars) are skipped. The source
+    string is ``derived:technical_indicators_weekly`` or
+    ``..._monthly`` depending on ``period_suffix``.
+    """
+
+    from mvp20 import technicals
+
+    if not bars:
+        return []
+    tech = technicals.compute_all(bars)
+    source = (
+        "derived:technical_indicators_weekly"
+        if period_suffix == "_weekly"
+        else "derived:technical_indicators_monthly"
+    )
+
+    # Same base confidences as daily (see ``derive_all`` daily emit
+    # specs), multiplied by ``conf_factor`` — weekly ≈ 0.93, monthly ≈
+    # 0.84, giving roughly 0.88 / 0.80 effective on the MA/MACD tier.
+    emit_specs = (
+        ("ma",   0.95),
+        ("macd", 0.90),
+        ("rsi",  0.90),
+        ("kdj",  0.85),
+        ("boll", 0.90),
+    )
+
+    out: list[tuple[str, dict, str]] = []
+    for key, base_conf in emit_specs:
+        sub = tech.get(key) if isinstance(tech, dict) else None
+        if sub is None:
+            continue
+        if isinstance(sub, dict) and all(v is None for v in sub.values()):
+            continue
+        wrapped = dict(sub) if isinstance(sub, dict) else {"scalar": sub}
+        wrapped["as_of"] = tech.get("as_of") if isinstance(tech, dict) else None
+        wrapped["n_bars"] = tech.get("n_bars") if isinstance(tech, dict) else None
+        wrapped["confidence"] = max(0.0, min(1.0, base_conf * conf_factor))
+        dp_id = f"L11.tech.{key}{period_suffix}"
+        out.append((dp_id, wrapped, source))
+    return out
+
+
+def _fmp_rows_to_bars(rows: list[dict]) -> list[dict]:
+    """Convert FMP /historical-price-eod/light rows (desc by date) into
+    ascending OHLCV bars compatible with ``technicals.compute_all``.
+
+    The light endpoint returns ``{symbol, date, price, volume}`` — no real
+    OHLC. For technicals that consume only close (MA / EMA / MACD / RSI /
+    OBV) this is fine; for KDJ / BOLL / ATR which read high/low we fall
+    back to ``open=high=low=close=price`` so those still produce values
+    (slightly degraded but non-crashing). When FMP ships full OHLC fields
+    (``open`` / ``high`` / ``low`` / ``close``) we honour them.
+    """
+
+    asc = sorted(rows, key=lambda r: r.get("date") or "")
+    bars: list[dict] = []
+    for r in asc:
+        close_v = r.get("close")
+        if close_v is None:
+            close_v = r.get("price")
+        try:
+            c = float(close_v)
+        except (TypeError, ValueError):
+            continue
+        try:
+            o = float(r["open"]) if r.get("open") is not None else c
+            h = float(r["high"]) if r.get("high") is not None else c
+            lo = float(r["low"]) if r.get("low") is not None else c
+            v = float(r["volume"]) if r.get("volume") is not None else 0.0
+        except (TypeError, ValueError):
+            o = h = lo = c
+            v = 0.0
+        bars.append({
+            "date": str(r.get("date") or ""),
+            "open": o, "high": h, "low": lo, "close": c, "vol": v,
+        })
+    return bars
+
+
+def _fetch_us_share_history(ts_code: str, days: int = 90) -> dict:
+    """Pull last N days of OHLCV for a US stock via FMP's price-history
+    light endpoint. ``ts_code`` is the canonical ``NVDA.US`` form; we
+    strip the ``.US`` suffix before calling FMP. Returns the same shape
+    as ``_fetch_a_share_history``; PE / PB / turnover_rate stay empty
+    here (FMP source already emits its own snapshot derives for those).
+    """
+
+    out: dict[str, list] = {
+        "close": [], "turnover_rate": [], "pe_ttm": [], "pb": [],
+        "bars": [],
+    }
+    if not ts_code.endswith(".US"):
+        return out
+    symbol = ts_code[:-3]
+    try:
+        from mvp20.sources.fmp_source import _fetch_price_history_cached
+        rows = _fetch_price_history_cached(symbol, lookback_days=max(days, 80))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[derive] US history %s failed: %s", ts_code, e)
+        return out
+    if not rows:
+        return out
+    bars = _fmp_rows_to_bars(rows)
+    out["bars"] = bars
+    out["close"] = [b["close"] for b in reversed(bars)]
+    return out
+
+
+def _fetch_hk_share_history(ts_code: str, days: int = 90) -> dict:
+    """Pull last N days of OHLCV for a HK stock via FMP. ``ts_code`` is
+    the canonical ``00700.HK`` form; FMP expects ``0700.HK`` (leading
+    zero stripped to four digits). Futu has no kline helper in this
+    codebase, so FMP is the only option — if FMP returns nothing we
+    return empty bars and the caller skips technical emits.
+
+    TODO: switch to Futu ``request_history_kline`` once a helper is
+    wired into ``mvp20/sources/futu_source.py``.
+    """
+
+    out: dict[str, list] = {
+        "close": [], "turnover_rate": [], "pe_ttm": [], "pb": [],
+        "bars": [],
+    }
+    if not ts_code.endswith(".HK"):
+        return out
+    base = ts_code[:-3]
+    # HK tickers are stored as 5-digit zero-padded (e.g. ``00700``). FMP
+    # uses 4-digit form (``0700.HK``); strip a leading zero when present.
+    if base.startswith("0") and len(base) == 5:
+        symbol = base[1:] + ".HK"
+    else:
+        symbol = base + ".HK"
+    try:
+        from mvp20.sources.fmp_source import _fetch_price_history_cached
+        rows = _fetch_price_history_cached(symbol, lookback_days=max(days, 80))
+    except Exception as e:  # noqa: BLE001
+        log.warning("[derive] HK history %s failed: %s", ts_code, e)
+        return out
+    if not rows:
+        return out
+    bars = _fmp_rows_to_bars(rows)
+    out["bars"] = bars
+    out["close"] = [b["close"] for b in reversed(bars)]
+    return out
+
+
 def is_a_share(ts_code: str) -> bool:
     return ts_code.endswith((".SH", ".SZ", ".BJ"))
+
+
+def is_us_share(ts_code: str) -> bool:
+    return ts_code.endswith(".US")
+
+
+def is_hk_share(ts_code: str) -> bool:
+    return ts_code.endswith(".HK")
 
 
 # ---------------------------------------------------------------------------
@@ -1170,6 +2151,8 @@ def derive_all(
     history_days: int = 90,
     limit_companies: int | None = None,
     a_share_only: bool = True,
+    ts_codes: list[str] | None = None,
+    commit_every: int | None = None,
 ) -> dict[str, int]:
     """Iterate every (ts_code) in realtime_current, compute Tier 0 derived
     dp_ids, UPSERT them back with source ``derived:*``. Returns counters.
@@ -1180,9 +2163,251 @@ def derive_all(
 
     from .storage import upsert_realtime
 
-    pro = _get_pro_api() if a_share_only else None
+    # Always try Tushare init — returns None if no token. With
+    # ``a_share_only=False`` we still need it for any A-share that lives
+    # in the universe alongside US / HK.
+    pro = _get_pro_api()
     if pro is None and a_share_only:
         log.warning("[derive] no Tushare token — skipping A-share derives")
+        return {"companies_processed": 0, "derived_rows": 0}
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        all_ts = [r[0] for r in conn.execute(
+            "SELECT DISTINCT ts_code FROM realtime_current ORDER BY ts_code"
+        ).fetchall()]
+    finally:
+        conn.close()
+
+    if a_share_only:
+        all_ts = [t for t in all_ts if is_a_share(t)]
+    else:
+        # Keep only ts_codes we have a fetcher for (A / US / HK). Avoids
+        # wasted iterations on sentinel rows (e.g. INDUSTRY:* / MARKET:*).
+        all_ts = [
+            t for t in all_ts
+            if is_a_share(t) or is_us_share(t) or is_hk_share(t)
+        ]
+    if ts_codes:
+        # Single-stock / subset derive (used by onboarding one new stock so the
+        # preliminary pass stays fast instead of re-deriving the whole universe).
+        want = {t.upper() for t in ts_codes}
+        all_ts = [t for t in all_ts if t.upper() in want]
+    if limit_companies:
+        all_ts = all_ts[:limit_companies]
+
+    if commit_every is None:
+        try:
+            commit_every = int(os.environ.get("DERIVE_COMMIT_EVERY", "100"))
+        except ValueError:
+            commit_every = 100
+    commit_every = max(1, commit_every)
+
+    derived_rows: list[tuple] = []
+    written_rows = 0
+    now = int(time.time())
+    log.info(
+        "[derive] start companies=%d history_days=%d commit_every=%d",
+        len(all_ts), history_days, commit_every,
+    )
+
+    def _flush(reason: str) -> None:
+        nonlocal derived_rows, written_rows
+        if not derived_rows:
+            return
+        n = upsert_realtime(db_path, derived_rows)
+        written_rows += n
+        log.info("[derive] flushed %d rows (%s; total_written=%d)",
+                 n, reason, written_rows)
+        derived_rows = []
+
+    for idx, ts_code in enumerate(all_ts):
+        # Pull current values for this stock
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            # Source-aware reads: a row whose ``source`` is ``mock:*`` carries
+            # a fabricated scalar and must NOT flow into quantile/overvalued
+            # derives. ``_read_realtime_value_with_source`` returns ``None`` for
+            # such rows (defense-in-depth — the DB may still hold legacy mock
+            # rows even after the collector stopped emitting them).
+            current_pe_payload, _ = _read_realtime_value_with_source(conn, ts_code, "L6.mult.pe")
+            current_pb_payload, _ = _read_realtime_value_with_source(conn, ts_code, "L6.mult.pb")
+            volume_turnover_payload, _ = _read_realtime_value_with_source(
+                conn, ts_code, "L7.trade.volume_turnover"
+            )
+        finally:
+            conn.close()
+
+        current_pe = (current_pe_payload or {}).get("scalar") if isinstance(current_pe_payload, dict) else None
+        current_pb = (current_pb_payload or {}).get("scalar") if isinstance(current_pb_payload, dict) else None
+        current_turnover_rate = (
+            (volume_turnover_payload or {}).get("turnover_rate_pct")
+            if isinstance(volume_turnover_payload, dict) else None
+        )
+
+        # Pull history — dispatch by market suffix so US/HK use FMP while
+        # A-share continues to use Tushare. Each fetcher returns the same
+        # shape (``{"bars": [...], "close": [...], ...}``) so the rest of
+        # the loop is source-agnostic.
+        if is_a_share(ts_code):
+            hist = _fetch_a_share_history(pro, ts_code, days=history_days) if pro else {}
+        elif is_us_share(ts_code):
+            hist = _fetch_us_share_history(ts_code, days=history_days)
+        elif is_hk_share(ts_code):
+            hist = _fetch_hk_share_history(ts_code, days=history_days)
+        else:
+            hist = {}
+
+        # Derive Tier 0 only
+        run_up = derive_run_up(hist.get("close", []))
+        crowd = derive_crowdedness(current_turnover_rate, hist.get("turnover_rate", []))
+        quantile = derive_historical_quantile(
+            current_pe, hist.get("pe_ttm", []),
+            current_pb, hist.get("pb", []),
+        )
+        overvalued = derive_overvalued(quantile)
+
+        # Technical-indicator pack — MA / EMA / MACD / RSI / KDJ / BOLL /
+        # VOL_MA / ATR / OBV. Emits seven independent L11.tech.* dp_ids so
+        # downstream callers (BFF / FrontEnd) can subscribe to any subset
+        # without pulling the whole pack. Each sub-payload is None when
+        # input is too short for that indicator (see ``compute_all``).
+        from mvp20 import technicals
+        bars = hist.get("bars", [])
+        tech = technicals.compute_all(bars) if bars else {}
+
+        tech_emit_specs = (
+            # (output_dp_id, payload-key, confidence)
+            ("L11.tech.ma",     "ma",     0.95),
+            ("L11.tech.macd",   "macd",   0.90),
+            ("L11.tech.rsi",    "rsi",    0.90),
+            ("L11.tech.kdj",    "kdj",    0.85),
+            ("L11.tech.boll",   "boll",   0.90),
+            ("L11.tech.vol_ma", "vol_ma", 0.90),
+            ("L11.tech.atr",    "atr14",  0.85),
+            ("L11.tech.obv",    "obv",    0.80),
+        )
+
+        emit: list[tuple[str, Any, str]] = [
+            ("L6.priced.run_up", run_up, "derived:price_history"),
+            ("L6.priced.crowdedness", crowd, "derived:turnover_history"),
+            ("L10.val.historical_quantile", quantile, "derived:pe_pb_history"),
+            ("L8.val.overvalued", overvalued, "derived:from_quantile"),
+        ]
+        # OHLCV bar history — capped to the most recent 90 bars so the
+        # ``/api/project-ult/technicals?return_series=N`` endpoint can return
+        # K-line + 均线叠加 data without an extra Tushare round-trip.
+        if bars:
+            emit.append((
+                "L11.tech.bars",
+                {"bars": bars[-90:], "as_of": tech.get("as_of"), "n_bars": len(bars)},
+                "derived:technical_indicators",
+            ))
+        for dp_id, key, conf in tech_emit_specs:
+            sub = tech.get(key) if isinstance(tech, dict) else None
+            if sub is None:
+                continue
+            if isinstance(sub, dict) and all(v is None for v in sub.values()):
+                # Whole sub-dict empty (e.g. <35 bars for MACD) — skip emit.
+                continue
+            wrapped: dict[str, Any]
+            if isinstance(sub, dict):
+                wrapped = dict(sub)
+            else:
+                # scalar (atr / obv) → wrap so the value_json is uniform.
+                wrapped = {"scalar": sub}
+            wrapped["as_of"] = tech.get("as_of") if isinstance(tech, dict) else None
+            wrapped["n_bars"] = tech.get("n_bars") if isinstance(tech, dict) else None
+            wrapped["confidence"] = conf
+            emit.append((dp_id, wrapped, "derived:technical_indicators"))
+
+        # Pattern recognition — translate the raw indicator pack above into
+        # named, structured signals (golden/death cross, MACD divergence,
+        # double top/bottom, RSI/KDJ zones, BOLL breakout, volume-price).
+        # Reuses ``tech`` so MA / EMA / RSI / KDJ are not recomputed. Wrapped
+        # in try/except so a defect in pattern detection cannot break the
+        # core technical-indicator emit pipeline above.
+        try:
+            from mvp20 import patterns as _patterns
+            patterns_result = _patterns.detect_all(bars, indicators=tech) if bars else None
+            if patterns_result and (
+                patterns_result.get("patterns") or patterns_result.get("current_signals")
+            ):
+                patterns_payload = dict(patterns_result)
+                patterns_payload.setdefault("confidence", 0.75)
+                emit.append((
+                    "L11.tech.patterns",
+                    patterns_payload,
+                    "derived:pattern_detection",
+                ))
+        except Exception as _pat_err:  # noqa: BLE001
+            log.warning("[derive] patterns %s failed: %s", ts_code, _pat_err)
+
+        for dp_id, payload, src in emit:
+            if payload is None:
+                continue
+            derived_rows.append((
+                ts_code, dp_id,
+                json.dumps(payload, ensure_ascii=False),
+                "Known", payload.get("confidence", 0.6) if isinstance(payload, dict) else 0.6,
+                src, now,
+            ))
+
+        if (idx + 1) % 20 == 0:
+            log.info("[derive] %d/%d processed (%d pending rows, %d written)",
+                     idx + 1, len(all_ts), len(derived_rows), written_rows)
+        if (idx + 1) % commit_every == 0:
+            _flush(f"{idx + 1}/{len(all_ts)} companies")
+
+    _flush("final")
+    return {"companies_processed": len(all_ts), "derived_rows": written_rows}
+
+
+# ---------------------------------------------------------------------------
+# Weekly / monthly periodic technical-indicator drivers
+# ---------------------------------------------------------------------------
+#
+# These are siblings of ``derive_all`` but only compute the
+# longer-timeframe ``L11.tech.*_weekly`` / ``L11.tech.*_monthly`` dp_ids.
+# They reuse the same ``technicals`` library — the bars are weekly /
+# monthly OHLCV rather than daily, but the formulas (MA / MACD / RSI /
+# KDJ / BOLL) are identical.
+#
+# Only A-share is supported today because Tushare ``pro.weekly`` /
+# ``pro.monthly`` cover SH / SZ / BJ. HK / US weekly+monthly is a TODO
+# pending an FMP / Futu equivalent (FMP has /historical-chart/4hour and
+# adjustable timeframes, but no native weekly/monthly aggregate that
+# matches Tushare's calendar).
+
+
+def derive_all_weekly(
+    db_path: Path,
+    history_weeks: int = 120,
+    limit_companies: int | None = None,
+    a_share_only: bool = True,
+    conf_factor: float = 0.93,
+) -> dict[str, int]:
+    """Compute ``L11.tech.*_weekly`` for every ts_code in the snapshot.
+
+    Pulls ``history_weeks`` of weekly OHLCV bars (Tushare ``pro.weekly``)
+    per stock and writes 5 dp_ids back per stock with
+    ``source="derived:technical_indicators_weekly"``.
+
+    The default ``conf_factor=0.93`` decays the daily-equivalent base
+    confidences (0.95/0.90/...) to roughly ``0.88`` on MA — a deliberate
+    nudge to reflect that weekly bars only fully refresh on Friday close
+    and may lag during the week.
+
+    Returns counters identical in shape to ``derive_all``::
+
+        {"companies_processed": N, "derived_rows": M}
+    """
+
+    from .storage import upsert_realtime
+
+    pro = _get_pro_api() if a_share_only else None
+    if pro is None and a_share_only:
+        log.warning("[derive] no Tushare token — skipping A-share weekly derives")
         return {"companies_processed": 0, "derived_rows": 0}
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -1202,55 +2427,82 @@ def derive_all(
     now = int(time.time())
 
     for idx, ts_code in enumerate(all_ts):
-        # Pull current values for this stock
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        try:
-            current_pe_payload = _read_realtime_value(conn, ts_code, "L6.mult.pe")
-            current_pb_payload = _read_realtime_value(conn, ts_code, "L6.mult.pb")
-            volume_turnover_payload = _read_realtime_value(conn, ts_code, "L7.trade.volume_turnover")
-        finally:
-            conn.close()
-
-        current_pe = (current_pe_payload or {}).get("scalar") if isinstance(current_pe_payload, dict) else None
-        current_pb = (current_pb_payload or {}).get("scalar") if isinstance(current_pb_payload, dict) else None
-        current_turnover_rate = (
-            (volume_turnover_payload or {}).get("turnover_rate_pct")
-            if isinstance(volume_turnover_payload, dict) else None
+        bars = _fetch_a_share_weekly_history(pro, ts_code, weeks=history_weeks)
+        specs = _derive_technicals_for_period(
+            bars, period_suffix="_weekly", conf_factor=conf_factor,
         )
-
-        # Pull history
-        hist = _fetch_a_share_history(pro, ts_code, days=history_days) if pro else {}
-
-        # Derive Tier 0 only
-        run_up = derive_run_up(hist.get("close", []))
-        crowd = derive_crowdedness(current_turnover_rate, hist.get("turnover_rate", []))
-        quantile = derive_historical_quantile(
-            current_pe, hist.get("pe_ttm", []),
-            current_pb, hist.get("pb", []),
-        )
-        overvalued = derive_overvalued(quantile)
-
-        emit = [
-            ("L6.priced.run_up", run_up, "derived:price_history"),
-            ("L6.priced.crowdedness", crowd, "derived:turnover_history"),
-            ("L10.val.historical_quantile", quantile, "derived:pe_pb_history"),
-            ("L8.val.overvalued", overvalued, "derived:from_quantile"),
-        ]
-        for dp_id, payload, src in emit:
-            if payload is None:
-                continue
+        for dp_id, payload, src in specs:
             derived_rows.append((
                 ts_code, dp_id,
                 json.dumps(payload, ensure_ascii=False),
-                "Known", payload.get("confidence", 0.6) if isinstance(payload, dict) else 0.6,
+                "Known", payload.get("confidence", 0.6),
                 src, now,
             ))
-
         if (idx + 1) % 20 == 0:
-            log.info("[derive] %d/%d processed (%d derived rows so far)",
+            log.info("[derive-weekly] %d/%d processed (%d rows so far)",
                      idx + 1, len(all_ts), len(derived_rows))
 
-    # Bulk UPSERT
+    n = upsert_realtime(db_path, derived_rows)
+    return {"companies_processed": len(all_ts), "derived_rows": n}
+
+
+def derive_all_monthly(
+    db_path: Path,
+    history_months: int = 36,
+    limit_companies: int | None = None,
+    a_share_only: bool = True,
+    conf_factor: float = 0.84,
+) -> dict[str, int]:
+    """Compute ``L11.tech.*_monthly`` for every ts_code in the snapshot.
+
+    Pulls ``history_months`` of monthly OHLCV bars (Tushare
+    ``pro.monthly``) per stock and writes 5 dp_ids back per stock with
+    ``source="derived:technical_indicators_monthly"``.
+
+    The default ``conf_factor=0.84`` decays daily-equivalent base
+    confidences to roughly ``0.80`` on MA — monthly bars refresh once
+    per month and are the most stale of the three timeframes.
+    """
+
+    from .storage import upsert_realtime
+
+    pro = _get_pro_api() if a_share_only else None
+    if pro is None and a_share_only:
+        log.warning("[derive] no Tushare token — skipping A-share monthly derives")
+        return {"companies_processed": 0, "derived_rows": 0}
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        all_ts = [r[0] for r in conn.execute(
+            "SELECT DISTINCT ts_code FROM realtime_current ORDER BY ts_code"
+        ).fetchall()]
+    finally:
+        conn.close()
+
+    if a_share_only:
+        all_ts = [t for t in all_ts if is_a_share(t)]
+    if limit_companies:
+        all_ts = all_ts[:limit_companies]
+
+    derived_rows: list[tuple] = []
+    now = int(time.time())
+
+    for idx, ts_code in enumerate(all_ts):
+        bars = _fetch_a_share_monthly_history(pro, ts_code, months=history_months)
+        specs = _derive_technicals_for_period(
+            bars, period_suffix="_monthly", conf_factor=conf_factor,
+        )
+        for dp_id, payload, src in specs:
+            derived_rows.append((
+                ts_code, dp_id,
+                json.dumps(payload, ensure_ascii=False),
+                "Known", payload.get("confidence", 0.6),
+                src, now,
+            ))
+        if (idx + 1) % 20 == 0:
+            log.info("[derive-monthly] %d/%d processed (%d rows so far)",
+                     idx + 1, len(all_ts), len(derived_rows))
+
     n = upsert_realtime(db_path, derived_rows)
     return {"companies_processed": len(all_ts), "derived_rows": n}
 
@@ -1277,7 +2529,24 @@ _FORMULA_REGISTRY: list[tuple[str, list[str], Callable[..., dict | None]]] = [
     ], derive_l7_mood_fomo),
     ("L10.val.expansion_compression", [
         "L6.state.expansion_compression",
+        # US fallback inputs (FMP-side): synthesise regime from PE + quantile
+        # when no upstream L6.state.expansion_compression exists.
+        "L6.mult.pe", "L10.val.historical_quantile",
+        "L6.state.historical_percentile",
     ], derive_l10_val_expansion_compression),
+
+    # ---- Tier 1.5: snapshot fallbacks for Tier 0 dp_ids ----
+    # These re-emit `L6.priced.run_up` and `L8.val.overvalued` when the
+    # legacy A-share Tier 0 derive (derive_all) didn't run for this ts_code,
+    # using FMP-side inputs already in the snapshot. The runner skips emit
+    # when the same dp_id is already Known from a non-derive source.
+    ("L6.priced.run_up", [
+        "L5.surprise.preprice",
+    ], derive_l6_priced_run_up_snapshot),
+    ("L8.val.overvalued", [
+        "L10.val.historical_quantile", "L6.state.historical_percentile",
+        "L6.mult.peg", "L6.mult.pe",
+    ], derive_l8_val_overvalued_snapshot),
 
     # ---- Tier 3: L8 risks ----
     ("L8.industry.demand_supply", [
@@ -1298,9 +2567,13 @@ _FORMULA_REGISTRY: list[tuple[str, list[str], Callable[..., dict | None]]] = [
     ], derive_l6_path_tag),
     ("L6.path.second_derivative", [
         "L6.state.historical_percentile", "L6.priced.run_up",
+        # US fallback — FMP surprise.preprice carries 5/10/20d run-up.
+        "L5.surprise.preprice",
     ], derive_l6_path_second_derivative),
     ("L6.sens.growth_margin", [
         "L5.fina.gross_margin", "L5.fina.revenue_yoy",
+        # US fallback — FMP income-statement + financial-growth fields.
+        "L5.is.gross_margin", "L5.is.revenue_growth",
     ], derive_l6_sens_growth_margin),
     ("L6.sens.cashflow", [
         "L5.fina.ocf_quality", "L5.cf.fcf",
@@ -1311,6 +2584,34 @@ _FORMULA_REGISTRY: list[tuple[str, list[str], Callable[..., dict | None]]] = [
     ("L6.sens.risk_narrative", [
         "L9.media.report", "L9.event.intraday_news", "L5.surprise.sell_side",
     ], derive_l6_sens_risk_narrative),
+
+    # ---- Tier 2: L6 valuation multiples (snapshot-derive) ----
+    # mcap + shares are carried in the L6.mult.pe payload (Tushare
+    # daily_basic). EBITDA lives in L8.fin.debt_pressure which is frequently
+    # persisted Inactive for low-leverage names — `_INACTIVE_TOLERANT_INPUTS`
+    # lets ev_ebitda read it anyway. peg_match is registered after peg so it
+    # consumes the freshly-derived PEG via `emitted`.
+    ("L6.mult.ev_ebitda", [
+        "L6.mult.pe", "L8.fin.debt_pressure", "L5.bs.cash_debt",
+    ], derive_l6_mult_ev_ebitda),
+    ("L6.mult.forward_pe", [
+        "L6.mult.pe", "L5.fcst.eps_cf",
+    ], derive_l6_mult_forward_pe),
+    ("L6.mult.peg", [
+        "L6.mult.pe", "L5.is.revenue_growth",
+    ], derive_l6_mult_peg),
+    ("L6.state.peg_match", [
+        "L6.mult.peg",
+    ], derive_l6_state_peg_match),
+
+    # ---- Tier 2: L6 priced-in news-age decay (snapshot-derive) ----
+    # Time-decayed "still being priced-in" discount from the freshest
+    # L9.event.intraday_announcement ann_date. The formula declares a `now`
+    # parameter so DeriveRunner._run_one injects the runner's `now` epoch for
+    # a deterministic "today" (see the now-injection in _run_one).
+    ("L6.priced.news_age", [
+        "L9.event.intraday_announcement",
+    ], derive_l6_priced_news_age),
 
     # ---- Tier 1: L11 composites (depend on Tier 2-4 outputs) ----
     ("L11.short.score", [
@@ -1335,6 +2636,35 @@ _FORMULA_REGISTRY: list[tuple[str, list[str], Callable[..., dict | None]]] = [
         "L11.short.score", "L11.mid.score", "L11.long.score", "L11.mode",
     ], derive_l11_trade_signal),
 ]
+
+
+# Output dp_ids whose formula declares a ``now`` parameter. The DeriveRunner
+# passes the runner's ``now`` epoch (seconds) to these as a trailing positional
+# arg so time-decay derives (e.g. ``L6.priced.news_age``) get a deterministic
+# "today" instead of calling ``time.time()`` themselves. Computed once at
+# import by signature introspection so adding a ``now`` param to a formula is
+# all that's needed to opt in.
+_FORMULAS_WANTING_NOW: frozenset[str] = frozenset(
+    output_dp
+    for output_dp, _inputs, fn in _FORMULA_REGISTRY
+    if "now" in inspect.signature(fn).parameters
+)
+
+
+# Input dp_ids whose payload carries a useful numeric field even when the row
+# is persisted with ``data_status="Inactive"``. The DeriveRunner normally
+# drops Inactive rows from the formula-input pool, but a few carrier rows are
+# Inactive by design while still holding hard data a derive needs:
+#
+#   * ``L8.fin.debt_pressure`` is emitted Inactive whenever no leverage alert
+#     fires (the common case for low-debt A-shares) yet still carries
+#     ``ebitda_cny`` — required by ``L6.mult.ev_ebitda``.
+#
+# For these, ``_run_one`` falls back to the raw snapshot row when the dp_id is
+# absent from the Known-filtered pool, passing the payload through so the
+# formula can judge usability itself. Formulas must still guard on the
+# specific field being present and valid (all of them do).
+_INACTIVE_TOLERANT_INPUTS: frozenset[str] = frozenset({"L8.fin.debt_pressure"})
 
 
 # Bootstrap proxy inputs for L11 sub-scores (event_impact, flow_boost, etc.).
@@ -1577,7 +2907,36 @@ class DeriveRunner:
 
         # Now run each formula
         emitted: dict[str, dict] = {}
+        # Track dp_ids that came from a real non-derive upstream source so we
+        # don't clobber them with a snapshot fallback. Mock rows are excluded:
+        # they should seed downstream calculations when useful, but a concrete
+        # derive formula must be allowed to replace them.
+        upstream_known: dict[str, dict] = {}
+        for dp_id, row in usable.items():
+            src = (row.get("source") or "")
+            if src and not src.startswith("derive:") and not src.startswith("mock:"):
+                upstream_known[dp_id] = row
+
         for output_dp, input_dp_ids, fn in _FORMULA_REGISTRY:
+            # If a real upstream source already wrote this dp_id (Known,
+            # non-derive), preserve it rather than re-emit. This protects
+            # Tier 0 A-share derives (source: derived:price_history) and
+            # any future direct FMP emit for L6.priced.run_up /
+            # L8.val.overvalued from being clobbered by our snapshot
+            # fallback. Note: derived:* (Tier 0) is also preserved here.
+            existing = upstream_known.get(output_dp)
+            if existing is not None and (existing.get("data_status") or "").lower() == "known":
+                # Pass the upstream value through `emitted` so downstream
+                # formulas that depend on `output_dp` still see it.
+                upstream_val = existing.get("value")
+                if isinstance(upstream_val, Mapping):
+                    emitted[output_dp] = dict(upstream_val)
+                else:
+                    emitted[output_dp] = {"scalar": upstream_val}
+                emitted[output_dp]["_input_conf"] = float(existing.get("confidence") or 0.5)
+                emitted[output_dp]["_preserved_upstream"] = True
+                continue
+
             payloads = []
             input_confs = []
             for inp_dp in input_dp_ids:
@@ -1587,6 +2946,13 @@ class DeriveRunner:
                     input_confs.append(emitted[inp_dp].get("_input_conf", 0.5))
                 else:
                     row = usable.get(inp_dp)
+                    if row is None and inp_dp in _INACTIVE_TOLERANT_INPUTS:
+                        # Carrier row dropped by the Known filter (e.g.
+                        # L8.fin.debt_pressure persisted Inactive with no
+                        # leverage alert) but still holds hard data a formula
+                        # needs. Fall back to the raw snapshot row; the formula
+                        # guards on the specific field being valid.
+                        row = snapshot.get(inp_dp)
                     if row is None:
                         payloads.append(None)
                     else:
@@ -1602,16 +2968,37 @@ class DeriveRunner:
                             except (TypeError, ValueError):
                                 pass
 
+            # Inject the runner's `now` epoch into time-aware formulas (those
+            # declaring a `now` parameter, e.g. L6.priced.news_age) so their
+            # "today" is deterministic rather than wall-clock-dependent.
+            call_args = list(payloads)
+            if output_dp in _FORMULAS_WANTING_NOW:
+                call_args.append(now)
             try:
-                result = fn(*payloads)
+                result = fn(*call_args)
             except Exception as exc:  # noqa: BLE001
                 log.warning("[derive] %s for %s failed: %s", output_dp, ts_code, exc)
                 result = None
 
             if result is None:
-                # Inactive emit
+                # Inactive emit. Distinguish genuinely-absent inputs from
+                # "all inputs present but the formula returned None" — e.g. PEG
+                # when growth<=0 is *undefined*, not missing-data. ``payloads[i]``
+                # is None iff ``input_dp_ids[i]`` had no usable row, so list only
+                # those as ``missing_inputs`` and tag the reason; previously this
+                # always listed every declared input, mislabeling present-but-
+                # undefined cases (e.g. 000977 PEG with -24% revenue growth).
                 neutral, status = self._neutral_for(output_dp)
-                payload = {"value": neutral, "_inactive": True, "missing_inputs": input_dp_ids}
+                absent_inputs = [
+                    dp for dp, p in zip(input_dp_ids, payloads) if p is None
+                ]
+                payload = {
+                    "value": neutral, "_inactive": True,
+                    "missing_inputs": absent_inputs,
+                    "inactive_reason": (
+                        "missing_inputs" if absent_inputs else "formula_undefined"
+                    ),
+                }
                 confidence = 0.3
                 data_status = status
             else:
@@ -1633,9 +3020,14 @@ class DeriveRunner:
                 json.dumps(payload, ensure_ascii=False),
                 "Known", 0.5, f"derive:bootstrap_l11_subscore", now,
             ))
-        # Strip _input_conf before persistence to keep payloads clean
+        # Strip _input_conf before persistence to keep payloads clean.
+        # Skip preserved-upstream rows so we don't overwrite the original
+        # row's source attribution (Tier 0 derived:* or upstream fmp:*).
         for dp_id, payload in emitted.items():
-            persist = {k: v for k, v in payload.items() if k != "_input_conf"}
+            if payload.get("_preserved_upstream"):
+                continue
+            persist = {k: v for k, v in payload.items()
+                       if k not in ("_input_conf", "_preserved_upstream")}
             data_status = "Inactive" if payload.get("_inactive") else "Known"
             confidence = float(payload.get("confidence", 0.5))
             formula_id = dp_id.replace(".", "_").lower()
@@ -1646,8 +3038,14 @@ class DeriveRunner:
                 f"derive:{formula_id}", now,
             ))
 
-        status_map = {dp: ("Inactive" if payload.get("_inactive") else "Known")
-                      for dp, payload in emitted.items()}
+        status_map = {}
+        for dp, payload in emitted.items():
+            if payload.get("_preserved_upstream"):
+                status_map[dp] = "Known"
+            elif payload.get("_inactive"):
+                status_map[dp] = "Inactive"
+            else:
+                status_map[dp] = "Known"
         return rows, status_map
 
     def run_all(

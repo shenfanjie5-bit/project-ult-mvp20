@@ -11,6 +11,8 @@ def test_docs_keep_forbidden_claims_negated() -> None:
         "M4.7/financial-doc complete.",
         "Contracts subtype changes.",
         "New relation types.",
+        "A-share score completion complete.",
+        "Runtime score writes approved.",
     )
     for path in (ROOT / "README.md", ROOT / "docs" / "RUNBOOK.md"):
         text = path.read_text(encoding="utf-8")

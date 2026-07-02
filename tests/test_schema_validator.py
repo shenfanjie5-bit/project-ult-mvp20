@@ -89,6 +89,33 @@ def test_market_share_unknown_key_is_hard_error_in_strict_mode() -> None:
     assert any("diversification" in e and "not in schema" in e for e in hard)
 
 
+def test_l1_tag_schema_requires_tags_only() -> None:
+    errors = schema_validator.validate_value(
+        "L1.role.tag",
+        {"tags": ["龙头供应商"], "role": "leader"},
+        strict=True,
+    )
+    assert any("unknown field 'role'" in e for e in errors)
+
+
+def test_growth_rank_schema_rejects_legacy_keys_in_strict_mode() -> None:
+    errors = schema_validator.validate_value(
+        "L1.position.growth_rank",
+        {
+            "rank": None,
+            "share_pct": None,
+            "trend": "modest_growth",
+            "source_year": "2026Q1",
+            "market_size_unit": None,
+            "growth_pct": 10.2,
+            "rank_bucket": "top",
+        },
+        strict=True,
+    )
+    assert any("unknown field 'growth_pct'" in e for e in errors)
+    assert any("unknown field 'rank_bucket'" in e for e in errors)
+
+
 # ---------------------------------------------------------------------------
 # 5: L3.product.portfolio drift — products: [str] instead of [{name, ...}]
 # ---------------------------------------------------------------------------
@@ -186,13 +213,69 @@ def test_overlay_node_unknown_skips_validation() -> None:
     assert errors == []
 
 
-def test_overlay_node_na_skips_validation() -> None:
+def test_overlay_node_na_with_correct_policy_skips_validation() -> None:
+    """N/A node with correct ``not_applicable_remove`` policy passes
+    value-shape validation (the compiler-parity check is satisfied)."""
+
     node = {
         "dp_id": "L1.position.market_share",
         "data_status": "N/A",
+        "missing_policy": "not_applicable_remove",
         "value": None,
     }
     assert schema_validator.validate_overlay_node(node) == []
+
+
+def test_overlay_node_na_with_wrong_policy_errors() -> None:
+    """Compiler-parity rule: N/A status REQUIRES
+    ``missing_policy=not_applicable_remove`` or compile-overlays rejects."""
+
+    node = {
+        "dp_id": "L1.position.market_share",
+        "data_status": "N/A",
+        "missing_policy": "unknown_reduce_confidence",  # wrong
+        "value": None,
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    assert any("not_applicable_remove" in e for e in errors), errors
+
+
+def test_overlay_node_unknown_required_errors() -> None:
+    """Compiler-parity rule: ``required`` node left Unknown is a hard
+    error — required slots must always be filled (or downgraded)."""
+
+    node = {
+        "dp_id": "L1.position.market_share",
+        "data_status": "Unknown",
+        "required_level": "required",
+        "value": None,
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    assert any("required" in e and "Unknown" in e for e in errors), errors
+
+
+def test_overlay_node_unknown_conditional_required_needs_reason() -> None:
+    """Compiler-parity rule: ``conditional_required`` Unknown nodes must
+    explain themselves via ``missing_reason``."""
+
+    node_missing = {
+        "dp_id": "L1.position.market_share",
+        "data_status": "Unknown",
+        "required_level": "conditional_required",
+        "missing_reason": None,
+        "value": None,
+    }
+    errors = schema_validator.validate_overlay_node(node_missing)
+    assert any("missing_reason" in e for e in errors), errors
+
+    node_with_reason = {
+        "dp_id": "L1.position.market_share",
+        "data_status": "Unknown",
+        "required_level": "conditional_required",
+        "missing_reason": "annual report didn't disclose 排名",
+        "value": None,
+    }
+    assert schema_validator.validate_overlay_node(node_with_reason) == []
 
 
 def test_overlay_node_inactive_skips_validation() -> None:
@@ -223,9 +306,34 @@ def test_overlay_node_empty_optionality_skips_validation() -> None:
     assert schema_validator.validate_overlay_node(node_empty) == []
 
 
-def test_overlay_node_filled_optionality_runs_validation() -> None:
-    """Filled Optionality (current_contribution populated) must still
-    be validated — sneaky unknown sibling keys should surface."""
+def test_overlay_node_filled_optionality_with_split_passes() -> None:
+    """Filled Optionality with BOTH ``current_contribution`` and
+    ``future_option_value`` keys passes the compiler-parity rule."""
+
+    node = {
+        "dp_id": "L2.newbiz.tam",
+        "data_status": "Optionality",
+        "value": {
+            "current_contribution": {"revenue_share_pct": 3.2},
+            "future_option_value": {
+                "tam_usd_or_cny": 1e10,
+                "tam_year": 2027,
+                "source": "company filing",
+            },
+        },
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    # No hard errors expected — Optionality outer-dict layer accepts the
+    # split shape; nested current_contribution / future_option_value are
+    # free-form sub-dicts (not in DP_SCHEMA), so value-shape validator
+    # treats unknown keys as warn at most.
+    hard = [e for e in errors if not e.startswith("[warn]")]
+    assert hard == [], f"unexpected hard errors: {hard}"
+
+
+def test_overlay_node_filled_optionality_missing_future_errors() -> None:
+    """Compiler-parity rule: filled Optionality with ONLY
+    ``current_contribution`` (no ``future_option_value``) is rejected."""
 
     node = {
         "dp_id": "L2.newbiz.tam",
@@ -234,19 +342,45 @@ def test_overlay_node_filled_optionality_runs_validation() -> None:
             "tam_usd_or_cny": 1e10,
             "tam_year": 2027,
             "source": "company filing",
-            "current_contribution": {"some": "thing"},  # not in optional set
+            "current_contribution": {"some": "thing"},  # missing future_option_value
         },
     }
-    # tam_year=2027 valid int, tam_usd_or_cny is float, source is str.
-    # current_contribution is unknown → warn.
     errors = schema_validator.validate_overlay_node(node)
-    # No required-field errors expected.
-    hard = [
-        e
+    assert any(
+        "current_contribution" in e and "future_option_value" in e
         for e in errors
-        if not e.startswith("[warn]")
-    ]
-    assert hard == [], f"unexpected hard errors: {hard}"
+    ), errors
+
+
+def test_overlay_node_filled_optionality_missing_current_errors() -> None:
+    """Compiler-parity rule: filled Optionality with ONLY
+    ``future_option_value`` (no ``current_contribution``) is rejected."""
+
+    node = {
+        "dp_id": "L2.newbiz.tam",
+        "data_status": "Optionality",
+        "value": {
+            "future_option_value": {"tam_year": 2027},
+        },
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    assert any(
+        "current_contribution" in e and "future_option_value" in e
+        for e in errors
+    ), errors
+
+
+def test_overlay_node_filled_optionality_non_dict_value_errors() -> None:
+    """Compiler-parity rule: Optionality ``value`` that's not a dict
+    (e.g. raw scalar 0.5 or a list) is rejected."""
+
+    node = {
+        "dp_id": "L2.newbiz.tam",
+        "data_status": "Optionality",
+        "value": 0.5,
+    }
+    errors = schema_validator.validate_overlay_node(node)
+    assert any("dict" in e for e in errors), errors
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +427,63 @@ def test_module_public_api_is_stable() -> None:
     assert callable(schema_validator.validate_value)
     assert callable(schema_validator.validate_overlay_node)
     assert callable(schema_validator.schema_coverage)
+
+
+def test_natural_language_schema_key_residue_warns() -> None:
+    value = {
+        "rank": None,
+        "share_pct": None,
+        "trend": "decline",
+        "source_year": "2026Q1",
+        "market_size_unit": None,
+        "notes": "rank 和 share_pct 因缺少本地证据留空。",
+    }
+
+    errors = schema_validator.validate_value("L1.position.growth_rank", value)
+
+    assert any(e.startswith("[warn]") and "schema/enum residue" in e for e in errors)
+
+
+def test_stock_attr_valuation_guardrail_text_warns() -> None:
+    value = {
+        "tags": ["估值修复"],
+        "notes": "未把估值倍数、分位数或百分位数字写入标签。",
+    }
+
+    errors = schema_validator.validate_value("L1.stock_attr.tags", value)
+
+    assert any(e.startswith("[warn]") and "valuation guardrail" in e for e in errors)
+
+
+def test_channel_mix_chinese_trend_warns() -> None:
+    value = {
+        "direct_pct": 100.0,
+        "distributor_pct": 0.0,
+        "ecommerce_pct": 0.0,
+        "others_pct": 0.0,
+        "trend": "直销占主导",
+    }
+
+    errors = schema_validator.validate_value("L3.channel.mix", value)
+
+    assert any(e.startswith("[warn]") and "trend must be enum-like" in e for e in errors)
+
+
+def test_channel_mix_all_null_percentages_with_trend_warns() -> None:
+    value = {
+        "direct_pct": None,
+        "distributor_pct": None,
+        "ecommerce_pct": None,
+        "others_pct": None,
+        "trend": "direct_sales_dominant",
+    }
+
+    errors = schema_validator.validate_value("L3.channel.mix", value)
+
+    assert any(
+        e.startswith("[warn]") and "trend must be null when all channel percentages are null" in e
+        for e in errors
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +573,36 @@ def test_codex_high_vs_low_drift_rate_demonstration() -> None:
     assert any("product_categories" in e for e in low_errors)
     # AND it's missing required products list.
     assert any("products" in e and "missing required" in e for e in low_errors)
+
+
+# ---------------------------------------------------------------------------
+# Provenance hygiene (data_source vs data_status)
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_node_with_derived_data_source_fails_strict_only() -> None:
+    """Review #6: Unknown/Unavailable nodes carry value=None, so a
+    ``*_derived`` data_source misattributes a derivation that does not
+    exist. Strict (writer-gate) mode rejects it; default mode stays lenient
+    so existing overlays with the legacy pattern still load."""
+
+    node = {
+        "dp_id": "L4.eff.capacity_utilization",
+        "data_status": "Unknown",
+        "required_level": "conditional_required",
+        "missing_reason": "candidate_unavailable",
+        "data_source": "llm_derived",
+        "value": None,
+    }
+    strict_errors = schema_validator.validate_overlay_node(node, strict=True)
+    assert any("data_source" in e for e in strict_errors), strict_errors
+    assert schema_validator.validate_overlay_node(node, strict=False) == []
+
+    # Null provenance on an Unknown node is the approved shape.
+    node["data_source"] = None
+    assert schema_validator.validate_overlay_node(node, strict=True) == []
+
+    # Non-derived labels (raw feed names etc.) are untouched by the rule.
+    node["data_source"] = "tushare"
+    node["data_status"] = "Unavailable"
+    assert schema_validator.validate_overlay_node(node, strict=True) == []

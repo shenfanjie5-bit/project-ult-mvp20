@@ -1,0 +1,633 @@
+{
+  "generated_at": "2026-06-19T16:39:02+08:00",
+  "inputs": {
+    "remediation_path": "docs/audit/a_share_score_conversion_remediation_queue_2026-06-19.json",
+    "field_closure_path": "docs/audit/a_share_score_field_closure_2026-06-19.json",
+    "dockcase_scan": "not_performed"
+  },
+  "summary": {
+    "formula_policy_packet_count": 6,
+    "current_input_available_count": 6,
+    "valuation_peer_context_packet_count": 3,
+    "business_semantics_packet_count": 3,
+    "replacement_path_ready_count": 3,
+    "direct_formula_ready_count": 0,
+    "known_draft_sufficient_count": 0,
+    "policy_contract_valid_count": 6,
+    "policy_contract_invalid_count": 0,
+    "safe_to_upsert_without_review_count": 0,
+    "production_write_allowed_count": 0,
+    "policy_family_counts": {
+      "block_trade_directional_flow": 1,
+      "capex_intensity_and_trend": 1,
+      "segment_concentration_and_strategy": 1,
+      "valuation_peer_context": 3
+    },
+    "score_target_counts": {
+      "fundamental_score": 2,
+      "funding_score": 1,
+      "valuation_rerating": 3
+    },
+    "score_mutation": "none; this audit is read-only and does not alter realtime_current"
+  },
+  "rows": [
+    {
+      "packet_id": "fe2ec1193692aabe",
+      "dp_id": "L7.flow.block_trade",
+      "score_target": "funding_score",
+      "policy_family": "block_trade_directional_flow",
+      "remediation_class": "formula_policy_required",
+      "conversion_path_status": "not_numeric_no_formula_or_normalizer",
+      "source_data_state": "valid_real",
+      "runtime_valid_real_ts_count": 115,
+      "runtime_numeric_signal_ts_count": 0,
+      "score_company_route_ready": true,
+      "runtime_source_categories": {
+        "tushare": 115
+      },
+      "main_sources": "tushare:block_trade:115",
+      "sample_values": [
+        {
+          "ts_code": "000060.SZ",
+          "status": "Known",
+          "source": "tushare:block_trade",
+          "value": {
+            "total_amount": 1002.51,
+            "trade_count": 1,
+            "trade_date": "20260603",
+            "unit": "万元"
+          }
+        },
+        {
+          "ts_code": "000338.SZ",
+          "status": "Known",
+          "source": "tushare:block_trade",
+          "value": {
+            "total_amount": 10796.8,
+            "trade_count": 1,
+            "trade_date": "20260604",
+            "unit": "万元"
+          }
+        }
+      ],
+      "replacement_path": {
+        "replacement_dp_id": null,
+        "replacement_path_ready": false,
+        "replacement_closure_status": null,
+        "replacement_effective_score_path_ts_count": 0
+      },
+      "formula_policy_template": {
+        "policy_family": "block_trade_directional_flow",
+        "direct_formula_rejected": true,
+        "preferred_path": "score block trades only with buyer/seller direction or discount/premium evidence",
+        "candidate_formula_shape": "bounded funding_score from directional block-trade pressure, using discount/premium, buyer/seller identity, or shareholder-change context",
+        "minimum_required_inputs": [
+          "block-trade amount and count",
+          "block price versus close/VWAP",
+          "buyer/seller side or seat/shareholder identity",
+          "event freshness and free-float/notional normalizer"
+        ],
+        "acceptance_criteria": [
+          "amount/count alone remains data-only",
+          "discount/premium or buyer/seller semantics determine sign",
+          "reviewer approves notional normalizer and freshness decay"
+        ]
+      },
+      "review_blockers": [
+        "review formula direction and bounds",
+        "review required input sufficiency",
+        "confirm replacement/canonical path is insufficient or intentionally bypassed",
+        "create approval record before runtime write"
+      ],
+      "policy_review_status": "formula_policy_review_required",
+      "direct_formula_ready": false,
+      "known_draft_sufficient": false,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "policy_contract_valid": true,
+      "policy_validation_errors": []
+    },
+    {
+      "packet_id": "8a44cd16812487bf",
+      "dp_id": "L5.cf.capex",
+      "score_target": "fundamental_score",
+      "policy_family": "capex_intensity_and_trend",
+      "remediation_class": "formula_policy_required",
+      "conversion_path_status": "not_numeric_no_formula_or_normalizer",
+      "source_data_state": "valid_real",
+      "runtime_valid_real_ts_count": 1640,
+      "runtime_numeric_signal_ts_count": 0,
+      "score_company_route_ready": true,
+      "runtime_source_categories": {
+        "tushare": 1640
+      },
+      "main_sources": "tushare:cashflow:1640",
+      "sample_values": [
+        {
+          "ts_code": "000001.SZ",
+          "status": "Known",
+          "source": "tushare:cashflow",
+          "value": {
+            "scalar": 172000000.0,
+            "unit": "元",
+            "period": "20260331"
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "status": "Known",
+          "source": "tushare:cashflow",
+          "value": {
+            "scalar": 836370204.5,
+            "unit": "元",
+            "period": "20260331"
+          }
+        }
+      ],
+      "replacement_path": {
+        "replacement_dp_id": null,
+        "replacement_path_ready": false,
+        "replacement_closure_status": null,
+        "replacement_effective_score_path_ts_count": 0
+      },
+      "formula_policy_template": {
+        "policy_family": "capex_intensity_and_trend",
+        "direct_formula_rejected": true,
+        "preferred_path": "score capex only after intensity/trend policy is reviewed",
+        "candidate_formula_shape": "bounded fundamental_score from capex intensity versus revenue/assets/OCF plus multi-period trend and growth-stage context",
+        "minimum_required_inputs": [
+          "capex scalar",
+          "reviewed denominator such as revenue, assets, or operating cash flow",
+          "historical capex trend",
+          "growth-stage / industry capex intensity baseline",
+          "policy for when capex is investment versus cash-flow drag"
+        ],
+        "acceptance_criteria": [
+          "absolute capex is never scored by size alone",
+          "negative or unusually high intensity has explicit sign policy",
+          "reviewer approves denominator, bounds, and direction"
+        ]
+      },
+      "review_blockers": [
+        "review formula direction and bounds",
+        "review required input sufficiency",
+        "confirm replacement/canonical path is insufficient or intentionally bypassed",
+        "create approval record before runtime write"
+      ],
+      "policy_review_status": "formula_policy_review_required",
+      "direct_formula_ready": false,
+      "known_draft_sufficient": false,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "policy_contract_valid": true,
+      "policy_validation_errors": []
+    },
+    {
+      "packet_id": "6de525c594d689c9",
+      "dp_id": "L2.segment.revenue_share",
+      "score_target": "fundamental_score",
+      "policy_family": "segment_concentration_and_strategy",
+      "remediation_class": "formula_policy_required",
+      "conversion_path_status": "not_numeric_no_formula_or_normalizer",
+      "source_data_state": "valid_real",
+      "runtime_valid_real_ts_count": 1637,
+      "runtime_numeric_signal_ts_count": 0,
+      "score_company_route_ready": true,
+      "runtime_source_categories": {
+        "tushare": 1641
+      },
+      "main_sources": "tushare:fina_mainbz:1641",
+      "sample_values": [
+        {
+          "ts_code": "000001.SZ",
+          "status": "Known",
+          "source": "tushare:fina_mainbz",
+          "value": {
+            "segments": [
+              {
+                "item": "利息收入:发放贷款及垫款:个人贷款业务(产品)",
+                "revenue_pct": 41.7259,
+                "period": "20251231"
+              },
+              {
+                "item": "利息收入:发放贷款及垫款:公司贷款业务(产品)",
+                "revenue_pct": 23.5319,
+                "period": "20251231"
+              },
+              {
+                "item": "利息收入:金融投资利息收入(产品)",
+                "revenue_pct": 13.8643,
+                "period": "20251231"
+              },
+              {
+                "item": "非利息收入:手续费及佣金收入:银行卡业务(产品)",
+                "revenue_pct": 6.2876,
+                "period": "20251231"
+              },
+              {
+                "item": "利息收入:存放同业、拆放同业及买入返售金融资产(产品)",
+                "revenue_pct": 4.523,
+                "period": "20251231"
+              },
+              {
+                "item": "非利息收入:手续费及佣金收入:代理委托业务(产品)",
+                "revenue_pct": 3.108,
+                "period": "20251231"
+              },
+              {
+                "item": "非利息收入:手续费及佣金收入:其他(产品)",
+                "revenue_pct": 2.0548,
+                "period": "20251231"
+              },
+              {
+                "item": "非利息收入:手续费及佣金收入:结算业务(产品)",
+                "revenue_pct": 1.6037,
+                "period": "20251231"
+              },
+              {
+                "item": "利息收入:存放中央银行款项(产品)",
+                "revenue_pct": 1.5829,
+                "period": "20251231"
+              },
+              {
+                "item": "利息收入:发放贷款及垫款:票据贴现业务(产品)",
+                "revenue_pct": 0.9518,
+                "period": "20251231"
+              },
+              {
+                "item": "非利息收入:手续费及佣金收入:资产托管(产品)",
+                "revenue_pct": 0.7661,
+                "period": "20251231"
+              }
+            ],
+            "period": "20251231"
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "status": "Known",
+          "source": "tushare:fina_mainbz",
+          "value": {
+            "segments": [
+              {
+                "item": "高新技术",
+                "revenue_pct": 81.1692,
+                "period": "20251231"
+              },
+              {
+                "item": "生物医药(行业)",
+                "revenue_pct": 17.1077,
+                "period": "20251231"
+              },
+              {
+                "item": "其他主营业务",
+                "revenue_pct": 1.1345,
+                "period": "20251231"
+              },
+              {
+                "item": "房地产",
+                "revenue_pct": 0.5886,
+                "period": "20251231"
+              },
+              {
+                "item": "其他业务",
+                "revenue_pct": 0.0,
+                "period": "20251231"
+              }
+            ],
+            "period": "20251231"
+          }
+        }
+      ],
+      "replacement_path": {
+        "replacement_dp_id": null,
+        "replacement_path_ready": false,
+        "replacement_closure_status": null,
+        "replacement_effective_score_path_ts_count": 0
+      },
+      "formula_policy_template": {
+        "policy_family": "segment_concentration_and_strategy",
+        "direct_formula_rejected": true,
+        "preferred_path": "score concentration only with reviewed strategic/industry context",
+        "candidate_formula_shape": "bounded fundamental_score from segment concentration, diversification, or strategic exposure after peer/strategy policy review",
+        "minimum_required_inputs": [
+          "segment revenue percentages",
+          "segment taxonomy or target-strategy labels",
+          "industry peer concentration baseline",
+          "policy for whether concentration is advantage, risk, or neutral"
+        ],
+        "acceptance_criteria": [
+          "top-segment share alone is not assumed positive or negative",
+          "segment labels are mapped to reviewed strategy/industry context",
+          "reviewer approves concentration/diversification direction and bounds"
+        ]
+      },
+      "review_blockers": [
+        "review formula direction and bounds",
+        "review required input sufficiency",
+        "confirm replacement/canonical path is insufficient or intentionally bypassed",
+        "create approval record before runtime write"
+      ],
+      "policy_review_status": "formula_policy_review_required",
+      "direct_formula_ready": false,
+      "known_draft_sufficient": false,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "policy_contract_valid": true,
+      "policy_validation_errors": []
+    },
+    {
+      "packet_id": "8f7350f39cc505c2",
+      "dp_id": "L6.mult.pb",
+      "score_target": "valuation_rerating",
+      "policy_family": "valuation_peer_context",
+      "remediation_class": "formula_policy_required",
+      "conversion_path_status": "not_numeric_no_formula_or_normalizer",
+      "source_data_state": "valid_real",
+      "runtime_valid_real_ts_count": 1641,
+      "runtime_numeric_signal_ts_count": 0,
+      "score_company_route_ready": true,
+      "runtime_source_categories": {
+        "tushare": 1641
+      },
+      "main_sources": "tushare:daily_basic:1641",
+      "sample_values": [
+        {
+          "ts_code": "000001.SZ",
+          "status": "Known",
+          "source": "tushare:daily_basic",
+          "value": {
+            "scalar": 0.4734,
+            "unit": "ratio",
+            "ttm": true,
+            "trade_date": "20260610"
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "status": "Known",
+          "source": "tushare:daily_basic",
+          "value": {
+            "scalar": 1.8026,
+            "unit": "ratio",
+            "ttm": true,
+            "trade_date": "20260610"
+          }
+        }
+      ],
+      "replacement_path": {
+        "replacement_dp_id": "L6.state.peer_compare",
+        "replacement_path_ready": true,
+        "replacement_closure_status": "closed_reaches_final_score",
+        "replacement_score_target": "valuation_rerating",
+        "replacement_runtime_valid_real_ts_count": 1403,
+        "replacement_effective_score_path_ts_count": 1403,
+        "replacement_sample_values": [
+          {
+            "ts_code": "000001.SZ",
+            "status": "Known",
+            "source": "tushare:daily_basic.peer_compare",
+            "value": {
+              "stock_pe": 5.0926,
+              "industry_pe_median": 16.1464,
+              "industry_id": "FINANCIAL_HIGH_DIVIDEND",
+              "premium_vs_industry_pct": -68.4598,
+              "trade_date": "20260611"
+            }
+          }
+        ]
+      },
+      "formula_policy_template": {
+        "policy_family": "valuation_peer_context",
+        "direct_formula_rejected": true,
+        "preferred_path": "score stock-vs-peer valuation spread through L6.state.peer_compare",
+        "candidate_formula_shape": "bounded signed valuation_rerating from peer percentile/z-score or premium_vs_industry_pct, not raw absolute PE/PB",
+        "minimum_required_inputs": [
+          "stock valuation scalar",
+          "industry or peer-pool median/percentile",
+          "peer pool size and as-of trade_date",
+          "non-positive / loss-making handling policy",
+          "reviewed bounds and score direction"
+        ],
+        "acceptance_criteria": [
+          "direct L6.mult.pe/L6.mult.pb raw scalar formula remains suppressed while peer context is available",
+          "L6.state.industry_center is used as reference input, not a standalone scored direction",
+          "replacement path reaches final score or reviewer explicitly approves a fallback policy"
+        ]
+      },
+      "review_blockers": [
+        "review formula direction and bounds",
+        "review required input sufficiency",
+        "confirm replacement/canonical path is insufficient or intentionally bypassed",
+        "create approval record before runtime write"
+      ],
+      "policy_review_status": "formula_policy_review_required",
+      "direct_formula_ready": false,
+      "known_draft_sufficient": false,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "policy_contract_valid": true,
+      "policy_validation_errors": []
+    },
+    {
+      "packet_id": "a74fc325b2f92a62",
+      "dp_id": "L6.mult.pe",
+      "score_target": "valuation_rerating",
+      "policy_family": "valuation_peer_context",
+      "remediation_class": "formula_policy_required",
+      "conversion_path_status": "not_numeric_no_formula_or_normalizer",
+      "source_data_state": "valid_real",
+      "runtime_valid_real_ts_count": 1405,
+      "runtime_numeric_signal_ts_count": 0,
+      "score_company_route_ready": true,
+      "runtime_source_categories": {
+        "tushare": 1405
+      },
+      "main_sources": "tushare:daily_basic:1405",
+      "sample_values": [
+        {
+          "ts_code": "000001.SZ",
+          "status": "Known",
+          "source": "tushare:daily_basic",
+          "value": {
+            "scalar": 5.1016,
+            "unit": "ratio",
+            "ttm": true,
+            "trade_date": "20260610",
+            "total_mv_cny": 219674994001.0,
+            "total_share": 19405918198.0
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "status": "Known",
+          "source": "tushare:daily_basic",
+          "value": {
+            "scalar": 348.193,
+            "unit": "ratio",
+            "ttm": true,
+            "trade_date": "20260610",
+            "total_mv_cny": 18080289895.0,
+            "total_share": 2579213965.0
+          }
+        }
+      ],
+      "replacement_path": {
+        "replacement_dp_id": "L6.state.peer_compare",
+        "replacement_path_ready": true,
+        "replacement_closure_status": "closed_reaches_final_score",
+        "replacement_score_target": "valuation_rerating",
+        "replacement_runtime_valid_real_ts_count": 1403,
+        "replacement_effective_score_path_ts_count": 1403,
+        "replacement_sample_values": [
+          {
+            "ts_code": "000001.SZ",
+            "status": "Known",
+            "source": "tushare:daily_basic.peer_compare",
+            "value": {
+              "stock_pe": 5.0926,
+              "industry_pe_median": 16.1464,
+              "industry_id": "FINANCIAL_HIGH_DIVIDEND",
+              "premium_vs_industry_pct": -68.4598,
+              "trade_date": "20260611"
+            }
+          }
+        ]
+      },
+      "formula_policy_template": {
+        "policy_family": "valuation_peer_context",
+        "direct_formula_rejected": true,
+        "preferred_path": "score stock-vs-peer valuation spread through L6.state.peer_compare",
+        "candidate_formula_shape": "bounded signed valuation_rerating from peer percentile/z-score or premium_vs_industry_pct, not raw absolute PE/PB",
+        "minimum_required_inputs": [
+          "stock valuation scalar",
+          "industry or peer-pool median/percentile",
+          "peer pool size and as-of trade_date",
+          "non-positive / loss-making handling policy",
+          "reviewed bounds and score direction"
+        ],
+        "acceptance_criteria": [
+          "direct L6.mult.pe/L6.mult.pb raw scalar formula remains suppressed while peer context is available",
+          "L6.state.industry_center is used as reference input, not a standalone scored direction",
+          "replacement path reaches final score or reviewer explicitly approves a fallback policy"
+        ]
+      },
+      "review_blockers": [
+        "review formula direction and bounds",
+        "review required input sufficiency",
+        "confirm replacement/canonical path is insufficient or intentionally bypassed",
+        "create approval record before runtime write"
+      ],
+      "policy_review_status": "formula_policy_review_required",
+      "direct_formula_ready": false,
+      "known_draft_sufficient": false,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "policy_contract_valid": true,
+      "policy_validation_errors": []
+    },
+    {
+      "packet_id": "2acc4845ac5c8133",
+      "dp_id": "L6.state.industry_center",
+      "score_target": "valuation_rerating",
+      "policy_family": "valuation_peer_context",
+      "remediation_class": "formula_policy_required",
+      "conversion_path_status": "not_numeric_no_formula_or_normalizer",
+      "source_data_state": "valid_real",
+      "runtime_valid_real_ts_count": 1641,
+      "runtime_numeric_signal_ts_count": 0,
+      "score_company_route_ready": true,
+      "runtime_source_categories": {
+        "tushare": 1641
+      },
+      "main_sources": "tushare:daily_basic.industry_median:1641",
+      "sample_values": [
+        {
+          "ts_code": "000001.SZ",
+          "status": "Known",
+          "source": "tushare:daily_basic.industry_median",
+          "value": {
+            "industry_id": "FINANCIAL_HIGH_DIVIDEND",
+            "industry_pe_median": 16.1464,
+            "industry_pb_median": 1.1469,
+            "industry_ps_median": 2.9718,
+            "n_stocks": 206,
+            "trade_date": "20260611"
+          }
+        },
+        {
+          "ts_code": "000009.SZ",
+          "status": "Known",
+          "source": "tushare:daily_basic.industry_median",
+          "value": {
+            "industry_id": "STORAGE_GRID",
+            "industry_pe_median": 45.9724,
+            "industry_pb_median": 3.4625,
+            "industry_ps_median": 2.6147,
+            "n_stocks": 173,
+            "trade_date": "20260611"
+          }
+        }
+      ],
+      "replacement_path": {
+        "replacement_dp_id": "L6.state.peer_compare",
+        "replacement_path_ready": true,
+        "replacement_closure_status": "closed_reaches_final_score",
+        "replacement_score_target": "valuation_rerating",
+        "replacement_runtime_valid_real_ts_count": 1403,
+        "replacement_effective_score_path_ts_count": 1403,
+        "replacement_sample_values": [
+          {
+            "ts_code": "000001.SZ",
+            "status": "Known",
+            "source": "tushare:daily_basic.peer_compare",
+            "value": {
+              "stock_pe": 5.0926,
+              "industry_pe_median": 16.1464,
+              "industry_id": "FINANCIAL_HIGH_DIVIDEND",
+              "premium_vs_industry_pct": -68.4598,
+              "trade_date": "20260611"
+            }
+          }
+        ]
+      },
+      "formula_policy_template": {
+        "policy_family": "valuation_peer_context",
+        "direct_formula_rejected": true,
+        "preferred_path": "score stock-vs-peer valuation spread through L6.state.peer_compare",
+        "candidate_formula_shape": "bounded signed valuation_rerating from peer percentile/z-score or premium_vs_industry_pct, not raw absolute PE/PB",
+        "minimum_required_inputs": [
+          "stock valuation scalar",
+          "industry or peer-pool median/percentile",
+          "peer pool size and as-of trade_date",
+          "non-positive / loss-making handling policy",
+          "reviewed bounds and score direction"
+        ],
+        "acceptance_criteria": [
+          "direct L6.mult.pe/L6.mult.pb raw scalar formula remains suppressed while peer context is available",
+          "L6.state.industry_center is used as reference input, not a standalone scored direction",
+          "replacement path reaches final score or reviewer explicitly approves a fallback policy"
+        ]
+      },
+      "review_blockers": [
+        "review formula direction and bounds",
+        "review required input sufficiency",
+        "confirm replacement/canonical path is insufficient or intentionally bypassed",
+        "create approval record before runtime write"
+      ],
+      "policy_review_status": "formula_policy_review_required",
+      "direct_formula_ready": false,
+      "known_draft_sufficient": false,
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "policy_contract_valid": true,
+      "policy_validation_errors": []
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "audit_date": "2026-06-21",
+  "audit_name": "llm_stock_context_smoke",
+  "context_hash": "sha256:0b70cdf604869d11e478847d84deb3a864004724b4843c32045015f7dcafcb5e",
+  "context_id": "ctx_81ab7258454b",
+  "evidence_counts": {
+    "available": 80,
+    "fresh": 78,
+    "missing": 0,
+    "review_required": 2,
+    "stale": 2,
+    "total": 80,
+    "unusable": 2,
+    "usable": 78,
+    "verified": 78
+  },
+  "horizon": "5d",
+  "llm_boundaries": {
+    "closed_loop": true,
+    "external_provider_calls_allowed": false,
+    "external_web_allowed": false,
+    "input_contract": "LLM may only read SingleStockDecisionContext",
+    "missing_data_rules": [
+      "Unknown is not zero",
+      "N/A is not bad news",
+      "Inactive is not negative unless event-specific scan semantics prove absence",
+      "Mock cannot enter effective conclusions"
+    ],
+    "probability_rules": [
+      "signal_5d is relative P(beat same-day liquid median), not P(up)",
+      "signal_up_5d is absolute P(up) only when fresh and validated",
+      "final_score/base_score/trading_signal/technicals are not probabilities",
+      "stale/unverified/validated=false evidence cannot be decisive"
+    ]
+  },
+  "market": "A_share",
+  "probability_semantic_checks": [
+    {
+      "evidence_ref": "ev_signal_5d_000977_SZ",
+      "fallback": true,
+      "probability_semantics": "P(5d return beats same-day liquid-universe median); not absolute P(up)",
+      "shadow": true,
+      "stale": true,
+      "target_kind": "relative_cross_section_median",
+      "use_scope": "diagnostic_only",
+      "validated": false
+    },
+    {
+      "evidence_ref": "ev_signal_up_5d_000977_SZ",
+      "fallback": true,
+      "probability_semantics": "P(5d return > 0); absolute, not relative",
+      "shadow": true,
+      "stale": true,
+      "target_kind": "absolute_up_5d",
+      "use_scope": "diagnostic_only",
+      "validated": false
+    }
+  ],
+  "stale_artifact_handling": {
+    "final_score": "not treated as probability",
+    "signal_5d": "diagnostic_only unless fresh validated non-fallback",
+    "signal_up_5d": "diagnostic_only unless fresh validated non-fallback"
+  },
+  "ts_code": "000977.SZ",
+  "unsupported_markets": [
+    "HK",
+    "US"
+  ]
+}

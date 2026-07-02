@@ -46,14 +46,24 @@ def test_market_adapter_applies_local_multiplier_scores_and_discounts() -> None:
     assert out["multipliers"]["policy"] > 1.0
     assert out["multipliers"]["market_regime"] == pytest.approx(1.0)
     assert out["horizon_multipliers"]["short"] > out["horizon_multipliers"]["long"]
-    assert out["local_scores"]["local_funding_score"] == pytest.approx(0.2)
-    assert out["local_scores"]["local_event_score"] == pytest.approx(0.3)
-    assert out["discounts"]["local_risk_discount"] == pytest.approx(0.1)
-    assert out["adjusted_final_score"]["base_score"] > final["base_score"]
+    # R1 double-count fix: funding_score / expectation_gap already live in the
+    # company base (capital_sentiment + expectation_gap buckets); the market
+    # adapter no longer re-adds them, so local_scores is empty and adds 0.
+    assert out["local_scores"] == {}
+    assert out["adjusted_final_score"]["components"]["market_local_scores"] == pytest.approx(0.0)
+    # FU-1 double-count fix: CN_A (like US/HK) no longer re-applies the company
+    # risk component {risk_discount,...} as a market-local discount (it is already
+    # subtracted once in compute_final_score), so discounts is empty.
+    assert out["discounts"] == {}
 
 
 @pytest.mark.parametrize("ticker", ["300750.SZ", "TSLA.US", "00700.HK"])
-def test_market_adapter_routes_expectation_gap_to_local_event_score(ticker: str) -> None:
+def test_market_adapter_does_not_re_add_expectation_gap_to_base(ticker: str) -> None:
+    """R1 regression: expectation_gap already lives in compute_final_score's
+    base (the expectation_gap bucket). The market adapter must NOT re-add it via
+    local_scores — doing so inflated base_score (a HORIZON_KEY) and flipped ~17
+    stocks' trading_signal (e.g. 002460/600030 HOLD→BUY). With base_score=0 and
+    only expectation_gap in components, the adjusted base must stay 0."""
     final = {
         "short_total": 0.0,
         "medium_total": 0.0,
@@ -68,7 +78,9 @@ def test_market_adapter_routes_expectation_gap_to_local_event_score(ticker: str)
         stock_overlay={"ts_code": ticker},
     )
 
-    assert out["local_scores"]["local_event_score"] == pytest.approx(0.25)
+    assert out["local_scores"] == {}
+    assert out["adjusted_final_score"]["components"]["market_local_scores"] == pytest.approx(0.0)
+    assert out["adjusted_final_score"]["base_score"] == pytest.approx(0.0)
 
 
 def test_market_adapter_is_neutral_when_role_components_absent() -> None:

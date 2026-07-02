@@ -145,7 +145,7 @@ def _load_industry_l0_known(
 
 def _load_spec_dp_ids(coverage_audit_path: Path) -> set[str]:
     """Parse ``docs/data_sources/coverage_audit.md`` Section 7 and return
-    the canonical 250 dp_ids. Falls back to an empty set if the file is
+    the canonical 256 dp_ids. Falls back to an empty set if the file is
     missing (callers should still set ``spec_total=SPEC_TOTAL_DP_IDS``)."""
 
     if not coverage_audit_path.exists():
@@ -210,7 +210,7 @@ def collect_audit(
     # --- industry overlays L0 Known map -------------------------------------
     industry_l0_known_map = _load_industry_l0_known(industry_overlays_dir)
 
-    # --- spec 250 dp_ids ----------------------------------------------------
+    # --- spec 256 dp_ids ----------------------------------------------------
     spec_dp_ids = _load_spec_dp_ids(coverage_audit_path)
     spec_total = len(spec_dp_ids) if spec_dp_ids else SPEC_TOTAL_DP_IDS
 

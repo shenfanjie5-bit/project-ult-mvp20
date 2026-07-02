@@ -6,10 +6,14 @@ Two policy tiers:
 
 * **closed-loop tier** — ``model_tier ∈ {cheap_extract, cheap_classify,
   analysis}``. ``evidence_sources`` may only use ``local_dp_id`` /
-  ``local_overlay`` / ``industry_inference``. Any ``http(s)://`` URL or
-  web-style kind (``annual_report`` / ``research_report`` /
-  ``investor_relations`` / ``external_url`` / ``web_fetch``) is a HARD
-  violation and may be auto-demoted back to ``data_status: Unknown``.
+  ``local_overlay`` / ``industry_inference``. Tushare/AKShare/FMP rows
+  already written to local SQLite (e.g. announcements, investor Q&A,
+  company main business, management table, locally extracted annual-report
+  sections) are valid when cited as ``kind=local_dp_id`` with a verbatim
+  excerpt. Any ``http(s)://`` URL or web-style kind (``annual_report`` /
+  ``research_report`` / ``investor_relations`` / ``external_url`` /
+  ``web_fetch``) is a HARD violation and may be auto-demoted back to
+  ``data_status: Unknown``.
 
 * **web-enabled tier** — ``model_tier == web_analysis``. The four web
   kinds above are allowed, plus the closed-loop trio. Each web evidence
@@ -471,6 +475,58 @@ def _numeric_tolerant_match(
     return True
 
 
+def _decode_value_json(raw: str) -> str:
+    """Decode ``\\uXXXX`` escapes in a stored ``value_json`` to real chars.
+
+    realtime_current rows are routinely written with ``ensure_ascii=True``
+    (the ``json.dumps`` default), so CJK text lands in SQLite as
+    ``\\u5206\\u9500...`` rather than ``分销售...``. The excerpt check compares
+    against real-CJK excerpts copied verbatim from the codex prompt, so
+    without decoding first every single Chinese citation false-fails
+    (annual-report / IR-Q&A / main-business excerpts on A-share overlays).
+
+    Re-serialising via ``json.loads`` → ``json.dumps(ensure_ascii=False)``
+    yields real CJK while leaving numeric tokens untouched (so the
+    numeric-tolerant fallback still works). Falls back to the raw string when
+    it is not valid JSON.
+    """
+
+    if not raw:
+        return ""
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        return raw
+
+    # Flatten every key + scalar into one space-joined string. We deliberately
+    # do NOT re-``json.dumps`` here: that would re-escape real newlines inside
+    # section text as the 2-char sequence ``\n``, and ``_normalize_text`` strips
+    # only the backslash — leaving a stray ``n`` that splits CJK runs and breaks
+    # the substring match. Flattening keeps the decoded strings with their real
+    # whitespace (which normalisation strips cleanly), so multi-line annual
+    # report / IR excerpts match. Numbers are stringified so the numeric
+    # fallback still sees them.
+    parts: list[str] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                parts.append(str(k))
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+        elif isinstance(node, bool) or node is None:
+            parts.append(str(node))
+        elif isinstance(node, float):
+            parts.append(repr(node))
+        else:
+            parts.append(str(node))
+
+    _walk(obj)
+    return " ".join(parts)
+
+
 def _lookup_sqlite_value(
     db_path: Path,
     ts_code: str,
@@ -480,7 +536,9 @@ def _lookup_sqlite_value(
 
     Falls back to ``MARKET:<market>`` / ``INDUSTRY:<id>`` sentinels per
     ``storage.read_hot_snapshot`` logic so industry/macro dp_ids resolve.
-    Returns ``""`` if the row is not found or the db is missing.
+    The returned string is unicode-decoded (see ``_decode_value_json``) so
+    CJK excerpts substring-match correctly. Returns ``""`` if the row is not
+    found or the db is missing.
     """
 
     if not db_path.exists():
@@ -527,7 +585,7 @@ def _lookup_sqlite_value(
         return ""
     priority = {t: i for i, t in enumerate(candidates)}
     rows.sort(key=lambda r: priority.get(r[0], 999))
-    return rows[0][1] or ""
+    return _decode_value_json(rows[0][1] or "")
 
 
 def verify_excerpt_semantic_match(
@@ -898,11 +956,17 @@ def audit_overlays(
                 schema_errors = schema_validator.validate_overlay_node(
                     node, strict=False,
                 )
-                # Only count it as "checked" when the dp_id has a schema
-                # registered AND the node was eligible (Known/filled).
-                # validate_overlay_node returns [] for both
-                # "no schema registered" and "non-eligible status" — we
-                # only want the former counted, so do a manual gate.
+                # validate_overlay_node fires two layers:
+                #   (a) compiler-parity rules (N/A missing_policy,
+                #       Unknown missing_reason, Optionality split) — these
+                #       fire regardless of dp_id schema registration;
+                #   (b) dp_id schema validation (Known/populated
+                #       Optionality only, requires registered schema).
+                # We count "schema_checked_nodes" for the dp_id-validated
+                # bucket so the metric stays comparable across runs, but
+                # *every* node that returns errors is surfaced as a
+                # schema_drift warning so operators can see compiler
+                # parity issues before running compile-overlays.
                 eligible_status = node.get("data_status") in (
                     "Known", "Optionality",
                 )

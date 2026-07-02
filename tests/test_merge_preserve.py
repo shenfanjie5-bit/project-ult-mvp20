@@ -17,9 +17,13 @@ from mvp20.overlays import (
     EVENT_DRIVEN_DP_IDS,
     Membership,
     _should_preserve_node,
+    apply_status_induced_invariants,
     build_stock_overlay,
     generate_overlay_files,
     merge_preserve_existing_overlay,
+    normalize_overlay_file_status,
+    restore_overlay_top_level,
+    sanitize_node_scalar_fields,
 )
 
 
@@ -588,6 +592,125 @@ def test_end_to_end_force_wipes_known(tmp_path: Path) -> None:
     )
     assert brand_after["data_status"] == "Unknown"
     assert brand_after["value"] is None
+
+
+# ---------------------------------------------------------------------------
+# apply_status_induced_invariants — post-codex normalization (compile-clean N/A)
+# ---------------------------------------------------------------------------
+
+def test_apply_status_invariants_fixes_na_missing_policy() -> None:
+    """An N/A node codex left with the SLOT_DEFS-default missing_policy is
+    repaired to not_applicable_remove + active_weight 0 + status mirror."""
+    overlay = {"nodes": [{
+        "dp_id": "L4.price.subscription", "data_status": "N/A", "status": "Unknown",
+        "missing_policy": "unknown_reduce_confidence", "active_weight": 1.0,
+    }]}
+    n = apply_status_induced_invariants(overlay)
+    assert n == 1
+    node = overlay["nodes"][0]
+    assert node["missing_policy"] == "not_applicable_remove"
+    assert node["active_weight"] == 0.0
+    assert node["status"] == "N/A"  # data_status mirrored into legacy field
+
+
+def test_apply_status_invariants_inactive_and_optionality() -> None:
+    overlay = {"nodes": [
+        {"dp_id": "a", "data_status": "Inactive", "status": "Inactive",
+         "missing_policy": "unknown_reduce_confidence", "active_weight": 1.0},
+        {"dp_id": "b", "data_status": "Optionality", "status": "Optionality",
+         "missing_policy": "unknown_reduce_confidence"},
+    ]}
+    assert apply_status_induced_invariants(overlay) == 2
+    assert overlay["nodes"][0]["missing_policy"] == "inactive_zero_weight"
+    assert overlay["nodes"][0]["active_weight"] == 0.0
+    assert overlay["nodes"][1]["missing_policy"] == "optionality_track"
+
+
+def test_apply_status_invariants_leaves_known_and_unknown_untouched() -> None:
+    """Known / Unknown nodes are not in the induced map → no change, count 0."""
+    overlay = {"nodes": [
+        {"dp_id": "k", "data_status": "Known", "missing_policy": "optional_skip"},
+        {"dp_id": "u", "data_status": "Unknown", "missing_policy": "unknown_reduce_confidence"},
+    ]}
+    assert apply_status_induced_invariants(overlay) == 0
+    assert overlay["nodes"][0]["missing_policy"] == "optional_skip"
+
+
+def test_apply_status_invariants_idempotent() -> None:
+    overlay = {"nodes": [{
+        "dp_id": "x", "data_status": "N/A", "status": "Unknown",
+        "missing_policy": "unknown_reduce_confidence", "active_weight": 1.0,
+    }]}
+    assert apply_status_induced_invariants(overlay) == 1
+    assert apply_status_induced_invariants(overlay) == 0  # already canonical
+
+
+def test_normalize_overlay_file_status_roundtrip(tmp_path: Path) -> None:
+    p = tmp_path / "x.yaml"
+    p.write_text(yaml.safe_dump({"nodes": [{
+        "dp_id": "L4.price.subscription", "data_status": "N/A", "status": "Unknown",
+        "missing_policy": "unknown_reduce_confidence", "active_weight": 1.0,
+    }]}, allow_unicode=True), encoding="utf-8")
+    assert normalize_overlay_file_status(p) == 1
+    reloaded = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert reloaded["nodes"][0]["missing_policy"] == "not_applicable_remove"
+    assert normalize_overlay_file_status(p) == 0  # second pass writes nothing
+    assert normalize_overlay_file_status(tmp_path / "missing.yaml") == 0  # absent → 0
+
+
+def test_sanitize_confidence_list_recovers_evidence() -> None:
+    """A fill that wrote the evidence list into ``confidence`` (would crash
+    compile binding a list to a scalar column) is repaired: evidence recovered
+    into the empty evidence_sources slot, confidence nulled."""
+    ev = [{"kind": "local_dp_id", "dp_id": "L5.is.revenue"}]
+    overlay = {"nodes": [{"dp_id": "x", "confidence": ev, "evidence_sources": []}]}
+    assert sanitize_node_scalar_fields(overlay) == 1
+    node = overlay["nodes"][0]
+    assert node["confidence"] is None
+    assert node["evidence_sources"] == ev  # moved, not lost
+
+
+def test_sanitize_confidence_list_without_clobbering_existing_evidence() -> None:
+    existing = [{"kind": "web_analysis"}]
+    overlay = {"nodes": [{"dp_id": "x", "confidence": [{"kind": "local_dp_id"}],
+                          "evidence_sources": existing}]}
+    assert sanitize_node_scalar_fields(overlay) == 1
+    assert overlay["nodes"][0]["confidence"] is None
+    assert overlay["nodes"][0]["evidence_sources"] == existing  # not overwritten
+
+
+def test_sanitize_leaves_scalar_confidence_and_nulls_bad_materiality() -> None:
+    overlay = {"nodes": [
+        {"dp_id": "ok", "confidence": 0.7, "materiality": 0.8},
+        {"dp_id": "bad", "materiality": ["x"]},
+    ]}
+    assert sanitize_node_scalar_fields(overlay) == 1  # only the bad-materiality node
+    assert overlay["nodes"][0]["confidence"] == 0.7
+    assert overlay["nodes"][1]["materiality"] is None
+
+
+def test_restore_overlay_top_level_recovers_dropped_sections(tmp_path: Path) -> None:
+    """A fill that rewrote only `nodes` and dropped scores/views/edges is repaired
+    from the pre-fill snapshot; the fill's `nodes` are kept."""
+    ref = {"ts_code": "X", "nodes": [{"dp_id": "a"}], "scores": {"s": 1},
+           "views": {"v": 2}, "causal_edges": [], "hierarchy_edges": [], "coverage": {}}
+    p = tmp_path / "x.yaml"
+    p.write_text(yaml.safe_dump({"ts_code": "X", "nodes": [{"dp_id": "a", "filled": True}]},
+                                allow_unicode=True), encoding="utf-8")
+    assert restore_overlay_top_level(p, ref) is True
+    out = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert out["scores"] == {"s": 1} and out["views"] == {"v": 2}  # restored
+    assert out["nodes"][0]["filled"] is True                       # fill kept
+
+
+def test_restore_overlay_top_level_noop_when_intact(tmp_path: Path) -> None:
+    ref = {"nodes": [{"dp_id": "a"}], "scores": {"s": 1}}
+    p = tmp_path / "x.yaml"
+    p.write_text(yaml.safe_dump({"nodes": [{"dp_id": "a"}], "scores": {"s": 9}},
+                                allow_unicode=True), encoding="utf-8")
+    # scores present in post (different value) → not overwritten, no restore
+    assert restore_overlay_top_level(p, ref) is False
+    assert yaml.safe_load(p.read_text(encoding="utf-8"))["scores"] == {"s": 9}
 
 
 # ---------------------------------------------------------------------------

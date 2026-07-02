@@ -1,0 +1,85 @@
+schema_version: 1
+scope: a_share_current_local_mvp_final_score
+description: >
+  Current local MVP denominator policy for A-share final-score closure. Fields
+  remain in the full spec, but are excluded from the current-MVP score-closure
+  denominator when the latest audits prove they cannot be promoted to Known
+  runtime score inputs without an explicit reviewer approval, a formula-policy
+  decision, or a provider universe that is outside current local A-share data.
+exclusion_policies:
+  no_valid_target_data_requires_unapproved_generation:
+    applies_when:
+      field_closure_blocking_gap: true
+      safe_to_upsert_without_review: false
+    mvp_applicability: excluded_from_current_mvp_denominator
+    retained_as: backlog_candidate
+    rationale: >
+      The field has no current A-share target runtime value and the required
+      route is LLM/web/manual generation. Existing audits keep these candidates
+      Unknown or approval_ready=false, so treating them as final-score inputs
+      would fabricate unreviewed Known data.
+  formula_policy_review_required:
+    applies_when:
+      conversion_review_decision_status: formula_policy_review_required
+    mvp_applicability: excluded_from_current_mvp_denominator
+    retained_as: formula_policy_backlog
+    rationale: >
+      Runtime information exists, but no reviewed normalizer or aggregation
+      policy is approved. The field stays data/analysis-only until that policy
+      is approved.
+  governance_suppression_verified:
+    applies_when:
+      conversion_review_decision_status: governance_suppression_verified
+    mvp_applicability: excluded_from_current_mvp_denominator
+    retained_as: governed_non_scoring_or_replaced_signal
+    rationale: >
+      A governance audit verified the field is intentionally suppressed,
+      duplicated, data-only, or replaced by a canonical scored signal.
+  option_universe_na_verified:
+    applies_when:
+      conversion_review_decision_status: option_universe_na_verified
+    mvp_applicability: excluded_from_current_mvp_denominator
+    retained_as: provider_universe_backlog
+    rationale: >
+      A-share option-source universe coverage is not available in the current
+      local MVP data path and the review permits N/A/unavailable treatment.
+  valuation_peer_context_superseded:
+    applies_when:
+      dp_id_in:
+        - L6.mult.forward_pe
+        - L6.mult.ps
+        - L6.path.tag
+        - L6.state.historical_percentile
+      conversion_path_status: sample_numeric_score_path_ready
+    mvp_applicability: excluded_from_current_mvp_denominator
+    retained_as: peer_context_superseded_diagnostic
+    replacement_signal: L6.state.peer_compare
+    rationale: >
+      The aggregator suppresses own-history and global-absolute valuation
+      signals when the A-share valuation peer pool is loaded, so these fields
+      are diagnostics rather than separate final-score inputs in the current
+      scoring design.
+  score_sink_no_effect_verified:
+    applies_when:
+      dp_id_in:
+        - L10.industry.fund_flow
+        - L10.industry.inventory_orders
+        - L10.industry.pmi
+        - L10.industry.sales_price
+        - L10.val.expansion_compression
+        - L10.val.historical_quantile
+        - L10.val.peer
+        - L6.sens.cashflow
+        - L6.sens.growth_margin
+        - L6.sens.rates
+        - L6.sens.risk_narrative
+        - L7.trade.gamma
+      score_sink_effect_status: no_final_score_delta
+    mvp_applicability: excluded_from_current_mvp_denominator
+    retained_as: scored_runtime_diagnostic_without_current_final_score_sink
+    rationale: >
+      Runtime numeric values exist, but deterministic score_company probes show
+      these targets do not change the current final-score outputs
+      (base/short/medium/long/market-adapter multiplier). They stay in the full
+      spec as diagnostics or dormant design hooks until a reviewed score sink is
+      implemented.

@@ -14,15 +14,36 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.8
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: 29.19
+    trend: up
+    magnitude: moderate
+    evidence_summary: 2026Q1 local aggregate revenue growth mean 29.19%, but median is only 0.4434%, indicating broad demand
+      with strong constituent dispersion.
+    notes: Terminal demand proxy is industry revenue growth; dispersion keeps confidence below high.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=yoy_pct; mean=29.19; median=0.4434; min=-24.30; max=192.12;
+      latest_period=20260331'
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=2659.47亿; median=352.29亿; min=13.30亿; max=38485.11亿;
+      latest_period=20260331'
+  confidence: 0.68
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.demand.user_count
   node_name: 用户/客户数量变化
   node_type: Industry Demand
@@ -31,15 +52,34 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.6
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: up
+    evidence_summary: No direct customer-count metric is disclosed in local sources; revenue scale and recent Q&A volume support
+      only a weak order/customer activity proxy.
+    notes: Customer/user count is inferred from revenue and disclosure activity, not directly measured.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=2659.47亿; median=352.29亿; min=13.30亿; max=38485.11亿;
+      latest_period=20260331'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 10 constituents] field=count_recent; mean=569.80; median=455.50; min=98.00; max=1422.00'
+  confidence: 0.52
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.demand.frequency
   node_name: 使用频次/替换频率
   node_type: Industry Demand
@@ -48,15 +88,33 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: mixed
+    notes: Usage or replacement frequency is not directly present in local sources; revenue growth mean is positive but median
+      is nearly flat, so the proxy is mixed.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=yoy_pct; mean=29.19; median=0.4434; min=-24.30; max=192.12;
+      latest_period=20260331'
+  - kind: industry_inference
+    framework: AI compute utilization and refresh frequency are inferred from revenue growth dispersion when no direct usage
+      telemetry is locally available.
+    confidence: 0.4
+  confidence: 0.44
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.demand.penetration
   node_name: 渗透率变化
   node_type: Industry Demand
@@ -65,15 +123,34 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.65
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    absolute_pct: null
+    delta_pct: null
+    trend: up
+    notes: No direct AI compute penetration rate is available locally; positive aggregate revenue growth is used only as a
+      low-confidence adoption proxy.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=yoy_pct; mean=29.19; median=0.4434; min=-24.30; max=192.12;
+      latest_period=20260331'
+  - kind: industry_inference
+    framework: For AI compute hardware, revenue expansion can proxy incremental penetration only when direct installed-base
+      or workload-share data is absent.
+    confidence: 0.4
+  confidence: 0.45
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.demand.replacement
   node_name: 替换周期与更新需求
   node_type: Industry Demand
@@ -82,15 +159,33 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    months: 24
+    trend: shortening
+    notes: Replacement cycle is an industry-framework estimate for accelerator/server refresh, not a direct local disclosure
+      metric.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=2659.47亿; median=352.29亿; min=13.30亿; max=38485.11亿;
+      latest_period=20260331'
+  - kind: industry_inference
+    framework: AI accelerator and server refresh demand is commonly modeled as a roughly 18-36 month cycle; use 24 months
+      as a low-confidence midpoint when no local replacement disclosure exists.
+    confidence: 0.4
+  confidence: 0.4
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.supply.capacity
   node_name: 行业供给/产能
   node_type: Industry Supply
@@ -99,15 +194,35 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
   materiality: 0.75
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: mixed
+    magnitude: moderate
+    notes: Capacity proxy is capex/PPE-like balance-sheet intensity. Capex cash-flow signs and constituent dispersion make
+      the direction mixed.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.cf.capex
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=-691.25亿; median=-2.41亿; min=-12855.92亿; max=38.69亿;
+      latest_period=20260331'
+  - kind: local_dp_id
+    dp_id: L5.bs.goodwill_ppe
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=goodwill; mean=185.07亿; median=15.44亿; min=0.00; max=1195.09亿;
+      latest_period=20260331'
+  confidence: 0.55
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.supply.channel_service
   node_name: 渠道与服务能力
   node_type: Industry Supply
@@ -116,15 +231,33 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    qualitative: 渠道与服务投入中等偏强
+    magnitude: moderate
+    trend: flat
+    notes: SGA/R&D to revenue mean is 0.1827 and recent Q&A coverage is active, but no direct channel capacity metric is available.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=sga_rd_ratio_revenue; mean=0.1827; median=0.1315; min=0.0170;
+      max=0.4103; latest_period=20260331'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 10 constituents] field=count_recent; mean=569.80; median=455.50; min=98.00; max=1422.00'
+  confidence: 0.55
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.supply.chain_eff
   node_name: 供应链效率
   node_type: Industry Supply
@@ -133,15 +266,34 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.6
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    qualitative: 供应链周转偏慢且分化
+    magnitude: moderate
+    trend: mixed
+    notes: Inventory turnover days mean 122.08 and CCC mean 94.83 indicate material working-capital drag, with wide constituent
+      dispersion.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L4.eff.turnover
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=inventory_turnover_days; mean=122.08; median=115.34; min=3.90;
+      max=368.56'
+  - kind: local_dp_id
+    dp_id: L4.eff.cycle
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=ccc_days; mean=94.83; median=85.23; min=-53.83; max=392.54'
+  confidence: 0.62
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.price.discount
   node_name: 折扣与价格压力
   node_type: Industry Price
@@ -150,15 +302,33 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.7
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_delta_pct: null
+    trend: mixed
+    notes: Gross-margin proxy shows high median margin but very wide min/max range, so discount or price pressure is treated
+      as mixed rather than a clean price war.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=0.4703; median=0.5065; min=0.0664; max=0.8200;
+      latest_period=20260331'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 10 constituents] field=count_recent; mean=569.80; median=455.50; min=98.00; max=1422.00'
+  confidence: 0.52
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.price.pricing_power
   node_name: 行业定价权
   node_type: Industry Price
@@ -167,15 +337,30 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.75
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    strength: moderate
+    trend: mixed
+    evidence_summary: Gross-margin aggregate mean 0.4703 and median 0.5065 imply some pricing power, while the 0.0664-0.8200
+      range shows sharp segment dispersion.
+    notes: Pricing power is evaluated from gross-margin proxy only.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=0.4703; median=0.5065; min=0.0664; max=0.8200;
+      latest_period=20260331'
+  confidence: 0.62
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.cost.rent
   node_name: 租金/固定成本压力
   node_type: Industry Cost
@@ -184,15 +369,34 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.5
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: mixed
+    notes: Fixed-cost pressure is proxied by goodwill/PPE-like balance-sheet scale and capex; no direct rent metric is locally
+      disclosed.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.bs.goodwill_ppe
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=goodwill; mean=185.07亿; median=15.44亿; min=0.00; max=1195.09亿;
+      latest_period=20260331'
+  - kind: local_dp_id
+    dp_id: L5.cf.capex
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=-691.25亿; median=-2.41亿; min=-12855.92亿; max=38.69亿;
+      latest_period=20260331'
+  confidence: 0.45
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.cost.cac
   node_name: 获客成本/营销成本
   node_type: Industry Cost
@@ -201,15 +405,34 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.6
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: flat
+    notes: CAC is proxied by SGA/R&D to revenue. Mean 0.1827 and median 0.1315 indicate moderate selling/R&D burden, but no
+      direct acquisition-cost line is available.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=sga_rd_ratio_revenue; mean=0.1827; median=0.1315; min=0.0170;
+      max=0.4103; latest_period=20260331'
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=2659.47亿; median=352.29亿; min=13.30亿; max=38485.11亿;
+      latest_period=20260331'
+  confidence: 0.55
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.compete.price_war
   node_name: 价格战风险
   node_type: Industry Competition
@@ -252,15 +475,35 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
   materiality: 0.65
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    contract_pct: null
+    spot_pct: null
+    spread_pct: null
+    trend: stable
+    notes: No direct contract/spot split exists locally; raw-material average change is small and gross-margin proxy remains
+      high, so spread pressure is treated as stable with low confidence.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L0.cost.raw_material
+    source: tushare:fut_daily
+    excerpt: '[industry-aggregate over 10 constituents] field=avg_pct_change; mean=0.1918; median=0.7320; min=-1.97; max=0.7320'
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=0.4703; median=0.5065; min=0.0664; max=0.8200;
+      latest_period=20260331'
+  confidence: 0.45
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.price.product_asp
   node_name: 行业产品 ASP
   node_type: Industry Price
@@ -269,15 +512,37 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.7
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    asp_value: null
+    asp_unit: null
+    yoy_pct: null
+    qoq_pct: null
+    trend: mixed
+    notes: No shipment denominator or explicit ASP is available locally; revenue scale and gross margin support only a mixed
+      price proxy.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=2659.47亿; median=352.29亿; min=13.30亿; max=38485.11亿;
+      latest_period=20260331'
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=0.4703; median=0.5065; min=0.0664; max=0.8200;
+      latest_period=20260331'
+  confidence: 0.45
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.supply.inventory
   node_name: 行业库存水平
   node_type: Industry Supply
@@ -286,15 +551,31 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.65
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    inventory_days: null
+    vs_normal_pct: null
+    channel_inventory_state: 高
+    trend: mixed
+    notes: Balance-sheet inventory aggregate is large and highly skewed. No normal-channel baseline is locally available,
+      so state is a low-confidence high-inventory proxy.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.bs.inventory
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=292.17亿; median=69.17亿; min=0.00; max=2881.09亿;
+      latest_period=20260331'
+  confidence: 0.5
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.sentiment.social
   node_name: 社交情绪/舆情
   node_type: Industry Sentiment
@@ -303,15 +584,30 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.4
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    sentiment_score: null
+    volume_idx: 25700
+    top_themes: []
+    trend: null
+    evidence_quality: low
+    notes: Local source provides follow-count volume only, not sentiment polarity or theme text.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.social_buzz
+    source: local:social_buzz_aggregate
+    excerpt: '[industry-aggregate over 27 constituents] field=follow_count; mean=2.57万; median=74.75; min=0.5563; max=23.35万'
+  confidence: 0.45
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: null
+  last_event_id: null
 - dp_id: L0.policy.access_license
   node_name: 准入与牌照
   node_type: Industry Policy
@@ -439,15 +735,34 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: 0.1918
+    trend: flat
+    magnitude: weak
+    notes: Energy/logistics cost pressure is proxied by the local raw-material basket and gross-margin resilience; no direct
+      freight or power series is included.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L0.cost.raw_material
+    source: tushare:fut_daily
+    excerpt: '[industry-aggregate over 10 constituents] field=avg_pct_change; mean=0.1918; median=0.7320; min=-1.97; max=0.7320'
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=scalar; mean=0.4703; median=0.5065; min=0.0664; max=0.8200;
+      latest_period=20260331'
+  confidence: 0.5
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.cost.labor
   node_name: 行业人工成本
   node_type: Industry Cost
@@ -456,15 +771,34 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    labor_cost_pct: 18.7
+    yoy_pct: null
+    trend: flat
+    magnitude: moderate
+    notes: Labor pressure is proxied by local labor-cost share and SGA/R&D ratio; no direct wage inflation series is present.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L4.cost.labor
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=labor_cost_pct; mean=18.70; median=18.88; min=2.08; max=41.03'
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=sga_rd_ratio_revenue; mean=0.1827; median=0.1315; min=0.0170;
+      max=0.4103; latest_period=20260331'
+  confidence: 0.58
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.cost.raw_material
   node_name: 原材料价格
   node_type: Industry Cost
@@ -473,15 +807,34 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.65
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    pct_change: 0.1918
+    raw_material_cost_pct: 47.67
+    trend: flat
+    magnitude: weak
+    notes: Local commodity proxy is nearly flat on average while raw-material cost share is material.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L0.cost.raw_material
+    source: tushare:fut_daily
+    excerpt: '[industry-aggregate over 10 constituents] field=avg_pct_change; mean=0.1918; median=0.7320; min=-1.97; max=0.7320'
+  - kind: local_dp_id
+    dp_id: L4.cost.raw_material
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 24 constituents] field=raw_material_cost_pct; mean=47.67; median=45.62; min=18.00;
+      max=91.28'
+  confidence: 0.6
+  last_updated: '2026-06-04T05:31:06+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.compete.share_concentration
   node_name: 市占率/集中度变化
   node_type: Industry Competition

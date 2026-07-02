@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -563,10 +564,37 @@ def test_get_governance_returns_none_for_unknown_dp() -> None:
 
 
 def test_list_only_industry_format(tmp_path: Path) -> None:
-    # Use the real AI_COMPUTE overlay since it is part of the repo and
-    # exercises the full governance lookup path.
+    # Hermetic: copy the real AI_COMPUTE overlay into a temp ``root`` and flip
+    # one Known L0 node back to Unknown so there is a deterministic *fillable*
+    # node. This exercises the full governance lookup path AND the
+    # "Tier distribution" rendering branch (which only emits when ≥1 node is
+    # fillable) without depending on how many real overlay nodes happen to be
+    # pre-filled — the committed overlay had 27 Unknown (fillable) L0 nodes,
+    # but the C1 closed-loop fill flipped them to Known/Inactive, which would
+    # otherwise leave Fillable: 0 and drop the tier-distribution section.
+    src = ROOT / "config" / "industry_overlays" / "AI_COMPUTE.yaml"
+    overlay = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
+    flipped = False
+    for node in overlay.get("nodes") or []:
+        if (
+            str(node.get("dp_id") or "").startswith("L0.")
+            and node.get("data_status") == "Known"
+        ):
+            node["data_status"] = "Unknown"
+            node["value"] = None
+            flipped = True
+            break
+    assert flipped, "expected at least one Known L0 node to flip to Unknown"
+
+    dst_dir = tmp_path / "config" / "industry_overlays"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    (dst_dir / "AI_COMPUTE.yaml").write_text(
+        yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
     report = codex_prompt_gen.build_list_only_report(
-        "AI_COMPUTE", None, model_tier_filter="all"
+        "AI_COMPUTE", None, root=tmp_path, model_tier_filter="all"
     )
     assert "list-only" in report
     assert "AI_COMPUTE" in report
@@ -579,11 +607,19 @@ def test_list_only_company_with_tier_filter() -> None:
     report = codex_prompt_gen.build_list_only_report(
         "AI_COMPUTE", "000063.SZ", model_tier_filter="cheap_extract"
     )
+    # Header reflects the company + the active tier filter.
     assert "stock AI_COMPUTE/000063.SZ" in report
     assert "model_tier=cheap_extract" in report
-    # Expect at least L3.channel.mix to be in the fillable list (it's the
-    # only cheap_extract dp_id in the minimal governance).
-    assert "L3.channel.mix" in report
+    # Standard list-only structure is present.
+    assert "Fillable:" in report
+    assert "Skipped:" in report
+    # The tier filter actually filters: dp_ids belonging to OTHER model tiers
+    # are bucketed as tier_mismatch. This assertion is hermetic — it does not
+    # depend on how many cheap_extract dp_ids happen to be already filled.
+    # (The previous assertion pinned a specific dp_id, L3.channel.mix, into the
+    # fillable list; it broke once Phase C1 filled that field, dropping it from
+    # "Fillable" into "preserved_known".)
+    assert "tier_mismatch_" in report
 
 
 # ---------------------------------------------------------------------------
@@ -735,6 +771,129 @@ def test_known_with_no_fingerprint_baseline_is_fillable(
     assert reason == "refresh:fingerprint_baseline_missing"
 
 
+def test_known_with_no_fingerprint_can_be_preserved_for_audit(
+    tmp_path: Path, mini_governance: dict
+) -> None:
+    """Goal-run mode: legacy Known can be skipped instead of re-prompted."""
+
+    db_path = _make_z2_db(
+        tmp_path,
+        [
+            (
+                "000063.SZ",
+                "L5.is.revenue",
+                '{"scalar": 100, "period": "20260331"}',
+                "Known",
+                0.9,
+                "tushare",
+                1700000000,
+            )
+        ],
+    )
+    node = _node(
+        dp_id="L1.position.brand",
+        data_status="Known",
+        value={"score": 0.8},
+    )
+    entry = codex_prompt_gen.get_governance(
+        "L1.position.brand", mini_governance
+    )
+    ok, reason = codex_prompt_gen._is_fillable(
+        node,
+        entry,
+        db_path=db_path,
+        ts_code="000063.SZ",
+        refresh_baseline_missing=False,
+    )
+    assert ok is False
+    assert reason == "preserved_known:fingerprint_baseline_missing"
+
+
+def test_unknown_no_local_evidence_can_be_preserved_when_fingerprint_unchanged(
+    tmp_path: Path, mini_governance: dict
+) -> None:
+    """Goal-run mode: already-audited no-evidence Unknown is not re-prompted."""
+
+    from mvp20.fingerprint import compute_dependency_fingerprint
+
+    db_path = _make_z2_db(
+        tmp_path,
+        [
+            (
+                "000063.SZ",
+                "L5.is.revenue",
+                '{"scalar": 100, "period": "20260331"}',
+                "Known",
+                0.9,
+                "tushare",
+                1700000000,
+            )
+        ],
+    )
+    current = compute_dependency_fingerprint(
+        "000063.SZ", ["L5.is.revenue"], db_path
+    )
+    node = _node(
+        dp_id="L1.position.brand",
+        data_status="Unknown",
+        value={"notes": "no usable local evidence"},
+    )
+    node["missing_reason"] = "no_local_evidence"
+    node["source_fingerprint_at_fill"] = current
+    entry = codex_prompt_gen.get_governance(
+        "L1.position.brand", mini_governance
+    )
+    ok, reason = codex_prompt_gen._is_fillable(
+        node,
+        entry,
+        db_path=db_path,
+        ts_code="000063.SZ",
+        preserve_unknown_no_local_evidence=True,
+    )
+    assert ok is False
+    assert reason == "preserved_unknown_no_local_evidence:fingerprint_unchanged"
+
+
+def test_unknown_no_local_evidence_refreshes_when_source_changes(
+    tmp_path: Path, mini_governance: dict
+) -> None:
+    """No-evidence Unknown still enters the prompt after source rotation."""
+
+    db_path = _make_z2_db(
+        tmp_path,
+        [
+            (
+                "000063.SZ",
+                "L5.is.revenue",
+                '{"scalar": 100, "period": "20260331"}',
+                "Known",
+                0.9,
+                "tushare",
+                1700000000,
+            )
+        ],
+    )
+    node = _node(
+        dp_id="L1.position.brand",
+        data_status="Unknown",
+        value={"notes": "no usable local evidence"},
+    )
+    node["missing_reason"] = "no_local_evidence"
+    node["source_fingerprint_at_fill"] = "deadbeefdeadbeef"
+    entry = codex_prompt_gen.get_governance(
+        "L1.position.brand", mini_governance
+    )
+    ok, reason = codex_prompt_gen._is_fillable(
+        node,
+        entry,
+        db_path=db_path,
+        ts_code="000063.SZ",
+        preserve_unknown_no_local_evidence=True,
+    )
+    assert ok is True
+    assert reason == "refresh:source_changed_annual_filing"
+
+
 def test_known_without_db_path_still_preserved(mini_governance: dict) -> None:
     """Backward compat: when db_path is None, Known is preserved as before."""
 
@@ -828,6 +987,40 @@ def test_build_company_prompt_excludes_skip_route() -> None:
     )
 
 
+def test_build_company_prompt_requires_chinese_natural_language() -> None:
+    block = codex_prompt_gen._format_schema_block(
+        [{"dp_id": "L3.channel.mix", "data_status": "Unknown"}]
+    )
+    text = "\n".join(block)
+    assert "自然语言说明" in text
+    assert "必须使用中文" in text
+    assert "不要输出英文句子" in text
+    assert "不要复述 schema 字段名或枚举 key" in text
+    assert "`rank`、`share_pct`、`trend`" in text
+    assert "no_local_evidence" in text
+    assert "`value.trend` 不写中文自由文本" in text
+    assert "direct_sales_dominant" in text
+    assert "线上/线下" in text
+    assert "不能映射为 ecommerce/others" in text
+    assert "销售模式表披露" in text
+    assert "确定性占比计算" in text
+    assert "内部抵消不当作渠道模式" in text
+    assert "全部为 `null`" in text
+    assert "定性“直销为主/经销为辅”只写在 notes" in text
+
+
+def test_company_prompt_self_verification_is_scoped_to_target_file() -> None:
+    block = codex_prompt_gen._format_company_verification_boundary(
+        "FINANCIAL_HIGH_DIVIDEND", "600098.SH"
+    )
+    text = "\n".join(block)
+    assert "不要运行 `scripts/verify_overlay_closed_loop.py` 的默认全量扫描" in text
+    assert "不要对整个行业目录扫描" in text
+    assert "config/stock_overlays/FINANCIAL_HIGH_DIVIDEND/600098.SH.yaml" in text
+    assert "--stock-overlays-dir" in text
+    assert "外层 batch runner 会统一跑全量 verifier" in text
+
+
 # ---------------------------------------------------------------------------
 # Z5 Fix 2: tier-aware evidence rule block selection.
 #
@@ -860,6 +1053,8 @@ def test_render_evidence_rules_pure_closed_loop_uses_closed_rules() -> None:
     block = codex_prompt_gen._render_evidence_rules(nodes, governance)
     assert "禁止访问外部网络" in block
     assert "web_analysis 字段 — 允许 web" not in block
+    assert "Tushare" in block
+    assert "不能写 `url` 字段" in block
 
 
 def test_render_evidence_rules_pure_web_analysis_uses_web_rules_only() -> None:
@@ -934,3 +1129,30 @@ def test_build_company_prompt_web_analysis_tier_no_closed_loop_ban(
         # And it must explain web evidence schema
         assert "checksum" in prompt
         assert "fetched_at" in prompt
+
+
+def test_annual_report_block_is_closed_loop_local_dp_id_only() -> None:
+    """Local annual-report excerpts are SQLite facts, not web evidence."""
+
+    nodes = [_node_with_dp("L3.region.domestic_overseas")]
+    realtime = {
+        "L9.disclosure.annual_report": {
+            "source": "annual_report:cninfo:2025",
+            "value": {
+                "ar_year": 2025,
+                "ar_url": "https://static.cninfo.com.cn/finalpage/x.pdf",
+                "sections": {
+                    "region_distribution": "境内收入 70%，境外收入 30%。",
+                    "revenue_structure": "海外销售占比提升。",
+                },
+            },
+        }
+    }
+
+    block = "\n".join(
+        codex_prompt_gen._build_annual_report_block(nodes, realtime)
+    )
+    assert "L3.region.domestic_overseas" in block
+    assert "dp_id=L9.disclosure.annual_report" in block
+    assert "不要写 `url` 字段" in block
+    assert "https://static.cninfo.com.cn" not in block

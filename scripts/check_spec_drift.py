@@ -2,7 +2,7 @@
 """Detect drift between spec / governance / SQLite / overlay yaml.
 
 3 sources of truth that should be consistent:
-1. config/data_point_roles.yaml — 250 dp_ids + source_status declarations
+1. config/data_point_roles.yaml — 256 dp_ids + source_status declarations
 2. config/llm_field_governance.yaml — 111 LLM-routed dp_ids + governance fields
 3. runtime/hot.sqlite + config/stock_overlays/**.yaml — actual emit/fill state
 
@@ -10,10 +10,10 @@ Checks:
 A. spec source_status='missing' but SQLite has emit -> outdated label
 B. spec source_status='✓' but SQLite never emitted -> unimplemented promise
 C. spec source_status='$' but SQLite has emit -> premium-no-longer-locked
-D. governance dp_id but not in spec 250 -> orphan governance entry
+D. governance dp_id but not in spec 256 -> orphan governance entry
 E. spec bucket vs governance route mismatch (TODO: needs bucket inference)
 F. data_point_roles count of missing (X) vs coverage_audit md §4 (Y) drift
-G. SQLite emit but dp_id not in spec 250 (legacy naming)
+G. SQLite emit but dp_id not in spec 256 (legacy naming)
 
 Output: docs/audit/spec_drift_report_v1.md + JSON
 Exit code: nonzero if more than 10 drifts (CI signal).
@@ -152,13 +152,13 @@ def detect_drifts(
                 }
             )
 
-    # D. governance but not in spec 250
+    # D. governance but not in spec 256
     for dp in sorted(gov_dps - spec_dps):
         drifts.append(
             {
                 "type": "orphan_governance",
                 "dp_id": dp,
-                "spec_says": "not in spec 250",
+                "spec_says": "not in spec 256",
                 "actual": "in governance.yaml",
                 "action": "remove from governance or add to spec",
             }
@@ -184,14 +184,14 @@ def detect_drifts(
             }
         )
 
-    # G. SQLite emit but dp_id not in spec 250 (legacy / self-namespace)
+    # G. SQLite emit but dp_id not in spec 256 (legacy / self-namespace)
     legacy = sorted(sqlite_dps - spec_dps)
-    for dp in legacy[:30]:
+    for dp in legacy:
         drifts.append(
             {
                 "type": "legacy_naming",
                 "dp_id": dp,
-                "spec_says": "not in spec 250",
+                "spec_says": "not in spec 256",
                 "actual": "SQLite has emit (likely mvp20 self-namespace)",
                 "action": "add to spec or alias to canonical dp_id",
             }

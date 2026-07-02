@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from mvp20.adapters._artifacts import artifact_envelope, load_frontend_artifact
+
 try:
     import main_core as _vendor  # noqa: F401
     _AVAILABLE = True
@@ -35,6 +37,18 @@ def _unavailable() -> tuple[int, dict]:
 
 
 def handle_cycle_detail(cfg, query: dict) -> tuple[int, dict]:
+    payload, artifact_path = load_frontend_artifact("data-platform", "cycles.json")
+    if payload is not None and artifact_path is not None:
+        from mvp20.server import _ok_envelope
+        return 200, _ok_envelope(
+            artifact_envelope(
+                module="main-core",
+                version=_VERSION,
+                artifact_path=artifact_path,
+                payload=payload,
+                import_error=_IMPORT_ERR,
+            )
+        )
     if not _AVAILABLE:
         return _unavailable()
     from mvp20.server import _ok_envelope
@@ -42,6 +56,20 @@ def handle_cycle_detail(cfg, query: dict) -> tuple[int, dict]:
 
 
 def handle_stocks(cfg, query: dict) -> tuple[int, dict]:
+    payload, artifact_path = load_frontend_artifact(
+        "data-platform", "formal", "recommendation_snapshot", "latest.json"
+    )
+    if payload is not None and artifact_path is not None:
+        from mvp20.server import _ok_envelope
+        return 200, _ok_envelope(
+            artifact_envelope(
+                module="main-core",
+                version=_VERSION,
+                artifact_path=artifact_path,
+                payload={"stock": None, "alpha_result": payload},
+                import_error=_IMPORT_ERR,
+            )
+        )
     if not _AVAILABLE:
         return _unavailable()
     from mvp20.server import _ok_envelope
@@ -49,6 +77,20 @@ def handle_stocks(cfg, query: dict) -> tuple[int, dict]:
 
 
 def handle_pool(cfg, query: dict) -> tuple[int, dict]:
+    payload, artifact_path = load_frontend_artifact(
+        "data-platform", "formal", "official_alpha_pool", "latest.json"
+    )
+    if payload is not None and artifact_path is not None:
+        from mvp20.server import _ok_envelope
+        return 200, _ok_envelope(
+            artifact_envelope(
+                module="main-core",
+                version=_VERSION,
+                artifact_path=artifact_path,
+                payload={"pool": payload.get("items", []), "snapshot": payload},
+                import_error=_IMPORT_ERR,
+            )
+        )
     if not _AVAILABLE:
         return _unavailable()
     from mvp20.server import _ok_envelope
@@ -56,6 +98,20 @@ def handle_pool(cfg, query: dict) -> tuple[int, dict]:
 
 
 def handle_world_state(cfg, query: dict) -> tuple[int, dict]:
+    payload, artifact_path = load_frontend_artifact(
+        "data-platform", "formal", "world_state_snapshot", "latest.json"
+    )
+    if payload is not None and artifact_path is not None:
+        from mvp20.server import _ok_envelope
+        return 200, _ok_envelope(
+            artifact_envelope(
+                module="main-core",
+                version=_VERSION,
+                artifact_path=artifact_path,
+                payload={"world_state": payload, "snapshot_at": payload.get("as_of")},
+                import_error=_IMPORT_ERR,
+            )
+        )
     if not _AVAILABLE:
         return _unavailable()
     from mvp20.server import _ok_envelope

@@ -30,6 +30,22 @@ mvp20 = "mvp20.cli:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    # futu-api ships the `futu` package whose `RET_OK` constant the options
+    # ingestion path (mvp20/sources/futu_source.py) imports even when an
+    # injected fake QuoteCtx supplies the data. tests/test_futu_options.py is
+    # fully hermetic (no OpenD daemon / Futu account — calls are mocked via
+    # FakeQuoteCtx), but it still needs the package importable so the fetchers
+    # don't short-circuit to Inactive. It is a pure-Python wheel (deps:
+    # protobuf / pycryptodome / simplejson / pandas), so it installs cleanly on
+    # CI without a daemon. Without it those 20 tests degrade to Inactive/KeyError.
+    "futu-api>=9.0",
+    # scripts/audit_repo_binary_semantics.py + tests/test_repo_binary_semantics.py
+    # import PIL/numpy at module top; a missing PIL aborts the WHOLE pytest run
+    # at collection (observed on CI run 28559392929). numpy already arrives
+    # transitively via akshare→pandas but is declared explicitly because the
+    # test imports it directly.
+    "pillow>=10.0",
+    "numpy>=1.26",
 ]
 # Seven upstream project-ult modules vendored under upstream/. The 6 originally
 # planned (audit-eval / data-platform / entity-registry / graph-engine /
@@ -58,8 +74,9 @@ vendor = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["mvp20*"]
+include = ["mvp20*", "pit_backtest*"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+pythonpath = ["."]

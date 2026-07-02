@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from pathlib import Path
 
@@ -98,7 +99,8 @@ def check_akshare_command() -> None:
 )
 @click.option(
     "--history-days", type=int, default=90, show_default=True,
-    help="Days of history to pull from Tushare for derived calculations.",
+    help="Days of history to pull for derived calculations (Tushare for "
+         "A-share, FMP for US/HK).",
 )
 @click.option(
     "--limit", "limit_companies", type=int, default=None,
@@ -106,20 +108,106 @@ def check_akshare_command() -> None:
 )
 @click.option(
     "--a-share-only/--all-markets", default=True, show_default=True,
-    help="Restrict derives to A-share (Tushare history only for now).",
+    help="With --a-share-only (default) only A-share ts_codes are processed "
+         "via Tushare. --all-markets also iterates US (.US) via FMP and HK "
+         "(.HK) via FMP, emitting the same L11.tech.* technical pack.",
 )
 def derive_command(db_path: Path, history_days: int, limit_companies: int | None,
                    a_share_only: bool) -> None:
-    """Compute L6.priced / L8 / L10 / L11 derived dp_ids using Tushare
-    historical windows + realtime_current snapshots. UPSERTs back with
-    source ``derived:*``."""
+    """Compute L6.priced / L8 / L10 / L11 derived dp_ids using historical
+    price windows + realtime_current snapshots. UPSERTs back with source
+    ``derived:*``. With ``--all-markets`` US and HK universes are also
+    processed (Tushare for A-share, FMP for US/HK)."""
 
     load_dotenv()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
     from mvp20.derive import derive_all
 
     stats = derive_all(db_path, history_days=history_days,
                        limit_companies=limit_companies,
                        a_share_only=a_share_only)
+    for k, v in stats.items():
+        click.echo(f"{k}: {v}")
+
+
+@main.command("derive-weekly")
+@click.option(
+    "--db", "db_path", type=click.Path(path_type=Path),
+    default=Path("runtime/hot.sqlite"), show_default=True,
+)
+@click.option(
+    "--history-weeks", type=int, default=120, show_default=True,
+    help="Weeks of history to pull from Tushare pro.weekly (≥35 needed for MACD).",
+)
+@click.option(
+    "--limit", "limit_companies", type=int, default=None,
+    help="Process at most N companies (smoke test).",
+)
+@click.option(
+    "--a-share-only/--all-markets", default=True, show_default=True,
+    help="Restrict to A-share. HK/US weekly is TODO (Tushare pro.weekly only).",
+)
+def derive_weekly_command(
+    db_path: Path, history_weeks: int, limit_companies: int | None,
+    a_share_only: bool,
+) -> None:
+    """Compute ``L11.tech.*_weekly`` (5 dp_ids) from Tushare pro.weekly OHLCV.
+
+    Emits ma / macd / rsi / kdj / boll on weekly bars with
+    ``source="derived:technical_indicators_weekly"`` and base confidence
+    ≈0.88 (lower than daily ≈0.95 to reflect weekly close lag).
+    """
+
+    load_dotenv()
+    from mvp20.derive import derive_all_weekly
+
+    stats = derive_all_weekly(
+        db_path, history_weeks=history_weeks,
+        limit_companies=limit_companies, a_share_only=a_share_only,
+    )
+    for k, v in stats.items():
+        click.echo(f"{k}: {v}")
+
+
+@main.command("derive-monthly")
+@click.option(
+    "--db", "db_path", type=click.Path(path_type=Path),
+    default=Path("runtime/hot.sqlite"), show_default=True,
+)
+@click.option(
+    "--history-months", type=int, default=36, show_default=True,
+    help="Months of history to pull from Tushare pro.monthly (≥26 needed for MACD).",
+)
+@click.option(
+    "--limit", "limit_companies", type=int, default=None,
+    help="Process at most N companies (smoke test).",
+)
+@click.option(
+    "--a-share-only/--all-markets", default=True, show_default=True,
+    help="Restrict to A-share. HK/US monthly is TODO (Tushare pro.monthly only).",
+)
+def derive_monthly_command(
+    db_path: Path, history_months: int, limit_companies: int | None,
+    a_share_only: bool,
+) -> None:
+    """Compute ``L11.tech.*_monthly`` (5 dp_ids) from Tushare pro.monthly OHLCV.
+
+    Emits ma / macd / rsi / kdj / boll on monthly bars with
+    ``source="derived:technical_indicators_monthly"`` and base confidence
+    ≈0.80 (the most-stale tier, refreshes once per month).
+    """
+
+    load_dotenv()
+    from mvp20.derive import derive_all_monthly
+
+    stats = derive_all_monthly(
+        db_path, history_months=history_months,
+        limit_companies=limit_companies, a_share_only=a_share_only,
+    )
     for k, v in stats.items():
         click.echo(f"{k}: {v}")
 
@@ -483,6 +571,17 @@ def validate_providers_command(providers_path: Path, manifest: Path) -> None:
         "values. Use only when intentionally re-baselining."
     ),
 )
+@click.option(
+    "--only-ts-code",
+    "only_ts_code",
+    default=None,
+    help=(
+        "Scope generation to a single ts_code (e.g. 600519.SH). Only that "
+        "stock's overlay shell is (re)generated; no other stock overlay and no "
+        "industry overlay is touched. Used by onboarding so adding one stock "
+        "does not reset other stocks' event-driven Inactive nodes."
+    ),
+)
 def generate_overlays_command(
     universe_path: Path,
     industries_path: Path,
@@ -491,6 +590,7 @@ def generate_overlays_command(
     stock_overlays_dir: Path,
     period: str,
     force: bool,
+    only_ts_code: str | None,
 ) -> None:
     """Generate industry overlays and company-industry stock overlay shells."""
 
@@ -502,6 +602,7 @@ def generate_overlays_command(
         stock_overlays_dir=stock_overlays_dir,
         period=period,
         force=force,
+        only_ts_code=only_ts_code,
     )
     _emit_result(result)
 
@@ -624,6 +725,12 @@ def compile_overlays_command(
     show_default=True,
 )
 @click.option(
+    "--industry-overlays-dir",
+    type=click.Path(path_type=Path),
+    default=Path("config/industry_overlays"),
+    show_default=True,
+)
+@click.option(
     "--db", "db_path", type=click.Path(path_type=Path),
     default=Path("runtime/hot.sqlite"), show_default=True,
 )
@@ -631,6 +738,7 @@ def score_company_command(
     ts_code: str,
     industry_id: str | None,
     stock_overlays_dir: Path,
+    industry_overlays_dir: Path,
     db_path: Path,
 ) -> None:
     """Score one company per spec §27.1/27.3/27.4 + classify mode (§30).
@@ -671,13 +779,75 @@ def score_company_command(
 
     overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8")) or {}
 
+    # ----- industry overlay (carries the Known L0 demand/supply/price/cost
+    # values that stock-overlay nodes inherit via inherit_from_industry).
+    # Without it those L0 nodes stay empty and never reach the score. Resolve
+    # the industry id from the --industry flag, then the overlay's own
+    # industry_id / industry_ids. Missing overlay → None (graceful). -------
+    resolved_industry_id = (
+        industry_id
+        or overlay.get("industry_id")
+        or (overlay.get("industry_ids") or [None])[0]
+    )
+    industry_overlay: dict | None = None
+    if resolved_industry_id:
+        industry_overlay_path = (
+            industry_overlays_dir / f"{resolved_industry_id}.yaml"
+        )
+        if industry_overlay_path.exists():
+            try:
+                industry_overlay = (
+                    yaml.safe_load(
+                        industry_overlay_path.read_text(encoding="utf-8")
+                    )
+                    or {}
+                )
+            except yaml.YAMLError as exc:
+                click.echo(
+                    f"# industry overlay parse failed ({exc}); skipping L0 inherit"
+                )
+
+    # ----- realtime snapshot (best-effort, OK if hot.sqlite missing) -----
+    # Read first so the aggregator can bridge realtime values into the score
+    # (synthetic standalone-leaf nodes for participating dp_ids).
+    realtime_data: dict[str, object] = {}
+    try:
+        from mvp20.storage import read_hot_snapshot
+        realtime_data = read_hot_snapshot(db_path, ts_code)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"# realtime snapshot unavailable ({exc})")
+
     # ----- lazy-load A1 (aggregator) + A2 (coverage); fall back to mocks --
     aggregated_nodes: dict[str, object] = {}
     coverage_report: dict[str, object] = {}
 
+    # R-3a/R-3b.2 cross-sectional scoring: for A-shares, prefer the precomputed
+    # peer-context artifact (fast); fall back to an on-demand build (~16s) when
+    # absent. HK/US → None → original absolute behaviour.
+    peer_context = None
+    try:
+        from mvp20.peer_context import (
+            default_artifact_path, load_peer_context, market_of,
+            peer_context_for_market,
+        )
+        if market_of(ts_code) == "A":
+            peer_context = load_peer_context(default_artifact_path(db_path, "A"))
+            if peer_context is None:
+                codes = [fp.stem for fp in stock_overlays_dir.glob("**/*.yaml")] \
+                    if stock_overlays_dir.exists() else []
+                peer_context = peer_context_for_market(
+                    db_path, codes, "A", overlays_dir=stock_overlays_dir
+                ) or None
+    except Exception as exc:  # noqa: BLE001 — de-common-mode is best-effort
+        click.echo(f"# peer_context unavailable ({exc}); scoring on absolute scale")
+        peer_context = None
+
     try:
         from mvp20.aggregator import aggregate_company_graph  # type: ignore
-        aggregated_nodes = aggregate_company_graph(overlay) or {}
+        aggregated_nodes = aggregate_company_graph(
+            overlay, industry_overlay, realtime_snapshot=realtime_data or None,
+            peer_context=peer_context,
+        ) or {}
     except Exception as exc:  # noqa: BLE001 (lazy; A1 may not exist yet)
         click.echo(f"# aggregator unavailable ({exc}); using overlay-derived mock")
         aggregated_nodes = _mock_aggregator_payload(overlay)
@@ -688,14 +858,6 @@ def score_company_command(
     except Exception as exc:  # noqa: BLE001
         click.echo(f"# coverage unavailable ({exc}); using overlay-derived mock")
         coverage_report = overlay.get("coverage") or {}
-
-    # ----- realtime snapshot (best-effort, OK if hot.sqlite missing) -----
-    realtime_data: dict[str, object] = {}
-    try:
-        from mvp20.storage import read_hot_snapshot
-        realtime_data = read_hot_snapshot(db_path, ts_code)
-    except Exception as exc:  # noqa: BLE001
-        click.echo(f"# realtime snapshot unavailable ({exc})")
 
     result = score_company(
         stock_overlay=overlay,
@@ -722,6 +884,44 @@ def score_company_command(
         f"(industry_contrib={result['company_score']['components']['industry_contrib']:.3f})"
     )
     click.echo(f"trading_meaning: {result['final_score']['trading_meaning']}")
+
+
+@main.command("build-peer-context")
+@click.option("--market", default="A", show_default=True, help="Market pool to build (A / HK / US).")
+@click.option(
+    "--stock-overlays-dir", type=click.Path(path_type=Path),
+    default=Path("config/stock_overlays"), show_default=True,
+)
+@click.option(
+    "--db", "db_path", type=click.Path(path_type=Path),
+    default=Path("runtime/hot.sqlite"), show_default=True,
+)
+@click.option(
+    "--out", "out_path", type=click.Path(path_type=Path), default=None,
+    help="Output JSON path. Defaults to <db dir>/peer_context_<market>.json.",
+)
+def build_peer_context_command(
+    market: str, stock_overlays_dir: Path, db_path: Path, out_path: Path | None,
+) -> None:
+    """R-3 — build + persist the cross-sectional peer-context artifact.
+
+    Scans the universe (every snapshot + overlay) to build the priced_in pools
+    (run_up / crowdedness) + valuation pools (PE/PS, hierarchical archetype →
+    industry → market) used by the cross-sectional scorer, and writes a small
+    JSON the server / score-company load in <10ms. Re-run after a derive refresh.
+    """
+    from mvp20.peer_context import build_and_save_peer_context
+
+    codes = [fp.stem for fp in stock_overlays_dir.glob("**/*.yaml")] \
+        if stock_overlays_dir.exists() else []
+    out = build_and_save_peer_context(
+        db_path, codes, market, out_path=out_path, overlays_dir=stock_overlays_dir,
+    )
+    import json
+    ctx = json.loads(Path(out).read_text(encoding="utf-8"))
+    pooled = len(ctx.get("_val_pe_pool_of", {}))
+    runup = len(ctx.get("L6.priced.run_up", []))
+    click.echo(f"wrote {out}  (market={market}, valuation-pooled={pooled}, run_up pop={runup})")
 
 
 def _mock_aggregator_payload(overlay: dict[str, object]) -> dict[str, object]:
@@ -926,6 +1126,58 @@ def serve_command(host: str, port: int, cors_origin: str) -> None:
 
     cfg = ServerConfig(host=host, port=port, cors_origin=cors_origin)
     serve_forever(cfg)
+
+
+@main.command("screen-candidates")
+@click.option("--market", default="A", show_default=True,
+              help="Candidate market. Currently supports A/A_share.")
+@click.option("--capacity", default=80, show_default=True, type=int,
+              help="Candidate pool display/gate capacity.")
+@click.option(
+    "--db", "db_path", type=click.Path(path_type=Path),
+    default=Path("runtime/hot.sqlite"), show_default=True,
+    help="Hot SQLite database used by deterministic extractors.",
+)
+@click.option(
+    "--out", "output_path", type=click.Path(path_type=Path),
+    default=None,
+    help="Candidate-pool artifact path. Defaults to runtime/candidate_pool/A_share.json.",
+)
+@click.option(
+    "--dry-run/--write-runtime",
+    default=True,
+    show_default=True,
+    help="Dry-run writes only the candidate artifact; --write-runtime also UPSERTs hot.sqlite.",
+)
+def screen_candidates_command(
+    market: str,
+    capacity: int,
+    db_path: Path,
+    output_path: Path | None,
+    dry_run: bool,
+) -> None:
+    """Build the non-LLM first-pass candidate pool artifact."""
+
+    from mvp20.non_llm_extractors import build_candidate_pool
+
+    repo_root = Path(__file__).resolve().parent.parent
+    payload = build_candidate_pool(
+        repo_root=repo_root,
+        db_path=db_path,
+        market=market,
+        capacity=capacity,
+        write_runtime=not dry_run,
+        output_path=output_path,
+    )
+    summary = payload.get("summary") or {}
+    click.echo(f"artifact_path: {payload.get('artifact_path')}")
+    click.echo(f"market: {payload.get('market')}")
+    click.echo(f"default_capacity: {payload.get('default_capacity')}")
+    click.echo(f"capacity: {payload.get('policy', {}).get('capacity')}")
+    click.echo(f"total_ranked: {summary.get('total_ranked')}")
+    click.echo(f"passed_count: {summary.get('passed_count')}")
+    click.echo(f"write_runtime: {summary.get('write_runtime')}")
+    click.echo(f"runtime_rows_written: {summary.get('runtime_rows_written')}")
 
 
 def _emit_result(payload: dict[str, object]) -> None:

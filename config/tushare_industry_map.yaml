@@ -1,0 +1,60 @@
+# tushare stock_basic `industry` → our industry_id (ranked candidate list;
+# first entry = the default suggestion surfaced to the user).
+#
+# Seeded from the 116-constituent universe's observed (tushare_industry →
+# assigned industry_id) pairs. The mapping is deliberately NOT treated as
+# authoritative: tushare↔ours is not 1:1 (e.g. 半导体 spans SEMI_EQUIPMENT /
+# AI_COMPUTE / CONSUMER_ELECTRONICS; 电气设备 spans ROBOTICS / STORAGE_GRID),
+# so recognize() returns the first as a *default* the user confirms or
+# overrides in the UI dropdown. A tushare industry absent here yields no
+# suggestion (user must pick from the 12 active; SPACE_ECONOMY is
+# graph_status=pending and excluded by list_industry_ids).
+schema_version: 1
+
+mappings:
+  # AI / compute / comms
+  IT设备: [AI_COMPUTE]
+  通信设备: [AI_COMPUTE]
+  半导体: [SEMI_EQUIPMENT, AI_COMPUTE, CONSUMER_ELECTRONICS]
+  元器件: [CONSUMER_ELECTRONICS, AI_COMPUTE]
+  # internet / software
+  互联网: [HK_CN_INTERNET]
+  软件服务: [HK_CN_INTERNET]
+  影视音像: [HK_CN_INTERNET]
+  # pharma / healthcare
+  化学制药: [INNOVATIVE_PHARMA]
+  生物制药: [INNOVATIVE_PHARMA]
+  医疗保健: [INNOVATIVE_PHARMA, DOMESTIC_CONSUMPTION]
+  # nonferrous metals
+  铜: [NONFERROUS_METALS]
+  铝: [NONFERROUS_METALS]
+  黄金: [NONFERROUS_METALS]
+  小金属: [NONFERROUS_METALS]
+  # financials / high dividend / utilities
+  银行: [FINANCIAL_HIGH_DIVIDEND]
+  保险: [FINANCIAL_HIGH_DIVIDEND]
+  证券: [FINANCIAL_HIGH_DIVIDEND]
+  水力发电: [FINANCIAL_HIGH_DIVIDEND]
+  煤炭开采: [FINANCIAL_HIGH_DIVIDEND, ANTI_INVOLUTION_CYCLICAL]
+  # cyclicals / materials (anti-involution)
+  普钢: [ANTI_INVOLUTION_CYCLICAL]
+  水泥: [ANTI_INVOLUTION_CYCLICAL]
+  化工原料: [ANTI_INVOLUTION_CYCLICAL]
+  农药化肥: [ANTI_INVOLUTION_CYCLICAL]
+  石油加工: [ANTI_INVOLUTION_CYCLICAL]
+  其他建材: [ANTI_INVOLUTION_CYCLICAL]
+  # export manufacturing / machinery / robotics
+  家用电器: [EXPORT_MFG, ROBOTICS]
+  工程机械: [EXPORT_MFG, ROBOTICS]
+  汽车配件: [EXPORT_MFG, ROBOTICS]
+  专用机械: [ROBOTICS]
+  机械基件: [ROBOTICS]
+  电器仪表: [ROBOTICS]
+  电气设备: [ROBOTICS, STORAGE_GRID]
+  汽车整车: [STORAGE_GRID, EXPORT_MFG]
+  # domestic consumption / services
+  旅游景点: [DOMESTIC_CONSUMPTION]
+  旅游服务: [DOMESTIC_CONSUMPTION]
+  酒店餐饮: [DOMESTIC_CONSUMPTION]
+  机场: [DOMESTIC_CONSUMPTION]
+  空运: [DOMESTIC_CONSUMPTION]

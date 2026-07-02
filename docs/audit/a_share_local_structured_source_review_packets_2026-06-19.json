@@ -1,0 +1,433 @@
+{
+  "generated_at": "2026-06-19T12:42:16+08:00",
+  "elapsed_s": 0.0,
+  "inputs": {
+    "source_candidates_path": "docs/audit/a_share_local_structured_source_candidates_2026-06-19.json",
+    "unknown_options_path": "docs/audit/a_share_local_structured_unknown_source_options_2026-06-19.json"
+  },
+  "summary": {
+    "local_structured_source_review_packet_count": 4,
+    "review_candidate_ready_count": 1,
+    "supporting_candidate_needs_quantity_source_count": 1,
+    "external_source_required_count": 2,
+    "direct_known_ready_count": 0,
+    "formula_inputs_ready_count": 0,
+    "candidate_packet_count": 2,
+    "candidate_column_count": 5,
+    "empty_candidate_column_count": 1,
+    "excluded_false_positive_count": 407,
+    "packet_contract_valid_count": 4,
+    "packet_contract_invalid_count": 0,
+    "review_required_count": 4,
+    "safe_to_upsert_without_review_count": 0,
+    "production_write_allowed_count": 0,
+    "source_review_packet_status_counts": {
+      "external_source_required": 2,
+      "review_candidate_ready": 1,
+      "supporting_candidate_needs_quantity_source": 1
+    },
+    "score_mutation": "none; this audit is read-only and does not alter realtime_current"
+  },
+  "rows": [
+    {
+      "dp_id": "L0.cost.rent",
+      "score_target": "fundamental_score",
+      "data_status": "Unknown",
+      "source_review_packet_status": "review_candidate_ready",
+      "candidate_use": "lease_burden_proxy_review",
+      "candidate_status": "review_candidate_found",
+      "direct_known_ready": false,
+      "formula_inputs_ready": false,
+      "candidate_columns": [
+        "use_right_asset_dep"
+      ],
+      "empty_candidate_columns": [
+        "fa_fnc_leases"
+      ],
+      "available_formula_inputs": [
+        "use_right_asset_dep"
+      ],
+      "missing_formula_inputs": [
+        "rent expense or lease payment amount",
+        "lease-liability denominator or revenue denominator",
+        "reviewed conservative proxy formula and score bounds"
+      ],
+      "review_questions": [
+        "Is use_right_asset_dep acceptable as a lease-burden proxy for this field?",
+        "Should the denominator be revenue, operating cash flow, or total cost?",
+        "What cap/floor keeps the proxy from overstating rent burden?"
+      ],
+      "review_candidate_count": 1,
+      "supporting_candidate_count": 0,
+      "empty_candidate_count": 1,
+      "excluded_false_positive_count": 21,
+      "source_examples": [
+        "股票数据/财务数据/现金流量表/by_symbol/688256.SH+寒武纪-U.csv",
+        "股票数据/财务数据/现金流量表/by_symbol/000002.SZ+万科Ａ.csv",
+        "股票数据/财务数据/现金流量表/by_symbol/301666.SZ+大普微-UW.csv"
+      ],
+      "source_candidate_refs": [
+        {
+          "dp_id": "L0.cost.rent",
+          "classification": "review_candidate",
+          "reason": "现金流量表里有使用权资产折旧样本，可作为租赁负担候选，但不是租金费用。",
+          "exclusion_reason": null,
+          "signature_rank": 10,
+          "file_count": 5757,
+          "sampled_rows": 133,
+          "column": "use_right_asset_dep",
+          "profile": {
+            "column": "use_right_asset_dep",
+            "non_empty": 31,
+            "empty": 102,
+            "numeric_valid": 31,
+            "parse_ratio": 1.0,
+            "min": 7732227.29,
+            "max": 2581315765.73,
+            "samples": [
+              "22917949.91",
+              "14252466.51",
+              "31703166.56",
+              "16943416.02",
+              "65821215.56"
+            ]
+          },
+          "examples": [
+            "股票数据/财务数据/现金流量表/by_symbol/688256.SH+寒武纪-U.csv",
+            "股票数据/财务数据/现金流量表/by_symbol/000002.SZ+万科Ａ.csv",
+            "股票数据/财务数据/现金流量表/by_symbol/301666.SZ+大普微-UW.csv"
+          ]
+        }
+      ],
+      "empty_candidate_refs": [
+        {
+          "dp_id": "L0.cost.rent",
+          "classification": "empty_candidate_not_ready",
+          "reason": "融资租赁支付字段在当前语义样本中为空，不能直接落地。",
+          "exclusion_reason": null,
+          "signature_rank": 10,
+          "file_count": 5757,
+          "sampled_rows": 133,
+          "column": "fa_fnc_leases",
+          "profile": {
+            "column": "fa_fnc_leases",
+            "non_empty": 0,
+            "empty": 133,
+            "non_empty_ratio": 0.0
+          },
+          "examples": [
+            "股票数据/财务数据/现金流量表/by_symbol/688256.SH+寒武纪-U.csv",
+            "股票数据/财务数据/现金流量表/by_symbol/000002.SZ+万科Ａ.csv",
+            "股票数据/财务数据/现金流量表/by_symbol/301666.SZ+大普微-UW.csv"
+          ]
+        }
+      ],
+      "direct_known_blocker": "Existing DOCKCASE/Tushare fields do not directly contain the full target business metric and formula inputs required for a production Known value.",
+      "next_tushare_action": "优先复核现金流量表 use_right_asset_dep，并补充租赁负债、租金费用或 经营租赁披露映射；若只用 use_right_asset_dep，必须定义保守 proxy 方向。",
+      "llm_or_web_fallback": "从年报管理层讨论、财报附注、交易所问询或公告正文抽取租赁/门店/物流/能源成本。",
+      "source_reports": [
+        "docs/audit/a_share_local_structured_source_candidates_2026-06-19.json",
+        "docs/audit/a_share_local_structured_unknown_source_options_2026-06-19.json"
+      ],
+      "review_checklist": [
+        "confirm candidate field semantics match the target dp_id",
+        "confirm all required formula inputs are present before Known scoring",
+        "reject stock market, shareholder, index, or trading fields as business proxies",
+        "keep data_status=Unknown until a bounded value_json formula is reviewed",
+        "do not approve runtime writes from this packet alone"
+      ],
+      "review_status": "review_required",
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "packet_contract_valid": true,
+      "packet_validation_errors": []
+    },
+    {
+      "dp_id": "L0.demand.frequency",
+      "score_target": "fundamental_score",
+      "data_status": "Unknown",
+      "source_review_packet_status": "external_source_required",
+      "candidate_use": "no_catalog_business_frequency_source",
+      "candidate_status": "no_direct_catalog_source",
+      "direct_known_ready": false,
+      "formula_inputs_ready": false,
+      "candidate_columns": [],
+      "empty_candidate_columns": [],
+      "available_formula_inputs": [],
+      "missing_formula_inputs": [
+        "order count, transaction count, shipment frequency, or usage cadence",
+        "active customer or user denominator when cadence is normalized",
+        "reviewed decomposition separating cadence from ASP and revenue growth"
+      ],
+      "review_questions": [
+        "Which source controls customer/order/usage frequency for this company?",
+        "Is the field inapplicable for the business model, or only missing?",
+        "Can text evidence be converted into a bounded cadence signal?"
+      ],
+      "review_candidate_count": 0,
+      "supporting_candidate_count": 0,
+      "empty_candidate_count": 0,
+      "excluded_false_positive_count": 96,
+      "source_examples": [],
+      "source_candidate_refs": [],
+      "empty_candidate_refs": [],
+      "direct_known_blocker": "Existing DOCKCASE/Tushare fields do not directly contain the full target business metric and formula inputs required for a production Known value.",
+      "next_tushare_action": "现有 Tushare/DOCKCASE 目录没有客户订单频次、交易笔数、复购或使用 cadence 字段；不能用股票成交量、换手率或资金流替代。",
+      "llm_or_web_fallback": "从年报、经营数据公告、互动易/交易所问答、行业运营数据中抽取订单数、活跃客户、出货/使用频次，并与收入拆分校验。",
+      "source_reports": [
+        "docs/audit/a_share_local_structured_source_candidates_2026-06-19.json",
+        "docs/audit/a_share_local_structured_unknown_source_options_2026-06-19.json"
+      ],
+      "review_checklist": [
+        "confirm candidate field semantics match the target dp_id",
+        "confirm all required formula inputs are present before Known scoring",
+        "reject stock market, shareholder, index, or trading fields as business proxies",
+        "keep data_status=Unknown until a bounded value_json formula is reviewed",
+        "do not approve runtime writes from this packet alone"
+      ],
+      "review_status": "review_required",
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "packet_contract_valid": true,
+      "packet_validation_errors": []
+    },
+    {
+      "dp_id": "L0.demand.penetration",
+      "score_target": "fundamental_score",
+      "data_status": "Unknown",
+      "source_review_packet_status": "external_source_required",
+      "candidate_use": "no_catalog_tam_or_share_source",
+      "candidate_status": "no_direct_catalog_source",
+      "direct_known_ready": false,
+      "formula_inputs_ready": false,
+      "candidate_columns": [],
+      "empty_candidate_columns": [],
+      "available_formula_inputs": [],
+      "missing_formula_inputs": [
+        "market share or TAM denominator",
+        "company installed base, customer base, or relevant revenue numerator",
+        "reviewed source precedence for industry denominator"
+      ],
+      "review_questions": [
+        "Which TAM/share/installed-base source is authoritative for this company?",
+        "Does the available company disclosure align to the same market denominator?",
+        "Should the field stay Unknown until governed industry denominators exist?"
+      ],
+      "review_candidate_count": 0,
+      "supporting_candidate_count": 0,
+      "empty_candidate_count": 0,
+      "excluded_false_positive_count": 142,
+      "source_examples": [],
+      "source_candidate_refs": [],
+      "empty_candidate_refs": [],
+      "direct_known_blocker": "Existing DOCKCASE/Tushare fields do not directly contain the full target business metric and formula inputs required for a production Known value.",
+      "next_tushare_action": "当前目录未发现公司业务口径的 TAM、市场份额、装机基数或客户渗透率字段；不能用股本、股东、指数权重、市场行情 percent/ratio 替代。",
+      "llm_or_web_fallback": "补行业 TAM/市占率来源，或从招股书、年报、研究报告、协会数据、交易所问答中抽取分母和公司口径分子。",
+      "source_reports": [
+        "docs/audit/a_share_local_structured_source_candidates_2026-06-19.json",
+        "docs/audit/a_share_local_structured_unknown_source_options_2026-06-19.json"
+      ],
+      "review_checklist": [
+        "confirm candidate field semantics match the target dp_id",
+        "confirm all required formula inputs are present before Known scoring",
+        "reject stock market, shareholder, index, or trading fields as business proxies",
+        "keep data_status=Unknown until a bounded value_json formula is reviewed",
+        "do not approve runtime writes from this packet alone"
+      ],
+      "review_status": "review_required",
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "packet_contract_valid": true,
+      "packet_validation_errors": []
+    },
+    {
+      "dp_id": "L0.price.product_asp",
+      "score_target": "fundamental_score",
+      "data_status": "Unknown",
+      "source_review_packet_status": "supporting_candidate_needs_quantity_source",
+      "candidate_use": "product_mix_and_revenue_numerator_review",
+      "candidate_status": "supporting_candidate_found",
+      "direct_known_ready": false,
+      "formula_inputs_ready": false,
+      "candidate_columns": [
+        "bz_item",
+        "bz_sales",
+        "bz_profit",
+        "bz_cost"
+      ],
+      "empty_candidate_columns": [],
+      "available_formula_inputs": [
+        "bz_item",
+        "bz_sales",
+        "bz_cost",
+        "bz_profit"
+      ],
+      "missing_formula_inputs": [
+        "unit volume, shipment volume, or product quantity",
+        "product-level price index when volume is unavailable",
+        "reviewed mapping from business-segment item to ASP-bearing product"
+      ],
+      "review_questions": [
+        "Which bz_item rows are product rows rather than geography or industry rows?",
+        "Can product revenue be paired with a reviewed unit/shipment source?",
+        "Should the packet be used only for mix context until quantity is found?"
+      ],
+      "review_candidate_count": 0,
+      "supporting_candidate_count": 4,
+      "empty_candidate_count": 0,
+      "excluded_false_positive_count": 148,
+      "source_examples": [
+        "股票数据/财务数据/主营业务构成/by_symbol/300502.SZ+新易盛.csv",
+        "股票数据/财务数据/主营业务构成/by_symbol/301666.SZ+大普微-UW.csv",
+        "股票数据/财务数据/主营业务构成/by_symbol/603435.SH+嘉德利.csv"
+      ],
+      "source_candidate_refs": [
+        {
+          "dp_id": "L0.price.product_asp",
+          "classification": "supporting_candidate",
+          "reason": "主营业务构成的产品/地区项目可帮助识别收入结构，但没有销量。",
+          "exclusion_reason": null,
+          "signature_rank": 11,
+          "file_count": 5741,
+          "sampled_rows": 145,
+          "column": "bz_item",
+          "profile": {
+            "column": "bz_item",
+            "non_empty": 145,
+            "empty": 0,
+            "non_empty_ratio": 1.0,
+            "samples": [
+              "其他主营业务",
+              "光互联产品",
+              "光通信设备行业",
+              "国外",
+              "中国大陆"
+            ]
+          },
+          "examples": [
+            "股票数据/财务数据/主营业务构成/by_symbol/300502.SZ+新易盛.csv",
+            "股票数据/财务数据/主营业务构成/by_symbol/301666.SZ+大普微-UW.csv",
+            "股票数据/财务数据/主营业务构成/by_symbol/603435.SH+嘉德利.csv"
+          ]
+        },
+        {
+          "dp_id": "L0.price.product_asp",
+          "classification": "supporting_candidate",
+          "reason": "主营业务构成的分项收入可作为 ASP 分子或 mix 证据，但缺少单位销量。",
+          "exclusion_reason": null,
+          "signature_rank": 11,
+          "file_count": 5741,
+          "sampled_rows": 145,
+          "column": "bz_sales",
+          "profile": {
+            "column": "bz_sales",
+            "non_empty": 144,
+            "empty": 1,
+            "numeric_valid": 144,
+            "parse_ratio": 1.0,
+            "min": 1.74,
+            "max": 24841854840.22,
+            "samples": [
+              "70699163.34",
+              "24771155676.88",
+              "24841854840.22",
+              "23887512078.75",
+              "954342761.47"
+            ]
+          },
+          "examples": [
+            "股票数据/财务数据/主营业务构成/by_symbol/300502.SZ+新易盛.csv",
+            "股票数据/财务数据/主营业务构成/by_symbol/301666.SZ+大普微-UW.csv",
+            "股票数据/财务数据/主营业务构成/by_symbol/603435.SH+嘉德利.csv"
+          ]
+        },
+        {
+          "dp_id": "L0.price.product_asp",
+          "classification": "supporting_candidate",
+          "reason": "主营业务构成的分项利润可支撑毛利结构复核，但不能单独得到 ASP。",
+          "exclusion_reason": null,
+          "signature_rank": 11,
+          "file_count": 5741,
+          "sampled_rows": 145,
+          "column": "bz_profit",
+          "profile": {
+            "column": "bz_profit",
+            "non_empty": 87,
+            "empty": 58,
+            "numeric_valid": 87,
+            "parse_ratio": 1.0,
+            "min": -119145278.9,
+            "max": 11875804861.01,
+            "samples": [
+              "32251078.74",
+              "11843553782.27",
+              "11875804861.01",
+              "11551222152.51",
+              "324582708.5"
+            ]
+          },
+          "examples": [
+            "股票数据/财务数据/主营业务构成/by_symbol/300502.SZ+新易盛.csv",
+            "股票数据/财务数据/主营业务构成/by_symbol/301666.SZ+大普微-UW.csv",
+            "股票数据/财务数据/主营业务构成/by_symbol/603435.SH+嘉德利.csv"
+          ]
+        },
+        {
+          "dp_id": "L0.price.product_asp",
+          "classification": "supporting_candidate",
+          "reason": "主营业务构成的分项成本可支撑毛利结构复核，但不能单独得到 ASP。",
+          "exclusion_reason": null,
+          "signature_rank": 11,
+          "file_count": 5741,
+          "sampled_rows": 145,
+          "column": "bz_cost",
+          "profile": {
+            "column": "bz_cost",
+            "non_empty": 88,
+            "empty": 57,
+            "numeric_valid": 88,
+            "parse_ratio": 1.0,
+            "min": -0.01,
+            "max": 12966049979.21,
+            "samples": [
+              "38448084.6",
+              "12927601894.61",
+              "12966049979.21",
+              "12336289926.24",
+              "629760052.97"
+            ]
+          },
+          "examples": [
+            "股票数据/财务数据/主营业务构成/by_symbol/300502.SZ+新易盛.csv",
+            "股票数据/财务数据/主营业务构成/by_symbol/301666.SZ+大普微-UW.csv",
+            "股票数据/财务数据/主营业务构成/by_symbol/603435.SH+嘉德利.csv"
+          ]
+        }
+      ],
+      "empty_candidate_refs": [],
+      "direct_known_blocker": "Existing DOCKCASE/Tushare fields do not directly contain the full target business metric and formula inputs required for a production Known value.",
+      "next_tushare_action": "优先复核 fina_mainbz/主营业务构成的 bz_item、bz_sales、bz_cost、bz_profit，把它们作为产品 mix/分子证据；仍需单位销量、出货量或外部价格指数才能计算 ASP。",
+      "llm_or_web_fallback": "从年报分产品销量、产销存、公告、行业价格指数、交易所问答或公司披露中抽取数量/价格口径，和 bz_sales 做公式校验。",
+      "source_reports": [
+        "docs/audit/a_share_local_structured_source_candidates_2026-06-19.json",
+        "docs/audit/a_share_local_structured_unknown_source_options_2026-06-19.json"
+      ],
+      "review_checklist": [
+        "confirm candidate field semantics match the target dp_id",
+        "confirm all required formula inputs are present before Known scoring",
+        "reject stock market, shareholder, index, or trading fields as business proxies",
+        "keep data_status=Unknown until a bounded value_json formula is reviewed",
+        "do not approve runtime writes from this packet alone"
+      ],
+      "review_status": "review_required",
+      "safe_to_upsert_without_review": false,
+      "production_write_allowed": false,
+      "score_mutation": "none",
+      "packet_contract_valid": true,
+      "packet_validation_errors": []
+    }
+  ]
+}

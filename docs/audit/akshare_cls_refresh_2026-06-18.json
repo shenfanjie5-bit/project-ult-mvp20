@@ -1,0 +1,99 @@
+{
+  "generated_at": "2026-06-19T02:02:55+08:00",
+  "status": "direct_cls_web_api_valid_rows",
+  "purpose": "Verify whether the A-share CLS media/report fields can refresh from real current CLS data and enter the score path.",
+  "root_cause": {
+    "legacy_akshare_endpoint": "AKShare stock_info_global_cls still points at https://www.cls.cn/nodeapi/telegraphList, which currently returns 404 HTML or times out.",
+    "current_web_endpoint": "The cls.cn Next.js telegraph page now loads signed JSON from /v1/roll/get_roll_list.",
+    "project_fix": "mvp20.sources.akshare_source now tries the signed cls.cn web API first and keeps stock_info_global_cls as a legacy fallback."
+  },
+  "commands": [
+    {
+      "kind": "legacy_endpoint_probe",
+      "command": ".venv/bin/python - <<'PY' ... requests.get('https://www.cls.cn/nodeapi/telegraphList') ... PY",
+      "result": "HTTP 404 HTML, not JSON",
+      "database_write": false
+    },
+    {
+      "kind": "signed_cls_web_api_probe",
+      "command": ".venv/bin/python - <<'PY' ... requests.get('https://www.cls.cn/v1/roll/get_roll_list', signed_params) ... PY",
+      "result": "errno=0 with 20 roll_data rows in about 1.3 seconds",
+      "database_write": false
+    },
+    {
+      "kind": "focused_collector_cls_retry",
+      "command": "AKSHARE_CALL_TIMEOUT_S=30 .venv/bin/python scripts/collector.py --source akshare-cls --max-cycles 1",
+      "result": "collector completed in about 2 seconds and upserted three Known MARKET:CN sentinel rows",
+      "known_or_proxy_rows": 3,
+      "database_write": true
+    }
+  ],
+  "database_rows_after_refresh": [
+    {
+      "ts_code": "MARKET:CN",
+      "dp_id": "L9.industry.compete_risk",
+      "status": "Known",
+      "source": "akshare:stock_info_global_cls",
+      "count_24h": 3,
+      "event_active": true,
+      "top_headline": "美国财政部制裁与黎巴嫩真主党有关联的黎官员"
+    },
+    {
+      "ts_code": "MARKET:CN",
+      "dp_id": "L9.industry.policy_change",
+      "status": "Known",
+      "source": "akshare:stock_info_global_cls",
+      "count_24h": 6,
+      "event_active": true,
+      "positive_policy_count": 1,
+      "negative_policy_count": 2,
+      "net_policy_score": -1,
+      "top_headline": "美国财政部制裁与黎巴嫩真主党有关联的黎官员"
+    },
+    {
+      "ts_code": "MARKET:CN",
+      "dp_id": "L9.media.report",
+      "status": "Known",
+      "source": "akshare:stock_info_global_cls",
+      "count_24h": 20,
+      "event_active": true,
+      "positive_media_count": 1,
+      "negative_media_count": 0,
+      "net_media_score": 1,
+      "top_headline": "世界气象组织：去年极端天气影响非洲超千万人"
+    }
+  ],
+  "score_path_effect": {
+    "runtime_valid_real_dp_ids": {
+      "before": 137,
+      "after": 140
+    },
+    "runtime_numeric_signal_dp_ids": {
+      "before": 106,
+      "after": 109
+    },
+    "runtime_bridge_emitted_dp_ids": {
+      "before": 91,
+      "after": 94
+    },
+    "effective_score_path_dp_ids": {
+      "before": 116,
+      "after": 119
+    },
+    "participating_gap_dp_ids": {
+      "before": 58,
+      "after": 55
+    },
+    "actionable_participating_gap_dp_ids": {
+      "before": 37,
+      "after": 34
+    },
+    "conditional_formula_ready_pending_valid_data_dp_ids": []
+  },
+  "current_interpretation": {
+    "code_path_status": "ready",
+    "data_path_status": "restored_via_signed_cls_web_api",
+    "score_path_status": "cls_fields_enter_final_score_when_valid_events_exist",
+    "safe_retry": "Use the dedicated --source akshare-cls collector path before running full akshare, because full AKShare also attempts per-stock news calls."
+  }
+}

@@ -1,0 +1,467 @@
+{
+ "family": "prob_logistic",
+ "date": "2026-06-10",
+ "scripts": [
+  "factor_research/model/prob_variants/logistic.py",
+  "factor_research/model/prob_variants/sweep_logistic.py",
+  "factor_research/model/prob_variants/compare_paired.py"
+ ],
+ "question": "Does a walk-forward pooled LogisticRegression on neutralized {rvol_20,ivol_60,max5,turnover_20,ep_ttm} (target=rel: y=1{ret>per-date liquid median}) beat the empirical score-rank-bin calibration (caliblib) for P(beat-median)? And does the magnitude/surprise score add any P(up) info conditional on vol/value?",
+ "protocol": "Identical test set as empirical baseline: first_test=24, 42 test dates (2024-07..2026-03), per-date liquid mask, walk-forward only (fit on dates<t), NaN->0 impute with coverage>=0.5, brier/reliability/discrimination via caliblib.evaluate definitions; magnitude band (exp/q10/q90) always from empirical decile pools of the logistic score.",
+ "headline_comparison_disc_up_rate_top_minus_bottom": {
+  "empirical_bins_baseline": {
+   "h10_liq70": {
+    "disc_pp": 4.57,
+    "t": 1.71,
+    "pos_pct": 0.6,
+    "n_dates": 42,
+    "brier_skill": 0.0004911446330525537
+   },
+   "h20_liq70": {
+    "disc_pp": 6.2,
+    "t": 2.48,
+    "pos_pct": 0.67,
+    "n_dates": 42,
+    "brier_skill": 0.000979012493239395
+   },
+   "h10_liq50": {
+    "disc_pp": 5.31,
+    "t": 2.07,
+    "pos_pct": 0.57,
+    "n_dates": 42,
+    "brier_skill": 0.0005846867419906365
+   },
+   "h20_liq50": {
+    "disc_pp": 7.66,
+    "t": 3.08,
+    "pos_pct": 0.71,
+    "n_dates": 42,
+    "brier_skill": 0.0017553677999093686
+   }
+  },
+  "logistic_base5_C1_raw": {
+   "h10_liq70": {
+    "disc_pp": 4.39,
+    "t": 1.44,
+    "pos_pct": 0.55,
+    "n_dates": 42,
+    "brier_skill": -0.0006468679250086762
+   },
+   "h20_liq70": {
+    "disc_pp": 5.55,
+    "t": 1.86,
+    "pos_pct": 0.57,
+    "n_dates": 42,
+    "brier_skill": -0.000968342721916704
+   },
+   "h10_liq50": {
+    "disc_pp": 4.08,
+    "t": 1.27,
+    "pos_pct": 0.57,
+    "n_dates": 42,
+    "brier_skill": -0.0013302836826971642
+   },
+   "h20_liq50": {
+    "disc_pp": 5.28,
+    "t": 1.73,
+    "pos_pct": 0.6,
+    "n_dates": 42,
+    "brier_skill": -0.0011000981779880625
+   }
+  },
+  "note": "logistic nominally worse in ALL 4 cells; gap widens at h20/liq50 where signal is strongest"
+ },
+ "paired_per_date_diff_logistic_minus_empirical": {
+  "h10": {
+   "mean": -0.001846757705863314,
+   "t": -0.20163546093989274,
+   "pos_pct": 0.47619047619047616,
+   "per_date_corr": 0.9570875204051523
+  },
+  "h20": {
+   "mean": -0.006521039585114731,
+   "t": -0.6235502994249844,
+   "pos_pct": 0.47619047619047616,
+   "per_date_corr": 0.9424545973110587
+  }
+ },
+ "config_sweep": [
+  {
+   "horizon": 10,
+   "feature_set": "base5",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 4.39,
+   "t": 1.44,
+   "pos_pct": 0.55,
+   "n_dates": 42,
+   "brier_skill": -0.00065
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5",
+   "C": 0.1,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 4.46,
+   "t": 1.46,
+   "pos_pct": 0.55,
+   "n_dates": 42,
+   "brier_skill": -0.00064
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5",
+   "C": 1.0,
+   "pcal": "binned",
+   "liquid": 0.7,
+   "disc_pp": 4.43,
+   "t": 1.58,
+   "pos_pct": 0.57,
+   "n_dates": 42,
+   "brier_skill": -0.00056
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.5,
+   "disc_pp": 4.08,
+   "t": 1.27,
+   "pos_pct": 0.57,
+   "n_dates": 42,
+   "brier_skill": -0.00133
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5_beta",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 3.05,
+   "t": 0.85,
+   "pos_pct": 0.48,
+   "n_dates": 42,
+   "brier_skill": -0.00281
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5_mag",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 4.47,
+   "t": 1.53,
+   "pos_pct": 0.52,
+   "n_dates": 42,
+   "brier_skill": -0.00103
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5_strev",
+   "C": 0.1,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 3.91,
+   "t": 1.3,
+   "pos_pct": 0.52,
+   "n_dates": 42,
+   "brier_skill": -0.00081
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5_strev",
+   "C": 1.0,
+   "pcal": "binned",
+   "liquid": 0.7,
+   "disc_pp": 3.13,
+   "t": 1.18,
+   "pos_pct": 0.5,
+   "n_dates": 42,
+   "brier_skill": -0.00079
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5_strev",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 3.88,
+   "t": 1.28,
+   "pos_pct": 0.52,
+   "n_dates": 42,
+   "brier_skill": -0.00082
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5_strev_beta",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 2.52,
+   "t": 0.72,
+   "pos_pct": 0.48,
+   "n_dates": 42,
+   "brier_skill": -0.00288
+  },
+  {
+   "horizon": 10,
+   "feature_set": "base5_surprise",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 4.2,
+   "t": 1.43,
+   "pos_pct": 0.52,
+   "n_dates": 42,
+   "brier_skill": -0.00112
+  },
+  {
+   "horizon": 10,
+   "feature_set": "surprise_only",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": -0.56,
+   "t": -0.34,
+   "pos_pct": 0.5,
+   "n_dates": 42,
+   "brier_skill": -0.00055
+  },
+  {
+   "horizon": 20,
+   "feature_set": "base5",
+   "C": 0.1,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 5.52,
+   "t": 1.85,
+   "pos_pct": 0.57,
+   "n_dates": 42,
+   "brier_skill": -0.00095
+  },
+  {
+   "horizon": 20,
+   "feature_set": "base5",
+   "C": 1.0,
+   "pcal": "binned",
+   "liquid": 0.7,
+   "disc_pp": 4.78,
+   "t": 1.71,
+   "pos_pct": 0.6,
+   "n_dates": 42,
+   "brier_skill": -0.00049
+  },
+  {
+   "horizon": 20,
+   "feature_set": "base5",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.5,
+   "disc_pp": 5.28,
+   "t": 1.73,
+   "pos_pct": 0.6,
+   "n_dates": 42,
+   "brier_skill": -0.0011
+  },
+  {
+   "horizon": 20,
+   "feature_set": "base5",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 5.55,
+   "t": 1.86,
+   "pos_pct": 0.57,
+   "n_dates": 42,
+   "brier_skill": -0.00097
+  },
+  {
+   "horizon": 20,
+   "feature_set": "base5_mag",
+   "C": 1.0,
+   "pcal": "raw",
+   "liquid": 0.7,
+   "disc_pp": 4.93,
+   "t": 1.7,
+   "pos_pct": 0.55,
+   "n_dates": 42,
+   "brier_skill": -0.00145
+  }
+ ],
+ "configs_tried": 17,
+ "does_surprise_add_p_up_info": {
+  "surprise_only_h10": {
+   "disc_pp": -0.56,
+   "t": -0.34,
+   "pos_pct": 0.5,
+   "n_dates": 42
+  },
+  "base5_plus_raw_surprise_h10": {
+   "disc_pp": 4.2,
+   "t": 1.43,
+   "pos_pct": 0.52,
+   "n_dates": 42
+  },
+  "base5_plus_mag_score_h10": {
+   "disc_pp": 4.47,
+   "t": 1.53,
+   "pos_pct": 0.52,
+   "n_dates": 42
+  },
+  "base5_alone_h10": {
+   "disc_pp": 4.39,
+   "t": 1.44,
+   "pos_pct": 0.55,
+   "n_dates": 42
+  },
+  "base5_plus_mag_score_h20": {
+   "disc_pp": 4.93,
+   "t": 1.7,
+   "pos_pct": 0.55,
+   "n_dates": 42
+  },
+  "base5_alone_h20": {
+   "disc_pp": 5.55,
+   "t": 1.86,
+   "pos_pct": 0.57,
+   "n_dates": 42
+  },
+  "answer": "NO. surprise alone has zero P(up) discrimination (-0.56pp t-0.34); adding it to base5 changes nothing at h10 (+4.47 vs +4.39, << null spread ~1.3pp) and HURTS at h20 (+4.93 vs +5.55). Confirms established fact 2: P(up) and E[ret] are different targets."
+ },
+ "honesty_bar_best_logistic_h20_base5_C1_raw": {
+  "real_disc_pp": 5.55,
+  "real_t": 1.86,
+  "shuffle_null_6seeds_pp": [
+   0.89,
+   -0.59,
+   -0.51,
+   -1.17,
+   0.3,
+   -0.74
+  ],
+  "shuffle_null_mean_std": [
+   -0.3,
+   0.76
+  ],
+  "clears_null": true,
+  "shuffle_null_h10_4seeds_pp": [
+   1.08,
+   -0.4,
+   -0.39,
+   0.04
+  ],
+  "h10_real_disc_pp": 4.39,
+  "liquid_50": {
+   "disc_pp": 5.28,
+   "t": 1.73,
+   "pos_pct": 0.6,
+   "n_dates": 42
+  },
+  "drop_year": {
+   "2024": {
+    "disc_pp": 4.24,
+    "t": 1.3,
+    "pos_pct": 0.53,
+    "n_dates": 30
+   },
+   "2025": {
+    "disc_pp": 6.49,
+    "t": 1.32,
+    "pos_pct": 0.67,
+    "n_dates": 18
+   },
+   "2026": {
+    "disc_pp": 6.17,
+    "t": 1.86,
+    "pos_pct": 0.56,
+    "n_dates": 36
+   }
+  },
+  "drop_regime": {
+   "up_calm": {
+    "disc_pp": 5.93,
+    "t": 1.48,
+    "pos_pct": 0.55,
+    "n_dates": 29
+   },
+   "up_turbulent": {
+    "disc_pp": 3.43,
+    "t": 1.0,
+    "pos_pct": 0.59,
+    "n_dates": 17
+   },
+   "down_calm": {
+    "disc_pp": 6.21,
+    "t": 1.95,
+    "pos_pct": 0.58,
+    "n_dates": 38
+   },
+   "down_turbulent": {
+    "disc_pp": 5.55,
+    "t": 1.86,
+    "pos_pct": 0.57,
+    "n_dates": 42
+   }
+  },
+  "note": "the low-vol/value P(up) tilt itself is real (clears null by >7x spread, positive in every year/regime cut) \u2014 but that was already established; the logistic adds nothing."
+ },
+ "best_logistic_details": {
+  "reliability": [
+   {
+    "p_pred": 0.437037397224458,
+    "p_real": 0.4605650892702375,
+    "n": 5769
+   },
+   {
+    "p_pred": 0.45998803333440036,
+    "p_real": 0.4800624133148405,
+    "n": 5768
+   },
+   {
+    "p_pred": 0.4769454436836137,
+    "p_real": 0.4921130178540475,
+    "n": 5769
+   },
+   {
+    "p_pred": 0.4925719848091245,
+    "p_real": 0.503120665742025,
+    "n": 5768
+   },
+   {
+    "p_pred": 0.5073029558649095,
+    "p_real": 0.5110071069509448,
+    "n": 5769
+   },
+   {
+    "p_pred": 0.5229853695664095,
+    "p_real": 0.5157766990291263,
+    "n": 5768
+   },
+   {
+    "p_pred": 0.539485964592831,
+    "p_real": 0.5278211128445138,
+    "n": 5769
+   },
+   {
+    "p_pred": 0.5638912679789942,
+    "p_real": 0.5091003640145606,
+    "n": 5769
+   }
+  ],
+  "interval_coverage_q10_q90": 0.7874493488482958,
+  "mae_exp_ret": 0.08120308950775453,
+  "coef_mean_across_test_dates": {
+   "rvol_20": -0.125,
+   "ivol_60": -0.083,
+   "max5": 0.0716,
+   "turnover_20": 0.0161,
+   "ep_ttm": 0.0785
+  },
+  "coef_note": "collinearity among the 4 vol-ish features flips max5/turnover signs vs priors; raw logistic P slightly overconfident in extreme bins (top: pred .564 real .509) -> brier_skill mildly negative (-0.001) vs empirical +0.001; --pcal binned fixes level but still does not beat empirical bins."
+ },
+ "verdict": "no_edge",
+ "conclusion": "CLEAN NEGATIVE on the swap hypothesis. Walk-forward pooled logistic regression on the established prob features is the SAME signal as the empirical-bin layer (per-date disc correlation 0.94-0.96) but nominally worse in all 4 horizon x liquidity cells (paired diff h10 -0.18pp t-0.20; h20 -0.65pp t-0.62; at h20/liq50 empirical +7.66 t3.08 vs logistic +5.28 t1.73). Raw logistic P is mildly mis-calibrated at the extremes (negative Brier skill) because the pooled-linear-logit functional form extrapolates beyond what the rank bins support; bin recalibration of the logistic score fixes level but not ranking. Adding surprise (sue/npq_yoy raw or as the final_model magnitude score) adds ZERO P(up) information conditional on vol/value, confirming P(up) and E[ret] are different targets. RECOMMENDATION: keep the empirical score-rank-bin layer (caliblib, target=rel) as the production calibration; do not adopt logistic."
+}

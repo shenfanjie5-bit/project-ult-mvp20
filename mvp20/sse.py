@@ -26,8 +26,10 @@ from mvp20.json_utils import dumps_strict_json
 
 # Conservative defaults; can be overridden per-request later via query string.
 DEFAULT_POLL_INTERVAL_SECONDS = 5
-DEFAULT_MAX_DURATION_SECONDS = 30 * 60   # auto-close after 30 min, client will reconnect
-DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30  # send empty event if no changes for this long
+DEFAULT_MAX_DURATION_SECONDS = 10 * 60   # auto-close after 10 min, client will reconnect
+                                         # (shorter = half-open/abandoned streams free up 3× sooner)
+DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 15  # send empty event if no changes for this long
+                                         # (faster disconnect detection on dead clients)
 
 
 def write_event(write_bytes: Callable[[bytes], int], flush: Callable[[], None],

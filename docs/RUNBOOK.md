@@ -57,16 +57,18 @@ specific tickers.
 8. Run `mvp20 plan-backfill` and review provider coverage / gaps. The
    plan auto-loads `data_providers.yaml` when it sits next to the
    manifest and surfaces per-market provider lists.
-9. Verify the 6 vendored upstream modules (under `upstream/`) are
-   importable through their skeleton adapters:
-   `python -c "from mvp20.adapters import audit_eval, data_platform,
-   entity_registry, graph_engine, main_core, reasoner_runtime;
-   all_avail = all(m._AVAILABLE for m in [audit_eval, data_platform,
-   entity_registry, graph_engine, main_core, reasoner_runtime]);
-   print('all adapters available:', all_avail)"`. If any adapter shows
-   `_AVAILABLE=False`, check `_IMPORT_ERR` for the missing dep and either
-   install the runtime dep or accept that the corresponding routes will
-   return 503 `UPSTREAM_UNAVAILABLE`.
+9. Verify the 14 locked modules through the current-MVP contract-surface
+   policy. The 6 vendored upstream service modules are served through local
+   `upstream/*/artifacts/frontend-api/` payloads by `mvp20/adapters/*`;
+   `contracts` is an importable schema dependency; and 7 locked modules are
+   verified current-MVP replacement paths. Run:
+
+   `.venv/bin/python scripts/audit_module_status.py --output docs/audit/module_status_2026-06-20.json`
+
+   A 200 adapter response with `wire_depth: artifact` is normal current-MVP
+   behavior, not proof that the upstream module is a production-normal service.
+   If an artifact is missing and an optional vendored package cannot import,
+   the route should return a structured 503 `UPSTREAM_UNAVAILABLE` envelope.
 10. **Overlay source / compiler sanity check** — graph information is
     authored in YAML and compiled into SQLite before the frontend reads it:
 
@@ -78,7 +80,7 @@ specific tickers.
 
     | Layer | Location | Responsibility |
     |---|---|---|
-    | YAML source | `config/industry_overlays/<industry_id>.yaml` | 14 L0 industry-derived slots |
+    | YAML source | `config/industry_overlays/<industry_id>.yaml` | 31 industry overlay graph nodes |
     | YAML source | `config/stock_overlays/<industry_id>/<ts_code>.yaml` | company-industry overlay source |
     | SQLite compiled | `runtime/hot.sqlite:company_graph_snapshot` | frontend main graph payload |
     | SQLite compiled | `runtime/hot.sqlite:overlay_alert` | missing/low-confidence overlay alerts |
@@ -105,7 +107,158 @@ specific tickers.
 
     Daily compaction (cron, 01:00):
     `python scripts/compact_history.py`
-12. Run fixture and live evidence only through explicit gates.
+12. **A-share EOD full refresh** — use the one-shot EOD chain for an operator
+    refresh. It now refreshes the fast Tushare core/macro rows, runs both
+    historical and snapshot derive layers, compiles overlays, rebuilds peer
+    context, and rebuilds quant / signal artifacts:
+
+    ```bash
+    .venv/bin/python scripts/run_eod_refresh.py
+    ```
+
+    If DockCase by-symbol archives lag the latest cross-sectional Tushare
+    snapshot, repair them with the cross-section write-back helper before
+    rebuilding quant/signal artifacts:
+
+    ```bash
+    .venv/bin/python scripts/refresh_dockcase_a_share_eod.py --trade-date YYYYMMDD --create-missing-full
+    .venv/bin/python scripts/build_quant_scores.py
+    .venv/bin/python scripts/build_signal_5d.py
+    .venv/bin/python scripts/build_signal_up_5d.py
+    ```
+
+    Current 2026-06-24 health evidence is written to
+    `docs/audit/2026-06-24_a_share_update_health.json` and `.md`. The expected
+    healthy shape is: DockCase `daily`/`daily_basic` at 1,640 current rows,
+    `moneyflow` at 1,630 current rows, `runtime/quant_score/A_share.json`
+    asof 20260624, and `runtime/signal_5d/A_share.json` asof 20260624.
+13. **A-share 5d signal build** — the workbench "今日重点信号" probability
+    must come from the backend `signal_5d` artifact, not frontend industry-prior
+    fallback. The production display target is relative:
+    `P(5d return beats same-day liquid-universe median)`.
+
+    ```bash
+    .venv/bin/python factor_research/model/export_signal_5d_params.py
+    .venv/bin/python scripts/build_signal_5d.py
+    .venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 12 --top-n 20
+    .venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 42 --top-n 20 --out docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json
+    .venv/bin/python scripts/backtest_signal_5d.py --date 2026-06-20 --n-dates 12 --top-n 20
+    .venv/bin/mvp20 serve --port 8701
+    curl 'http://127.0.0.1:8701/api/project-ult/signals/stock?ts_code=002236.SZ&horizon=5' | jq '.data'
+    curl 'http://127.0.0.1:8701/api/project-ult/signals/top?horizon=5&market=A_share&limit=5' | jq '.data.artifact'
+    ```
+
+    Expected contract:
+
+    | Field | Meaning |
+    |---|---|
+    | `probability` / `p_beat_median` | selected 5d relative probability, not absolute P(up); logistic if gates pass, otherwise per-stock continuous fallback |
+    | `model_method` | candidate model family, currently `logistic_multifeature_7f` |
+    | `probability_source` | active production source, currently `score_pct_linear_bin10` because the 42-date logistic gate failed |
+    | `probability_semantics` | explicit target text: `P(5d return beats same-day liquid-universe median)` |
+    | `model_probability` | 7-feature ridge-logistic probability when feature coverage is sufficient |
+    | `model_probability_shadow` | logistic probability retained for audit when it is not the production source |
+    | `legacy_bin_probability` | frozen legacy 10-bin probability retained as fallback/audit comparator |
+    | `raw_bin_probability` / `p_up_raw` | empirical legacy-bin probability before monotone smoothing |
+    | `feature_coverage` | fraction of the 7 model features available for that row |
+    | `validated` | true only inside the liquid top-70% model gate with enough feature coverage |
+    | `stale` | true when artifact `asof` is older than 10 calendar days |
+    | `reason` | explicit reason for stale/unvalidated/unavailable rows |
+    | `direction` / `signal_strength` | derived from relative probability tilt around base rate |
+
+    The 2026-06-20 model gate is deliberately split into a 12-date fast gate and
+    a 42-date stability gate. The 12-date run passes for
+    `logistic_multifeature_7f` (avg Brier skill 0.00282, avg rank IC 0.0576,
+    avg top-20 excess +0.77pp, avg unique 1dp probabilities 160.9), but the
+    42-date run fails Brier skill and rank-IC-vs-fallback. The frozen
+    `config/signal_5d_params.json` therefore sets `model.primary_enabled=false`
+    and production artifacts use `score_pct_linear_bin10` while exposing the
+    logistic value as shadow. Current artifact evidence after the 2026-06-24
+    refresh: asof 20260624, 1,613 rows, 1,125 validated rows. Stale rows may render a
+    gray `过期预览` value for inspection, but must remain `validated=false` and
+    must not be counted as effective signals. Rows without previewable
+    probability still render as `-- / 无有效信号`.
+
+    HK/US are intentionally not emitted by this artifact. They need separate
+    history feeds, feature pipelines, and calibration evidence before the same
+    endpoint can return validated rows.
+14. **A-share absolute 5d upside signal build** — this is a parallel signal,
+    not a replacement for `signal_5d`. The target is absolute:
+    `P(5d return > 0)` / `target_kind=absolute_up_5d`.
+
+    ```bash
+    .venv/bin/python factor_research/model/export_signal_up_5d_params.py
+    .venv/bin/python scripts/build_signal_up_5d.py
+    .venv/bin/python scripts/evaluate_signal_up_5d.py --date 2026-06-21 --n-dates 12 --top-n 20
+    .venv/bin/python scripts/evaluate_signal_up_5d.py --date 2026-06-21 --n-dates 42 --top-n 20 --out docs/audit/2026-06-21_a_share_signal_up_5d_model_backtest_42_dates.json
+    .venv/bin/mvp20 serve --port 8701
+    curl 'http://127.0.0.1:8701/api/project-ult/signals/up-5d/stock?ts_code=002236.SZ' | jq '.data'
+    curl 'http://127.0.0.1:8701/api/project-ult/signals/up-5d/top?market=A_share&limit=5' | jq '.data.artifact'
+    ```
+
+    Expected contract:
+
+    | Field | Meaning |
+    |---|---|
+    | `probability` / `p_up_5d` | selected absolute `P(5d return > 0)` preview/probability |
+    | `target_kind` | `absolute_up_5d` |
+    | `probability_semantics` | explicit absolute-up text; not relative win rate |
+    | `model_probability` | ridge-logistic absolute-up estimate when feature coverage is sufficient |
+    | `model_probability_shadow` | logistic estimate retained when 42-date production gates fail |
+    | `fallback_probability` | train base-rate fallback; transparent but not a stock-specific validated signal |
+    | `baseline_probability` | score-derived shadow comparator; never `final_score.base_score` linear mapping |
+    | `validated` | true only if the 42-date gates pass, artifact is fresh, row is liquid-gated, and features are covered |
+    | `reason` | explicit reason for failed gate, stale artifact, unsupported market, or insufficient coverage |
+
+    The 2026-06-21 evidence is intentionally conservative. The 12-date fast
+    run passed for the market/industry regime adjusted logistic candidate, but
+    the 42-date stability run failed Brier/logloss/AUC/top-decile gates. Current
+    artifact rows are therefore `validated=false` and use
+    `train_base_rate_unvalidated` as the selected source while retaining the
+    logistic value as shadow. Use this only as a stock-detail directional
+    explanation until a future 42-date gate passes. Keep MarketOverview primary
+    sorting on the relative `signal_5d` signal.
+
+    HK/US are intentionally not emitted by this artifact. They need separate
+    history feeds, feature pipelines, and calibration evidence before the same
+    endpoint can return validated rows.
+15. Run fixture and live evidence only through explicit gates.
+
+## Current-MVP Audit Evidence
+
+The 2026-06-20 completion gate is reproducible from the current audit inputs:
+
+```bash
+.venv/bin/python scripts/audit_a_share_score_sink_effect.py
+.venv/bin/python scripts/audit_a_share_current_mvp_score_applicability.py
+.venv/bin/python scripts/audit_a_share_materialization_execution_review.py
+.venv/bin/python scripts/audit_module_status.py --output docs/audit/module_status_2026-06-20.json
+.venv/bin/python scripts/audit_bff_latency.py --start-server --port 8799 --output docs/audit/bff_latency_2026-06-20.json --repeats 2 --warmups 1 --threshold-ms 1000
+.venv/bin/python scripts/audit_dockcase_csv_quality_impact.py
+.venv/bin/python scripts/audit_signal_5d.py --date 2026-06-20 --base-url http://127.0.0.1:8701
+.venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 12 --top-n 20
+.venv/bin/python scripts/evaluate_signal_5d_schemes.py --date 2026-06-20 --n-dates 42 --top-n 20 --out docs/audit/2026-06-20_a_share_signal_5d_model_backtest_42_dates.json
+.venv/bin/python factor_research/model/export_signal_up_5d_params.py
+.venv/bin/python scripts/build_signal_up_5d.py
+.venv/bin/python scripts/evaluate_signal_up_5d.py --date 2026-06-21 --n-dates 12 --top-n 20
+.venv/bin/python scripts/evaluate_signal_up_5d.py --date 2026-06-21 --n-dates 42 --top-n 20 --out docs/audit/2026-06-21_a_share_signal_up_5d_model_backtest_42_dates.json
+.venv/bin/python scripts/audit_signal_up_5d.py --date 2026-06-21 --base-url http://127.0.0.1:8701
+.venv/bin/python scripts/backtest_signal_5d.py --date 2026-06-20 --n-dates 12 --top-n 20 --base-url http://127.0.0.1:8701
+.venv/bin/python scripts/audit_completion_deviation.py
+```
+
+The bounded execution command
+`.venv/bin/python scripts/audit_a_share_approval_materialization_batch_execution_preflight.py --execute`
+is a first-run mutation gate and should not be rerun against the already
+materialized `runtime/hot.sqlite`; use the post-execution review audit above for
+current-state reproduction.
+
+Expected current result: `docs/audit/completion_deviation_2026-06-20.json`
+reports 100.0% completion, 0.0% deviation, A-share current-MVP actionable gap
+0, BFF/API smoke under 1s, and DOCKCASE current-MVP data-quality actionable gap
+0. Production score writes remain disallowed; the materialization execution was
+a bounded runtime-data UPSERT, and current reproduction is via the read-only
+post-execution value/timestamp review.
 
 ## Phase Z: schema governance + LLM workflow
 
@@ -213,7 +366,7 @@ spec = set(yaml.safe_load(open('config/data_point_roles.yaml'))['data_points'].k
 sdps = set(r[0] for r in conn.execute('SELECT DISTINCT dp_id FROM realtime_current').fetchall())
 print('spec_intersect:', len(sdps & spec), '/ 250')
 "
-# Current baseline: 166 distinct_dp / 136 spec_intersect.
+# Current baseline: 181 distinct_dp / 136 spec_intersect.
 ```
 
 ## Q4 — Z4 LLM run preparation
@@ -266,6 +419,42 @@ path for malformed entries.
   after each batch — it catches the most common cost-of-not-checking
   failure (codex inventing a URL from memory).
 
+## Single-Stock LLM Decision Checks
+
+Use this workflow when validating the A-share single-stock decision pipeline:
+
+```bash
+# Build a dry-run frozen context without writing it.
+curl "http://127.0.0.1:8701/api/project-ult/llm/stock-context?ts_code=000977.SZ&horizon=5d&dry_run=1"
+
+# Build, validate, and persist a deterministic no-provider decision snapshot.
+curl -X POST "http://127.0.0.1:8701/api/project-ult/llm/stock-decision" \
+  -H "Content-Type: application/json" \
+  -d '{"ts_code":"000977.SZ","horizon":"5d","market":"A_share","dry_run":true}'
+
+# Refresh audit JSONs.
+.venv/bin/python scripts/audit_llm_stock_decision.py \
+  --ts-code 000977.SZ --horizon 5d --as-of 2026-06-21
+```
+
+Expected current behavior:
+
+- HK/US requests return an explicit unsupported context.
+- No provider token is required for the deterministic path.
+- If primary probability evidence is stale, unvalidated, fallback, or shadow,
+  the decision is `inconclusive` with `confidence=null`.
+- `signal_5d` remains relative median-beat evidence, not absolute P(up).
+- `signal_up_5d` is the absolute-up artifact, but current stale/unvalidated
+  rows are diagnostic only.
+- `/api/project-ult/score` may include `llm_decision_summary`; it is additive
+  and must not be interpreted as a score cache input.
+
+Audit files:
+
+- `docs/audit/2026-06-21_llm_stock_decision_architecture_audit.json`
+- `docs/audit/2026-06-21_llm_stock_context_smoke.json`
+- `docs/audit/2026-06-21_llm_decision_validator_audit.json`
+
 ## Evidence Hygiene
 
 Do not commit raw provider payloads, DSNs, tokens, local runtime paths, parquet
@@ -278,3 +467,7 @@ files, generated manifests, stdout/stderr captures, or exitcode files.
 - M4.7/financial-doc complete.
 - Contracts subtype changes.
 - New relation types.
+- A-share score completion complete. Current-MVP denominator closure is complete;
+  raw 174-field closure remains 132 / 174.
+- Runtime score writes approved. The 2026-06-20 execution was a bounded
+  runtime-data write with production score writes still disallowed.

@@ -309,9 +309,12 @@ def test_block_aggregates_events_across_trade_days(
     monkeypatch.setattr(ak, "stock_dzjy_mrmx", _fake_dzjy)
 
     rows = akshare_source.fetch_l9_capital_etf_block(
-        ["300750.SZ", "600519.SH"], now=1_700_000_000,
+        ["300750.SZ", "600519.SH"],
+        now=1_700_000_000,
+        reference_date="20260513",
     )
     assert len(rows) == 2
+    assert call_log[:3] == ["20260513", "20260512", "20260511"]
     by_code = {r[0]: r for r in rows}
 
     p1 = json.loads(by_code["300750.SZ"][2])
@@ -326,10 +329,10 @@ def test_block_aggregates_events_across_trade_days(
     assert p2["total_volume"] == pytest.approx(1000 + 800)
 
 
-def test_block_emits_inactive_when_no_events(
+def test_block_emits_known_neutral_when_no_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stock with zero dzjy events in the 5-day window → Inactive."""
+    """Stock with zero dzjy events in a decoded 5-day window → Known neutral."""
 
     import akshare as ak
 
@@ -343,9 +346,11 @@ def test_block_emits_inactive_when_no_events(
         ["300750.SZ"], now=1_700_000_000,
     )
     assert len(rows) == 1
-    assert rows[0][3] == "Inactive"
+    assert rows[0][3] == "Known"
+    assert rows[0][4] == 0.6
     payload = json.loads(rows[0][2])
     assert payload["events_count"] == 0
+    assert payload["event_active"] is False
 
 
 def test_block_swallows_endpoint_exceptions(
@@ -366,6 +371,10 @@ def test_block_swallows_endpoint_exceptions(
     )
     assert len(rows) == 1
     assert rows[0][3] == "Inactive"
+    payload = json.loads(rows[0][2])
+    assert payload["events_count"] == 0
+    assert payload["event_active"] is False
+    assert payload["reason"] == "upstream_no_valid_dzjy_days"
 
 
 def test_block_skips_non_a_share_codes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -455,9 +464,22 @@ def test_block_no_crash_when_akshare_missing(
 
 
 def test_bucket_a_dp_ids_registered_in_supported_set() -> None:
-    """Sanity: the 2 new dp_ids must appear in both TIER1 and SUPPORTED."""
+    """Sanity on the bucket-A dp_id ownership after the akshare→Tushare move.
 
-    assert "L8.cap.outflow_cut" in akshare_source.TIER1_DP_IDS
+    ``L8.cap.outflow_cut`` was MOVED off akshare onto Tushare
+    (tushare_source.fetch_akshare_replacement_batch) so akshare no longer
+    declares it — only the block-trade signal (``L9.capital.etf_block``)
+    remains an akshare Tier-1 field. The ``fetch_l8_cap_outflow_cut`` function
+    is kept for back-compat/unit tests but is no longer wired into fetch_batch.
+    """
+
+    from mvp20.sources import tushare_source
+
+    # outflow_cut now belongs to Tushare, not akshare.
+    assert "L8.cap.outflow_cut" not in akshare_source.TIER1_DP_IDS
+    assert "L8.cap.outflow_cut" not in akshare_source.SUPPORTED_DP_IDS
+    assert "L8.cap.outflow_cut" in tushare_source.SUPPORTED_DP_IDS
+
+    # The block-trade signal stays on akshare.
     assert "L9.capital.etf_block" in akshare_source.TIER1_DP_IDS
-    assert "L8.cap.outflow_cut" in akshare_source.SUPPORTED_DP_IDS
     assert "L9.capital.etf_block" in akshare_source.SUPPORTED_DP_IDS

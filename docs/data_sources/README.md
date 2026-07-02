@@ -5,12 +5,16 @@ provider's full available endpoints / SDK methods are mapped to mvp20
 capability slugs so `mvp20 validate-providers` can prove every market and
 every important capability is covered.
 
+Current catalog scope: 5 active providers expose 47 active capability slugs.
+The wider vocabulary is 51 slugs when FMP tier-locked capabilities and planned
+FRED macro/commodity fields are counted.
+
 ## Files
 
 | File | Rows | Source of truth |
 |---|---:|---|
-| [`tushare_endpoints.csv`](tushare_endpoints.csv) | 138 | User-supplied `available_complete_interfaces_20260428.csv` (your real account access) |
-| [`futu_endpoints.csv`](futu_endpoints.csv) | 42 | Futu Python SDK read-only methods + trading methods (out-of-scope flagged) |
+| [`tushare_endpoints.csv`](tushare_endpoints.csv) | 145 | User-supplied `available_complete_interfaces_20260428.csv` plus current code-path additions |
+| [`futu_endpoints.csv`](futu_endpoints.csv) | 47 | Futu Python SDK read-only method/capability mappings + trading methods (out-of-scope flagged) |
 | [`fmp_endpoints.csv`](fmp_endpoints.csv) | 80 | FMP REST API public docs + tier requirements |
 | [`FMP_TIER_REQUIREMENTS.md`](FMP_TIER_REQUIREMENTS.md) | — | Which FMP plan each capability needs (Free / Starter / Premium / Ultimate) |
 
@@ -46,16 +50,17 @@ every important capability is covered.
 | `status` | `covered` / `out_of_scope` |
 | `notes` | Tier note or out-of-scope reason |
 
-When you upgrade FMP, regenerate this column. Today (Starter): 45 endpoints
-accessible / 35 endpoints tier-locked.
+When you upgrade FMP, regenerate this column. Today (Starter): 48 endpoint
+rows accessible / 32 endpoint rows tier-locked; 46 accessible rows are covered
+mvp20 capabilities and 2 accessible rows remain out-of-scope.
 
 ## Coverage summary (after Round 4 audit)
 
 | Provider | Total endpoints | Covered | Out-of-scope | Operational | Coverage % |
 |---|---:|---:|---:|---:|---:|
-| Tushare | 138 | 99 | 39 | 0 | **100% in-universe** (39 are asset-class outside universe) |
-| Futu OpenD | 42 | 29 | 7 (trading) | 6 (operational) | **100% read-only data covered** |
-| FMP | 80 | 76 | 4 (forex/crypto/commodity/COT) | 0 | **100% in-universe** |
+| Tushare | 145 | 107 | 38 | 0 | **100% in-universe** (38 are asset-class outside universe) |
+| Futu OpenD | 47 | 34 | 7 (trading/account) | 5 (operational) | 34 covered data mappings; `get_security_filter` remains a future universe/screener hook |
+| FMP | 80 | 77 | 3 (crypto/commodity/COT) | 0 | **100% in-universe** |
 
 ## How this maps to `data_providers.yaml`
 

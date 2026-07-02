@@ -34,8 +34,15 @@ sys.path.insert(0, str(ROOT))
 
 from mvp20 import schema_validator  # noqa: E402
 
+FORMULA_TEXT = (
+    "Direction × Event Strength × Transmission Strength × Company Exposure × "
+    "Business Share × Profit Sensitivity × Confidence × Time Factor × Surprise × "
+    "Funding Amplifier - Priced-in Discount - Risk Discount"
+)
+EVIDENCE_QUALITY_VALUES = frozenset({"low", "medium", "high"})
 
 WHITELIST_KEYS = frozenset({
+    "status",
     "data_status",
     "value",
     "confidence",
@@ -58,6 +65,41 @@ WHITELIST_KEYS = frozenset({
     "related_business",
     "related_metrics",
 })
+
+
+def _dump_overlay_yaml(overlay: dict) -> str:
+    """Dump overlays with a wide line width to avoid wrapping formula strings."""
+
+    text = yaml.safe_dump(
+        overlay,
+        allow_unicode=True,
+        sort_keys=False,
+        width=10000,
+    )
+    return text.replace(
+        "formula: Direction × Event Strength × Transmission Strength × Company Exposure × Business Share × Profit Sensitivity ×\n"
+        "      Confidence × Time Factor × Surprise × Funding Amplifier - Priced-in Discount - Risk Discount",
+        f"formula: {FORMULA_TEXT}",
+    )
+
+
+def _validate_patch_node_metadata(patch_node: dict) -> list[str]:
+    """Validate patch-level metadata that value-schema checks do not cover."""
+
+    errors: list[str] = []
+    if "evidence_quality" in patch_node:
+        value = patch_node.get("evidence_quality")
+        if value is not None and not isinstance(value, str):
+            errors.append(
+                "evidence_quality must be one of low/medium/high as a string "
+                f"(got {type(value).__name__})"
+            )
+        elif isinstance(value, str) and value not in EVIDENCE_QUALITY_VALUES:
+            errors.append(
+                "evidence_quality must be one of low/medium/high "
+                f"(got {value!r})"
+            )
+    return errors
 
 
 def _salvage_apply(overlay: dict, overlay_path: Path,
@@ -121,10 +163,7 @@ def _salvage_apply(overlay: dict, overlay_path: Path,
             else:
                 unmatched += 1
 
-    overlay_path.write_text(
-        yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
+    overlay_path.write_text(_dump_overlay_yaml(overlay), encoding="utf-8")
     print(f"  salvage: parsed {len(chunks) - parse_failed}/{len(chunks)} "
           f"chunks; {parse_failed} parse_failed", file=sys.stderr)
     return updated, unmatched
@@ -152,6 +191,8 @@ def _validate_patch_node_schemas(
         if not dp:
             continue
         errs = schema_validator.validate_overlay_node(patch_node, strict=strict)
+        if strict:
+            errs.extend(_validate_patch_node_metadata(patch_node))
         if errs:
             errors_by_dp[dp] = errs
     return errors_by_dp
@@ -263,10 +304,7 @@ def apply_patch(
         else:
             unmatched += 1
 
-    overlay_path.write_text(
-        yaml.safe_dump(overlay, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
+    overlay_path.write_text(_dump_overlay_yaml(overlay), encoding="utf-8")
     return updated, unmatched, schema_errors
 
 

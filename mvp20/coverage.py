@@ -34,6 +34,7 @@ The public surface is:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 # ---------------------------------------------------------------------------
@@ -525,6 +526,161 @@ def coverage_summary_for_overlay(overlay_yaml: Mapping[str, Any]) -> dict[str, A
     }
 
 
+# ---------------------------------------------------------------------------
+# Combined SQLite + YAML coverage (extends spec §23 with a hard-data layer)
+# ---------------------------------------------------------------------------
+#
+# The yaml-only ``coverage_summary_for_overlay`` only counts what the LLM /
+# overlay nodes have committed to (data_status on stock_overlay yaml). It does
+# NOT see hard data already emitted to SQLite via the realtime pipeline. The
+# helpers below extend the report with a second layer that takes the SQLite
+# hot snapshot into account, so the headline "overall_data_coverage" reflects
+# the union of both layers against the spec dp_id universe (250 in
+# config/data_point_roles.yaml).
+#
+# Why a separate layer instead of mutating the original numerator/denominator?
+#   - The yaml-only fields ``n_known / n_unknown / n_inactive / n_optionality
+#     / n_na`` are per-parent counts that downstream consumers (alerts, per
+#     node UI) still rely on. Keep them untouched.
+#   - The headline coverage in the response envelope (`overall_data_coverage`)
+#     is what the front-end CoverageBanner reads — that's the field we want
+#     to reflect the union.
+
+
+def _collect_sqlite_known_dps(
+    db_path: Path | None,
+    ts_code: str,
+    spec_path: Path | None = None,
+) -> tuple[set[str], set[str]]:
+    """Return ``(sqlite_dp_ids ∩ spec, spec_total)``.
+
+    Uses :func:`mvp20.storage.read_hot_snapshot` so sentinel rows
+    (``MARKET:CN`` / ``INDUSTRY:*``) fan out correctly with the same priority
+    rules the rest of the pipeline uses.
+
+    Filters out:
+      - dp_ids not in the spec universe (legacy / pre-spec namespaces such as
+        ``L5.fina.*`` should not inflate the numerator),
+      - rows whose ``data_status`` is not ``Known`` or ``Proxy`` — Proxy is
+        accepted because §spec treats FMP-ETF / sector-substitute proxies as
+        legitimate (just confidence-discounted) data, not Unknown.
+
+    Both inputs are optional so callers can use this helper as a no-op for
+    backward compatibility: passing ``db_path=None`` or a missing file yields
+    ``(empty, spec_total)`` and lets the rest of the pipeline degrade
+    gracefully to yaml-only behaviour.
+    """
+
+    spec_dps: set[str] = set()
+    if spec_path is not None and Path(spec_path).exists():
+        try:
+            import yaml  # local import — coverage.py is otherwise yaml-free
+            data = yaml.safe_load(Path(spec_path).read_text(encoding="utf-8")) or {}
+            spec_dps = set((data.get("data_points") or {}).keys())
+        except Exception:  # noqa: BLE001 — best-effort fallback
+            spec_dps = set()
+
+    if db_path is None or not Path(db_path).exists():
+        return set(), spec_dps
+
+    try:
+        from mvp20.storage import read_hot_snapshot
+        snapshot = read_hot_snapshot(Path(db_path), ts_code)
+    except Exception:  # noqa: BLE001 — never let coverage crash on storage failure
+        return set(), spec_dps
+
+    sqlite_known: set[str] = set()
+    for dp_id, entry in (snapshot or {}).items():
+        if spec_dps and dp_id not in spec_dps:
+            continue  # legacy namespace (e.g. L5.fina.*) — not in spec
+        status = (entry or {}).get("data_status")
+        if status in ("Known", "Proxy"):
+            sqlite_known.add(dp_id)
+    return sqlite_known, spec_dps
+
+
+def combined_coverage_summary(
+    overlay_yaml: Mapping[str, Any],
+    *,
+    ts_code: str | None = None,
+    db_path: Path | None = None,
+    spec_path: Path | None = None,
+) -> dict[str, Any]:
+    """Wrap :func:`coverage_summary_for_overlay` and add a SQLite-aware
+    headline.
+
+    Behaviour:
+      1. Run the original yaml-only report unchanged. All existing fields
+         (``per_node``, ``alerts``, ``overall.totals``, etc.) are preserved.
+      2. Compute the SQLite ``Known``/``Proxy`` set restricted to spec dp_ids.
+      3. Compute yaml ``Known`` dp_ids restricted to spec.
+      4. Union both sets, divide by ``|spec|`` → combined coverage in
+         ``[0,1]``.
+      5. Overwrite the headline (``overall.data_coverage`` + envelope-level
+         ``overall_data_coverage`` consumers) so the UI banner reflects the
+         union, not just the LLM-overlay layer.
+
+    Returns a dict with the same structure as
+    :func:`coverage_summary_for_overlay` plus extra keys under ``overall``:
+
+      ``sqlite_coverage_pct``       — ``|sqlite_known| / |spec|``
+      ``llm_yaml_coverage_pct``     — ``|yaml_known ∩ spec| / |spec|``
+      ``combined_coverage_pct``     — ``|union ∩ spec| / |spec|``
+      ``n_sqlite_known``            — int
+      ``n_yaml_known``              — int (only those in spec)
+      ``n_combined_known``          — int (union ∩ spec)
+      ``spec_total``                — int (250)
+
+    When ``db_path`` or ``spec_path`` is omitted, falls back to the original
+    yaml-only headline so the existing call sites stay correct.
+    """
+
+    base = coverage_summary_for_overlay(overlay_yaml) or {}
+    overall = dict(base.get("overall") or {})
+
+    sqlite_known, spec_dps = _collect_sqlite_known_dps(
+        db_path, ts_code or str(overlay_yaml.get("ts_code") or ""), spec_path
+    )
+
+    yaml_known_dps: set[str] = set()
+    for n in overlay_yaml.get("nodes") or []:
+        if n.get("data_status") == "Known" and n.get("dp_id"):
+            yaml_known_dps.add(str(n["dp_id"]))
+    yaml_known_in_spec = yaml_known_dps & spec_dps if spec_dps else set()
+    combined_known = (sqlite_known | yaml_known_in_spec)
+    if spec_dps:
+        combined_known = combined_known & spec_dps
+
+    spec_total = len(spec_dps)
+    if spec_total > 0:
+        sqlite_pct = len(sqlite_known) / spec_total
+        yaml_pct = len(yaml_known_in_spec) / spec_total
+        combined_pct = len(combined_known) / spec_total
+    else:
+        # No spec → keep yaml-only headline (back-compat).
+        sqlite_pct = 0.0
+        yaml_pct = 0.0
+        combined_pct = float(overall.get("data_coverage") or 0.0)
+
+    overall["sqlite_coverage_pct"] = sqlite_pct
+    overall["llm_yaml_coverage_pct"] = yaml_pct
+    overall["combined_coverage_pct"] = combined_pct
+    overall["n_sqlite_known"] = len(sqlite_known)
+    overall["n_yaml_known"] = len(yaml_known_in_spec)
+    overall["n_combined_known"] = len(combined_known)
+    overall["spec_total"] = spec_total
+
+    # When we have a real spec universe, the combined number is the truth
+    # the front-end should see. Otherwise (spec missing) keep yaml-only.
+    if spec_total > 0:
+        overall["yaml_only_data_coverage"] = overall.get("data_coverage", 0.0)
+        overall["data_coverage"] = combined_pct
+        overall["warning_level"] = coverage_warning_level(combined_pct)
+
+    base["overall"] = overall
+    return base
+
+
 __all__ = [
     "EVIDENCE_QUALITY_MAP",
     "LOW_MATERIALITY_THRESHOLD",
@@ -539,4 +695,6 @@ __all__ = [
     "coverage_warning_level",
     "coverage_summary_for_node",
     "coverage_summary_for_overlay",
+    "combined_coverage_summary",
+    "_collect_sqlite_known_dps",
 ]

@@ -58,6 +58,25 @@ def _get(host: str, port: int, path: str) -> tuple[int, dict, dict]:
     return resp.status, headers, payload
 
 
+def _post(host: str, port: int, path: str, body: dict) -> tuple[int, dict, dict]:
+    conn = HTTPConnection(host, port, timeout=10)
+    conn.request(
+        "POST",
+        path,
+        body=json.dumps(body).encode("utf-8"),
+        headers={
+            "Origin": "http://127.0.0.1:1420",
+            "Content-Type": "application/json",
+        },
+    )
+    resp = conn.getresponse()
+    raw = resp.read().decode("utf-8")
+    headers = {k.lower(): v for k, v in resp.getheaders()}
+    payload = json.loads(raw) if raw else {}
+    conn.close()
+    return resp.status, headers, payload
+
+
 def test_health_envelope(running_server) -> None:
     host, port, *_ = running_server
 
@@ -85,14 +104,18 @@ def test_compat(running_server) -> None:
     assert body["data"]["schema_versions"]["manifest"] == 2
 
 
-def test_manifests_latest_includes_universe_and_industries(running_server) -> None:
+def test_manifests_latest_returns_frontend_api_manifest(running_server) -> None:
     host, port, *_ = running_server
     status, _, body = _get(host, port, "/api/project-ult/manifests/latest")
     assert status == 200
     data = body["data"]
-    assert data["universe"]["universe_id"] == "mvp-13-industry-v1"
-    assert "industries" in data["industries"]
-    assert len(data["industries"]["industries"]) == 13
+    assert data["source_status"] == "available"
+    assert data["source"]["path"].endswith(
+        "upstream/data-platform/artifacts/frontend-api/manifests/latest.json"
+    )
+    assert data["cycle_id"] == "CYCLE_20260424"
+    assert data["manifest_ref"] == "artifact://frontend-api/manifests/CYCLE_20260424"
+    assert "world_state_snapshot" in data["formal_table_snapshots"]
 
 
 def test_modules_lock_returned(running_server) -> None:
@@ -102,6 +125,8 @@ def test_modules_lock_returned(running_server) -> None:
     modules = body["data"]["modules"]
     assert "frontend-api" in modules
     assert "contracts" in modules
+    assert body["data"]["total"] == 14
+    assert len(body["data"]["items"]) == 14
 
 
 def test_providers_returns_validation_summary(running_server) -> None:
@@ -118,6 +143,8 @@ def test_profiles_returns_universe_constituents(running_server) -> None:
     host, port, *_ = running_server
     status, _, body = _get(host, port, "/api/project-ult/profiles")
     assert status == 200
+    assert body["data"]["active_profile"] == "manifest_only"
+    assert body["data"]["items"][0]["profile_id"] == "manifest_only"
     assert body["data"]["universe_total"] >= 300
     assert body["data"]["total"] == body["data"]["universe_total"]
 
@@ -131,6 +158,17 @@ def test_profiles_filter_by_industry(running_server) -> None:
     # Each returned profile must include AI_COMPUTE
     for p in profiles:
         assert "AI_COMPUTE" in p["industry_ids"]
+
+
+def test_profiles_filter_by_ts_code(running_server) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"ts_code": "300750.SZ"})
+    status, _, body = _get(host, port, f"/api/project-ult/profiles{qs}")
+    assert status == 200
+    profiles = body["data"]["profiles"]
+    assert len(profiles) == 1
+    assert profiles[0]["ts_code"] == "300750.SZ"
+    assert body["data"]["total"] == 1
 
 
 def test_industry_graphs_index(running_server) -> None:
@@ -164,6 +202,54 @@ def test_cycles_returns_empty_list(running_server) -> None:
     assert body["data"]["cycles"] == []
 
 
+def test_formal_object_route_reads_frontend_api_artifact(running_server) -> None:
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, "/api/project-ult/formal/world_state_snapshot")
+    assert status == 200
+    data = body["data"]
+    assert data["source_status"] == "available"
+    assert data["source"]["path"].endswith(
+        "upstream/data-platform/artifacts/frontend-api/formal/world_state_snapshot/latest.json"
+    )
+    assert data["object_type"] == "world_state_snapshot"
+    assert data["cycle_id"] == "CYCLE_20260424"
+    assert isinstance(data["payload"], dict)
+
+
+def test_replay_route_reads_frontend_api_artifact(running_server) -> None:
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, "/api/project-ult/replay/CYCLE_20260424")
+    assert status == 200
+    data = body["data"]
+    assert data["source_status"] == "available"
+    assert data["source"]["path"].endswith(
+        "upstream/audit-eval/artifacts/frontend-api/replay/CYCLE_20260424.json"
+    )
+    assert data["payload"]["cycle_id"] == "CYCLE_20260424"
+
+
+def test_backtest_detail_route_reads_audit_eval_artifact(running_server) -> None:
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, "/api/project-ult/backtests/BT_API4A_001")
+    assert status == 200
+    data = body["data"]
+    assert data["source_status"] == "available"
+    assert data["source"]["path"].endswith(
+        "upstream/audit-eval/artifacts/frontend-api/backtests/BT_API4A_001.json"
+    )
+    assert data["payload"]["backtest_id"] == "BT_API4A_001"
+
+
+def test_orchestrator_detail_returns_detail_unavailable_envelope(running_server) -> None:
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, "/api/project-ult/orchestrator/runs/RUN_API4A_001")
+    assert status == 200
+    data = body["data"]
+    assert data["source_status"] == "unavailable"
+    assert data["payload"] is None
+    assert data["metadata"]["run_id"] == "RUN_API4A_001"
+
+
 def test_admin_alerts_handled_by_mvp20_bff(running_server) -> None:
     """frontend-api is NOT vendored under upstream/ — FrontEnd/ is the only
     frontend in this repo, and mvp20 server.py is the BFF. /api/admin/* and
@@ -177,39 +263,57 @@ def test_admin_alerts_handled_by_mvp20_bff(running_server) -> None:
         assert body["data"]["fixture"] is True
 
 
-# Skeleton-wired adapter routes — should all 200 because vendor packages are
-# installed in editable mode under `upstream/`. If vendor import fails (e.g.
-# in a stripped environment without `pip install -e ./upstream/<name>`), the
-# adapter falls back to 503 UPSTREAM_UNAVAILABLE — that case is exercised by
-# test_adapter_import_fallback_returns_503.
+# Artifact-backed adapter routes — each is served from
+# upstream/*/artifacts/frontend-api when present. Vendor imports are metadata
+# only; the BFF must return 200 locally even when editable upstream installs are
+# absent.
 _ADAPTER_ROUTES = [
-    "/api/project-ult/graph/test",
-    "/api/project-ult/data/canonical/some_table",
-    "/api/project-ult/data/raw/some_table",
-    "/api/project-ult/entities",
-    "/api/project-ult/entities/ENT_X",
-    "/api/project-ult/reasoner/results",
-    "/api/project-ult/cycles/cycle-2026q1",
-    "/api/stocks/300750",
-    "/api/pool/observation",
-    "/api/world-state/latest",
-    "/api/project-ult/audit/audit-x",
-    "/api/audit/replay/foo",
-    "/api/project-ult/backtests",
-    "/api/backtest/list",
+    ("/api/project-ult/graph/test", "graph_engine"),
+    ("/api/project-ult/data/canonical/some_table", "data_platform"),
+    ("/api/project-ult/data/raw/some_table", "data_platform"),
+    ("/api/project-ult/entities", "entity_registry"),
+    ("/api/project-ult/entities/ENT_STOCK_600519.SH", "entity_registry"),
+    ("/api/project-ult/reasoner/results", "reasoner_runtime"),
+    ("/api/project-ult/cycles/cycle-2026q1", "main_core"),
+    ("/api/stocks/300750", "main_core"),
+    ("/api/pool/observation", "main_core"),
+    ("/api/world-state/latest", "main_core"),
+    ("/api/project-ult/audit/audit-x", "audit_eval"),
+    ("/api/audit/replay/foo", "audit_eval"),
+    # NOTE: /api/backtest* routes moved off the audit_eval fixture to the real
+    # P&L feedback loop handler (handle_pnl_backtests) — covered below by
+    # test_backtest_routes_serve_pnl_loop, not by the fixture-shape test.
 ]
-
-
-@pytest.mark.parametrize("path", _ADAPTER_ROUTES)
-def test_adapter_routes_return_200(running_server, path: str) -> None:
+@pytest.mark.parametrize("path,adapter_module", _ADAPTER_ROUTES)
+def test_adapter_routes_return_200(running_server, path: str, adapter_module: str) -> None:
     host, port, *_ = running_server
     status, _, body = _get(host, port, path)
     assert status == 200, f"{path} expected 200, got {status}; body={body}"
     assert "data" in body, f"{path} missing 'data' in envelope: {body}"
     data = body["data"]
     assert data.get("fixture") is True, f"{path} fixture flag missing: {data}"
-    assert data.get("wire_depth") == "skeleton", f"{path} wire_depth wrong: {data}"
+    assert data.get("wire_depth") == "artifact", f"{path} wire_depth wrong: {data}"
+    assert data.get("artifact_path"), f"{path} missing artifact path: {data}"
     assert data.get("module"), f"{path} missing module label: {data}"
+
+
+@pytest.mark.parametrize("path", [
+    "/api/project-ult/backtests",
+    "/api/backtest/list",
+])
+def test_backtest_routes_serve_pnl_loop(running_server, path: str) -> None:
+    """Backtest routes serve the production P&L feedback loop (G1), not the
+    audit-eval fixture: real envelope shape, honest-empty when no snapshots
+    have matured yet (CI has no pnl.sqlite)."""
+
+    host, port, *_ = running_server
+    status, _, body = _get(host, port, path)
+    assert status == 200, f"{path} expected 200, got {status}; body={body}"
+    data = body.get("data") or {}
+    assert data.get("module") == "mvp20-pnl-loop", data
+    assert "backtests" in data and isinstance(data["backtests"], list), data
+    assert "rolling_summary" in data, data
+    assert data.get("fixture") is not True, "must NOT be a fixture"
 
 
 def test_adapter_import_fallback_returns_503(running_server, monkeypatch) -> None:
@@ -218,6 +322,7 @@ def test_adapter_import_fallback_returns_503(running_server, monkeypatch) -> Non
     error.code == 'UPSTREAM_UNAVAILABLE' instead of crashing the handler."""
     from mvp20.adapters import graph_engine as ge
 
+    monkeypatch.setattr(ge, "load_frontend_artifact", lambda *_args, **_kwargs: (None, None))
     monkeypatch.setattr(ge, "_AVAILABLE", False)
     monkeypatch.setattr(ge, "_IMPORT_ERR", "ModuleNotFoundError: simulated")
 
@@ -227,6 +332,57 @@ def test_adapter_import_fallback_returns_503(running_server, monkeypatch) -> Non
     assert body["error"]["code"] == "UPSTREAM_UNAVAILABLE"
     assert body["error"]["details"]["upstream_module"] == "graph-engine"
     assert "simulated" in body["error"]["details"]["import_error"]
+
+
+@pytest.mark.parametrize("artifact", [
+    "../../benchmarks/artifacts/lite_target_100k_800k.json",
+    "../../README.md",
+    "/tmp/not-owned.json",
+])
+def test_graph_adapter_rejects_unsafe_artifact_param(running_server, artifact: str) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"artifact": artifact})
+    status, _, body = _get(host, port, f"/api/project-ult/graph/query{qs}")
+    assert status == 400
+    assert body["error"]["code"] == "BAD_ARTIFACT_PARAM"
+
+
+def test_graph_adapter_accepts_declared_artifact_param(running_server) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"artifact": "subgraph.json"})
+    status, _, body = _get(host, port, f"/api/project-ult/graph/query{qs}")
+    assert status == 200
+    assert body["data"]["wire_depth"] == "artifact"
+    assert body["data"]["artifact_path"].endswith(
+        "upstream/graph-engine/artifacts/frontend-api/subgraph.json"
+    )
+
+
+def test_graph_routes_select_artifact_from_path(running_server) -> None:
+    host, port, *_ = running_server
+
+    status, _, body = _get(
+        host,
+        port,
+        "/api/project-ult/graph/paths?seed=ENT_STOCK_600519.SH&depth=2&limit=20",
+    )
+    assert status == 200
+    assert body["data"]["artifact_path"].endswith(
+        "upstream/graph-engine/artifacts/frontend-api/paths.json"
+    )
+    assert "paths" in body["data"]
+    assert body["data"]["total"] == len(body["data"]["paths"])
+
+    status, _, body = _get(
+        host,
+        port,
+        "/api/project-ult/graph/impact?entity_id=ENT_STOCK_600519.SH",
+    )
+    assert status == 200
+    assert body["data"]["artifact_path"].endswith(
+        "upstream/graph-engine/artifacts/frontend-api/impact.json"
+    )
+    assert body["data"]["total"] == len(body["data"]["items"])
 
 
 def test_unknown_api_path_returns_404_envelope(running_server) -> None:
@@ -319,6 +475,21 @@ def test_stock_overlay_merges_static_and_realtime(running_server, tmp_path) -> N
         assert set(data["realtime"].keys()) == {"L7.flow.netbuy", "L7.trade.iv"}
         assert data["freshness"]["realtime_node_count"] == 2
         assert data["freshness"]["static_period"] == "2026-Q1"
+
+        status, _h, body = _get(
+            "127.0.0.1",
+            port,
+            "/api/project-ult/stock-overlay?ts_code=TEST.SZ&include_static=0",
+        )
+        assert status == 200
+        lean = body["data"]
+        assert lean["response_profile"] == "lean"
+        assert lean["static"] == {}
+        assert lean["static_overlay"] == {}
+        assert lean["industry_context"] == {}
+        assert lean["omitted_fields"] == ["static_overlay", "static", "industry_context"]
+        assert set(lean["realtime"].keys()) == {"L7.flow.netbuy", "L7.trade.iv"}
+        assert lean["compiled_graph"]["nodes"] == []
     finally:
         httpd.shutdown(); httpd.server_close(); thread.join(timeout=2)
 
@@ -491,6 +662,7 @@ def test_stock_overlay_endpoint_primary_default_and_industry_switch(tmp_path) ->
         assert data["available_industries"] == ["PRIMARY_IND", "SECONDARY_IND"]
         assert data["compiled_graph"]["nodes"][0]["node_id"] == "p"
         assert set(data["realtime"]) == {"L7.flow.netbuy"}
+        assert data["static_overlay"]["name"] == "主行业"
 
         status, _h, body = _get(
             "127.0.0.1",
@@ -500,6 +672,17 @@ def test_stock_overlay_endpoint_primary_default_and_industry_switch(tmp_path) ->
         assert status == 200
         assert body["data"]["industry_id"] == "SECONDARY_IND"
         assert body["data"]["compiled_graph"]["nodes"][0]["node_id"] == "s"
+
+        status, _h, body = _get(
+            "127.0.0.1",
+            port,
+            "/api/project-ult/stock-overlay?ts_code=SWITCH.SZ&include_static=0",
+        )
+        assert status == 200
+        assert body["data"]["response_profile"] == "lean"
+        assert body["data"]["static_overlay"] == {}
+        assert body["data"]["industry_context"] == {}
+        assert body["data"]["compiled_graph"]["nodes"][0]["node_id"] == "p"
     finally:
         httpd.shutdown(); httpd.server_close(); thread.join(timeout=2)
 
@@ -621,6 +804,62 @@ def test_aggregate_unknown_ts_code_returns_404(running_server) -> None:
     assert body["error"]["code"] == "OVERLAY_NOT_FOUND"
 
 
+def test_aggregate_endpoint_reuses_short_ttl_cache(tmp_path, monkeypatch) -> None:
+    from mvp20 import server as server_mod
+    from mvp20.server import ServerConfig
+
+    server_mod._DERIVED_RESPONSE_CACHE.clear()
+    overlays_dir = tmp_path / "stock_overlays"
+    industry_dir = tmp_path / "industry_overlays"
+    (overlays_dir / "TEST_IND").mkdir(parents=True)
+    industry_dir.mkdir()
+    (overlays_dir / "TEST_IND" / "TEST.SZ.yaml").write_text(
+        "ts_code: TEST.SZ\nindustry_id: TEST_IND\nindustry_ids: [TEST_IND]\n"
+        "schema_version: 1\nperiod: 2026-Q1\n",
+        encoding="utf-8",
+    )
+    (industry_dir / "TEST_IND.yaml").write_text(
+        "industry_id: TEST_IND\nschema_version: 1\nperiod: 2026-Q1\n",
+        encoding="utf-8",
+    )
+    hot_db = tmp_path / "hot.sqlite"
+    hot_db.write_bytes(b"")
+    cfg = ServerConfig(
+        stock_overlays_dir=overlays_dir,
+        industry_overlays_dir=industry_dir,
+        hot_db_path=hot_db,
+    )
+    calls = {"n": 0}
+
+    def fake_aggregate(*_args, **_kwargs):
+        calls["n"] += 1
+        return {
+            "node": {
+                "score": 0.25,
+                "short_score": 0.2,
+                "medium_score": 0.25,
+                "long_score": 0.3,
+                "confidence": 0.8,
+                "data_coverage": 1.0,
+            }
+        }
+
+    monkeypatch.setattr(
+        "mvp20.aggregator.aggregate_company_graph",
+        fake_aggregate,
+    )
+
+    query = {"ts_code": ["TEST.SZ"], "industry_id": ["TEST_IND"]}
+    first_status, first_body = server_mod.handle_aggregate(cfg, query)
+    second_status, second_body = server_mod.handle_aggregate(cfg, query)
+
+    assert first_status == 200
+    assert second_status == 200
+    assert first_body["data"] == second_body["data"]
+    assert calls["n"] == 1
+    server_mod._DERIVED_RESPONSE_CACHE.clear()
+
+
 def test_coverage_endpoint_returns_overall_and_per_node(running_server) -> None:
     host, port, *_ = running_server
     qs = "?" + urlencode({"ts_code": "300750.SZ", "industry_id": "STORAGE_GRID"})
@@ -674,6 +913,96 @@ def test_score_endpoint_returns_mode_and_signal(running_server) -> None:
     top_paths = data["top_paths"]
     assert isinstance(top_paths.get("positive"), list)
     assert isinstance(top_paths.get("negative"), list)
+    assert "llm_decision_summary" in data
+    assert data["llm_decision_summary"]["ts_code"] == "300750.SZ"
+
+
+def test_llm_stock_context_and_decision_routes(running_server) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({
+        "ts_code": "000977.SZ",
+        "horizon": "5d",
+        "market": "A_share",
+        "dry_run": "1",
+        "max_evidence": "30",
+    })
+    status, _h, body = _get(host, port, f"/api/project-ult/llm/stock-context{qs}")
+    assert status == 200, body
+    context = body["data"]
+    assert context["schema_version"] == "single_stock_decision_context.v1"
+    assert context["storage"]["persisted"] is False
+    assert context["model_probabilities"][0]["use_scope"] == "diagnostic_only"
+
+    status, _h, body = _post(
+        host,
+        port,
+        "/api/project-ult/llm/stock-decision",
+        {
+            "ts_code": "000977.SZ",
+            "horizon": "5d",
+            "market": "A_share",
+            "dry_run": True,
+            "max_evidence": 30,
+        },
+    )
+    assert status == 200, body
+    decision = body["data"]["decision"]
+    assert decision["status"] == "inconclusive"
+    assert decision["action_type"] == "inconclusive"
+    assert decision["validation_result"]["passed"] is True
+    assert body["data"]["storage"]["persisted"] is True
+
+    status, _h, body = _get(
+        host,
+        port,
+        "/api/project-ult/llm/stock-decision?ts_code=000977.SZ&horizon=5d",
+    )
+    assert status == 200, body
+    assert body["data"]["available"] is True
+    assert body["data"]["decision"]["decision_id"] == decision["decision_id"]
+
+    status, _h, body = _get(
+        host,
+        port,
+        "/api/project-ult/llm/audit?ts_code=000977.SZ&horizon=5d",
+    )
+    assert status == 200, body
+    assert body["data"]["latest_decision_summary"]["validation_passed"] is True
+
+
+def test_llm_stock_context_rejects_non_a_share_as_unsupported(running_server) -> None:
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"ts_code": "NVDA.US", "market": "US", "dry_run": "1"})
+    status, _h, body = _get(host, port, f"/api/project-ult/llm/stock-context{qs}")
+    assert status == 200
+    assert body["data"]["status"] == "unsupported"
+    assert body["data"]["context"] is None
+
+
+def test_llm_post_routes_reject_unsupported_market(running_server) -> None:
+    # ``market`` becomes a path segment in read_context_snapshot; the POST
+    # helper must refuse unsupported values (incl. traversal-shaped strings)
+    # exactly like the GET handlers, instead of joining them into paths.
+    host, port, *_ = running_server
+    for route in (
+        "/api/project-ult/llm/stock-decision",
+        "/api/project-ult/llm/stock-extraction",
+    ):
+        for market in ("US", "../../tmp"):
+            status, _h, body = _post(
+                host,
+                port,
+                route,
+                {
+                    "ts_code": "000977.SZ",
+                    "horizon": "5d",
+                    "market": market,
+                    "context_id": "20260701T000000-abcdef",
+                    "dry_run": True,
+                },
+            )
+            assert status == 400, (route, market, body)
+            assert body["error"]["code"] == "LLM_CONTEXT_ERROR"
 
 
 def test_score_missing_ts_code_returns_400(running_server) -> None:
@@ -689,3 +1018,338 @@ def test_score_unknown_ts_code_returns_404(running_server) -> None:
     status, _h, body = _get(host, port, f"/api/project-ult/score{qs}")
     assert status == 404
     assert body["error"]["code"] == "OVERLAY_NOT_FOUND"
+
+
+def test_signal_5d_stock_endpoint_returns_honest_block(monkeypatch, tmp_path, running_server) -> None:
+    from mvp20 import signal_5d
+
+    signal_5d._artifact_cache.clear()
+    monkeypatch.setattr(signal_5d, "ARTIFACT_DIR", tmp_path)
+    artifact = {
+        "market": "A_share",
+        # Dynamic asof: a hardcoded date trips STALE_AFTER_DAYS once the wall
+        # clock moves past it, flipping stale/validated and breaking the test.
+        "asof": time.strftime("%Y%m%d"),
+        "horizon_days": 5,
+        "target": signal_5d.TARGET_LABEL,
+        "target_display": signal_5d.TARGET_DISPLAY,
+        "model_method": "logistic_multifeature_7f",
+        "probability_source": "logistic_multifeature_7f",
+        "probability_semantics": "P(5d return beats same-day liquid-universe median); not absolute P(up)",
+        "n_rows": 1,
+        "n_available": 1,
+        "n_validated": 1,
+        "coverage": {"validated_ratio": 1.0},
+        "model": {"type": "ridge_logistic", "primary_enabled": True},
+        "calibration": {"stage3_oos": {"brier_skill": 0.00038}},
+        "caveats": ["relative target only"],
+        "rows": {
+            "300750.SZ": {
+                "available": True,
+                "validated": True,
+                "reason": "validated",
+                "market": "A_share",
+                "horizon_days": 5,
+                "target": signal_5d.TARGET_LABEL,
+                "target_display": signal_5d.TARGET_DISPLAY,
+                "model_method": "logistic_multifeature_7f",
+                "probability_source": "logistic_multifeature_7f",
+                "probability_semantics": "P(5d return beats same-day liquid-universe median); not absolute P(up)",
+                "feature_coverage": 1.0,
+                "model_probability": 0.523,
+                "legacy_bin_probability": 0.515,
+                "probability": 0.523,
+                "p_beat_median": 0.523,
+                "base_rate": 0.5,
+                "tilt_pp": 2.3,
+                "direction": "上涨",
+                "signal_strength": "中",
+                "signal_grade": "B",
+                "drivers": [],
+                "risks": [],
+            }
+        },
+    }
+    signal_5d.save_artifact(artifact, root=tmp_path)
+    host, port, *_ = running_server
+    qs = "?" + urlencode({"ts_code": "300750.SZ", "horizon": "5"})
+    status, _h, body = _get(host, port, f"/api/project-ult/signals/stock{qs}")
+    assert status == 200, body
+    data = body["data"]
+    assert data["ts_code"] == "300750.SZ"
+    assert data["name"] == "宁德时代"
+    assert data["probability"] == 0.523
+    assert data["validated"] is True
+    assert data["stale"] is False
+    assert data["target_display"] == signal_5d.TARGET_DISPLAY
+    assert data["model_method"] == "logistic_multifeature_7f"
+    assert data["probability_source"] == "logistic_multifeature_7f"
+    assert data["feature_coverage"] == 1.0
+
+
+def test_signal_5d_top_endpoint_is_a_share_only(monkeypatch, tmp_path, running_server) -> None:
+    from mvp20 import signal_5d
+
+    signal_5d._artifact_cache.clear()
+    monkeypatch.setattr(signal_5d, "ARTIFACT_DIR", tmp_path)
+    artifact = {
+        "market": "A_share",
+        # Dynamic asof: a hardcoded date trips STALE_AFTER_DAYS once the wall
+        # clock moves past it, flipping stale/validated and breaking the test.
+        "asof": time.strftime("%Y%m%d"),
+        "horizon_days": 5,
+        "target": signal_5d.TARGET_LABEL,
+        "target_display": signal_5d.TARGET_DISPLAY,
+        "model_method": "logistic_multifeature_7f",
+        "probability_source": "logistic_multifeature_7f",
+        "probability_semantics": "P(5d return beats same-day liquid-universe median); not absolute P(up)",
+        "n_rows": 2,
+        "n_available": 2,
+        "n_validated": 2,
+        "coverage": {"validated_ratio": 1.0},
+        "model": {"type": "ridge_logistic", "primary_enabled": True},
+        "calibration": {},
+        "caveats": [],
+        "rows": {
+            "300750.SZ": {
+                "available": True,
+                "validated": True,
+                "probability": 0.523,
+                "model_method": "logistic_multifeature_7f",
+                "probability_source": "logistic_multifeature_7f",
+                "feature_coverage": 1.0,
+                "model_probability": 0.523,
+                "legacy_bin_probability": 0.515,
+                "direction": "上涨",
+                "signal_strength": "中",
+                "signal_grade": "B",
+                "drivers": [],
+                "risks": [],
+            },
+            "002236.SZ": {
+                "available": True,
+                "validated": True,
+                "probability": 0.515,
+                "model_method": "logistic_multifeature_7f",
+                "probability_source": "logistic_multifeature_7f",
+                "feature_coverage": 1.0,
+                "model_probability": 0.515,
+                "legacy_bin_probability": 0.51,
+                "direction": "震荡",
+                "signal_strength": "中",
+                "signal_grade": "B",
+                "drivers": [],
+                "risks": [],
+            },
+        },
+    }
+    signal_5d.save_artifact(artifact, root=tmp_path)
+    host, port, *_ = running_server
+
+    status, _h, body = _get(host, port, "/api/project-ult/signals/top?limit=2")
+    assert status == 200, body
+    data = body["data"]
+    assert data["artifact"]["available"] is True
+    assert data["artifact"]["stale"] is False
+    assert data["artifact"]["model_method"] == "logistic_multifeature_7f"
+    assert data["probability_source"] == "logistic_multifeature_7f"
+    assert [r["ts_code"] for r in data["rows"]] == ["300750.SZ", "002236.SZ"]
+
+    status, _h, body = _get(host, port, "/api/project-ult/signals/top?market=US")
+    assert status == 200
+    assert body["data"]["rows"] == []
+    assert "A-share only" in body["data"]["reason"]
+
+
+def test_signal_up_5d_stock_top_and_score_embed(monkeypatch, tmp_path, running_server) -> None:
+    from mvp20 import server as server_mod
+    from mvp20 import signal_up_5d
+
+    signal_up_5d._artifact_cache.clear()
+    server_mod._DERIVED_RESPONSE_CACHE.clear()
+    monkeypatch.setattr(signal_up_5d, "ARTIFACT_DIR", tmp_path)
+    artifact = {
+        "market": "A_share",
+        # Dynamic asof: a hardcoded date trips STALE_AFTER_DAYS once the wall
+        # clock moves past it, flipping stale/validated and breaking the test.
+        "asof": time.strftime("%Y%m%d"),
+        "horizon_days": 5,
+        "target": signal_up_5d.TARGET_LABEL,
+        "target_display": signal_up_5d.TARGET_DISPLAY,
+        "target_kind": signal_up_5d.TARGET_KIND,
+        "model_method": signal_up_5d.MODEL_METHOD,
+        "probability_source": signal_up_5d.MODEL_METHOD,
+        "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+        "n_rows": 2,
+        "n_available": 2,
+        "n_validated": 2,
+        "coverage": {"validated_ratio": 1.0},
+        "model": {"type": "ridge_logistic", "primary_enabled": True},
+        "baseline": {"method": signal_up_5d.BASELINE_METHOD},
+        "fallback": {"method": signal_up_5d.FALLBACK_METHOD, "probability": 0.459},
+        "calibration": {},
+        "caveats": ["absolute target only"],
+        "rows": {
+            "300750.SZ": {
+                "available": True,
+                "validated": True,
+                "reason": "validated",
+                "market": "A_share",
+                "horizon_days": 5,
+                "target": signal_up_5d.TARGET_LABEL,
+                "target_display": signal_up_5d.TARGET_DISPLAY,
+                "target_kind": signal_up_5d.TARGET_KIND,
+                "model_method": signal_up_5d.MODEL_METHOD,
+                "probability_source": signal_up_5d.MODEL_METHOD,
+                "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+                "feature_coverage": 1.0,
+                "model_probability": 0.571,
+                "fallback_probability": 0.459,
+                "baseline_probability": 0.53,
+                "probability": 0.571,
+                "p_up_5d": 0.571,
+                "direction": "上涨",
+                "signal_strength": "中",
+                "signal_grade": "A",
+                "drivers": [],
+                "risks": [],
+            },
+            "002236.SZ": {
+                "available": True,
+                "validated": True,
+                "reason": "validated",
+                "market": "A_share",
+                "horizon_days": 5,
+                "target": signal_up_5d.TARGET_LABEL,
+                "target_display": signal_up_5d.TARGET_DISPLAY,
+                "target_kind": signal_up_5d.TARGET_KIND,
+                "model_method": signal_up_5d.MODEL_METHOD,
+                "probability_source": signal_up_5d.MODEL_METHOD,
+                "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+                "feature_coverage": 1.0,
+                "model_probability": 0.522,
+                "fallback_probability": 0.459,
+                "baseline_probability": 0.50,
+                "probability": 0.522,
+                "p_up_5d": 0.522,
+                "direction": "震荡",
+                "signal_strength": "弱",
+                "signal_grade": "B",
+                "drivers": [],
+                "risks": [],
+            },
+        },
+    }
+    signal_up_5d.save_artifact(artifact, root=tmp_path)
+    host, port, *_ = running_server
+
+    qs = "?" + urlencode({"ts_code": "300750.SZ"})
+    status, _h, body = _get(host, port, f"/api/project-ult/signals/up-5d/stock{qs}")
+    assert status == 200, body
+    data = body["data"]
+    assert data["ts_code"] == "300750.SZ"
+    assert data["name"] == "宁德时代"
+    assert data["target_kind"] == "absolute_up_5d"
+    assert data["probability"] == 0.571
+    assert data["p_up_5d"] == 0.571
+    assert data["validated"] is True
+    assert data["stale"] is False
+    assert "beat same-day" not in data["probability_semantics"]
+
+    status, _h, body = _get(host, port, "/api/project-ult/signals/up-5d/top?market=A_share&limit=2")
+    assert status == 200, body
+    top = body["data"]
+    assert top["artifact"]["available"] is True
+    assert top["artifact"]["stale"] is False
+    assert top["target_kind"] == "absolute_up_5d"
+    assert [r["ts_code"] for r in top["rows"]] == ["300750.SZ", "002236.SZ"]
+
+    status, _h, body = _get(host, port, "/api/project-ult/signals/up-5d/top?market=US")
+    assert status == 200
+    assert body["data"]["rows"] == []
+    assert "A-share only" in body["data"]["reason"]
+
+    qs = "?" + urlencode({"ts_code": "300750.SZ"})
+    status, _h, body = _get(host, port, f"/api/project-ult/score{qs}")
+    assert status == 200, body
+    assert body["data"]["signal_up_5d"]["target_kind"] == "absolute_up_5d"
+    assert body["data"]["signal_up_5d"]["p_up_5d"] == 0.571
+
+
+def test_signal_up_5d_top_hides_unvalidated_train_base_rate(
+    monkeypatch, tmp_path, running_server
+) -> None:
+    from mvp20 import signal_up_5d
+
+    signal_up_5d._artifact_cache.clear()
+    monkeypatch.setattr(signal_up_5d, "ARTIFACT_DIR", tmp_path)
+    asof = time.strftime("%Y%m%d")
+    artifact = {
+        "market": "A_share",
+        "asof": asof,
+        "horizon_days": 5,
+        "target": signal_up_5d.TARGET_LABEL,
+        "target_display": signal_up_5d.TARGET_DISPLAY,
+        "target_kind": signal_up_5d.TARGET_KIND,
+        "model_method": signal_up_5d.MODEL_METHOD,
+        "probability_source": signal_up_5d.FALLBACK_METHOD,
+        "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+        "n_rows": 1,
+        "n_available": 1,
+        "n_validated": 0,
+        "coverage": {"validated_ratio": 0.0},
+        "model": {"type": "ridge_logistic", "primary_enabled": False},
+        "baseline": {"method": signal_up_5d.BASELINE_METHOD},
+        "fallback": {"method": signal_up_5d.FALLBACK_METHOD, "probability": 0.459},
+        "calibration": {},
+        "caveats": ["fallback is audit-only"],
+        "rows": {
+            "300750.SZ": {
+                "available": True,
+                "validated": False,
+                "reason": "train base-rate fallback is not a stock-specific production signal",
+                "market": "A_share",
+                "horizon_days": 5,
+                "target": signal_up_5d.TARGET_LABEL,
+                "target_display": signal_up_5d.TARGET_DISPLAY,
+                "target_kind": signal_up_5d.TARGET_KIND,
+                "model_method": signal_up_5d.MODEL_METHOD,
+                "probability_source": signal_up_5d.FALLBACK_METHOD,
+                "probability_semantics": signal_up_5d.PROBABILITY_SEMANTICS,
+                "feature_coverage": 1.0,
+                "model_probability_shadow": 0.612,
+                "fallback_probability": 0.459,
+                "baseline_probability": 0.53,
+                "probability": 0.459,
+                "p_up_5d": 0.459,
+                "direction": "下跌",
+                "signal_strength": "中",
+                "signal_grade": "D",
+                "drivers": [],
+                "risks": [],
+            },
+        },
+    }
+    signal_up_5d.save_artifact(artifact, root=tmp_path)
+    host, port, *_ = running_server
+
+    status, _h, body = _get(
+        host, port, "/api/project-ult/signals/up-5d/top?market=A_share&limit=5"
+    )
+    assert status == 200, body
+    top = body["data"]
+    assert top["artifact"]["available"] is True
+    assert top["artifact"]["stale"] is False
+    assert top["artifact"]["n_validated"] == 0
+    assert top["artifact"]["probability_source"] == signal_up_5d.FALLBACK_METHOD
+    assert top["rows"] == []
+    assert top["total"] == 0
+
+    qs = "?" + urlencode({"ts_code": "300750.SZ"})
+    status, _h, body = _get(host, port, f"/api/project-ult/signals/up-5d/stock{qs}")
+    assert status == 200, body
+    stock = body["data"]
+    assert stock["probability"] == 0.459
+    assert stock["p_up_5d"] == 0.459
+    assert stock["probability_source"] == signal_up_5d.FALLBACK_METHOD
+    assert stock["validated"] is False

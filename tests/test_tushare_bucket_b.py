@@ -414,6 +414,22 @@ def test_derive_analyst_action_none_when_steady() -> None:
     assert payload["action_type"] == "none"
 
 
+def test_derive_analyst_action_known_neutral_when_recent_comparable_steady() -> None:
+    today = tushare_source._today_yyyymmdd()
+    week_old = tushare_source._previous_n_days(2)
+    records = [
+        {"report_date": today, "org_name": "国泰", "rating": "买入",
+         "author_name": "X"},
+        {"report_date": week_old, "org_name": "国泰", "rating": "买入",
+         "author_name": "X"},
+    ]
+    payload, status = tushare_source._derive_analyst_action(records)
+    assert status == "Known"
+    assert payload["action_type"] == "none"
+    assert payload["count_7d"] == 0
+    assert payload["recent_comparable_count"] == 1
+
+
 # ---------------------------------------------------------------------------
 # _emit_cost_capital — L0.cost.capital (MARKET:CN)
 # ---------------------------------------------------------------------------

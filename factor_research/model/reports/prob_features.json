@@ -1,0 +1,92 @@
+{
+  "family": "prob_features",
+  "date": "2026-06-10",
+  "verdict": "positive",
+  "one_line": "P(up) probability layer: ic_weighted({ivol_60,max5,turnover_20,ep_ttm}) at +20d, rel target, empirical calibration — within-date discrimination +7.06pp (t=2.83, 69% of dates positive), clears the measured shuffle-null spread (sigma~=1.05pp) by ~6.9 sigma, holds at liquid-50 / all drop-year / all drop-regime / both non-overlapping halves; reliability monotone (spearman 0.93). Regime-conditioned calibration does NOT help probability.",
+
+  "best_spec": {
+    "cli": "cd /Users/fanjie/Desktop/Cowork/project-ult-mvp20 && PYTHONWARNINGS=ignore factor_research/.venv_research/bin/python factor_research/model/caliblib.py --config '{\"name\":\"prob_no_rvol_icw\",\"method\":\"ic_weighted\",\"features\":[\"ivol_60\",\"max5\",\"turnover_20\",\"ep_ttm\"],\"params\":{\"min_cov\":0.5},\"min_train_dates\":12}' --horizon 20 --variant empirical --target rel --liquid 0.70",
+    "config": {"name": "prob_no_rvol_icw", "method": "ic_weighted",
+               "features": ["ivol_60", "max5", "turnover_20", "ep_ttm"],
+               "params": {"min_cov": 0.5}, "min_train_dates": 12},
+    "horizon": 20, "target": "rel", "variant": "empirical", "liquid": 0.70,
+    "fallback_simpler": "ew_signed same features: rel disc 6.54pp t2.67 (h20); nearly as good, no fitted weights",
+    "full_eval_files": ["reports/prob_best_h20_rel_full.json", "reports/prob_best_h20_abs_full.json"]
+  },
+
+  "headline_metrics": {
+    "h20_rel": {"disc_up_pp": 7.061, "t": 2.834, "pos_pct": 0.69, "n_dates": 42,
+                "brier_skill": 0.00153, "coverage_q10_q90": 0.786,
+                "reliability_spearman": 0.929, "reliability_increasing_steps": "6/7"},
+    "h20_abs_disc_only": {"disc_up_pp": 7.481, "t": 3.957, "pos_pct": 0.714,
+                          "note": "abs DISCRIMINATION is real but abs LEVEL is NOT calibratable: reliability spearman -0.29, non-monotone; display must be base-rate +/- tilt or rel target"},
+    "disc_ret_pp": {"rel": -0.559, "t": -0.787,
+                    "note": "high-P(up) bucket does NOT have higher mean return — prob layer ranks FREQUENCY only; magnitude stays with final_model.json (sue,npq_yoy). Confirms established fact #2 from the other side."}
+  },
+
+  "shuffle_null": {
+    "metric": "discrimination_up_rate_top_minus_bottom, h20 rel liquid-70",
+    "real": 7.061,
+    "seeds_rel": {"1": -0.109, "2": 1.564, "3": 0.226, "4": -0.475, "5": -1.552, "6": -0.825},
+    "null_mean_pp": -0.195, "null_std_pp": 1.05,
+    "z_vs_null": 6.9,
+    "seeds_abs": {"1": -0.871, "2": -0.044, "3": -0.098, "4": -0.677},
+    "ew_signed_seeds_rel": {"1": 0.552, "2": 1.434, "3": -0.192, "4": -0.602},
+    "multiple_testing_check": "120 sweep evals tried; expected max of 120 null draws ~ sigma*sqrt(2*ln 120) ~= 3.2pp << 7.06pp observed"
+  },
+
+  "robustness": {
+    "liquid_50": {"rel": {"disc_up_pp": 7.264, "t": 3.087}, "abs": {"disc_up_pp": 7.99, "t": 3.988},
+                  "ew_signed_rel": {"disc_up_pp": 7.312, "t": 2.787}},
+    "drop_year_rel": {"2024": {"disc_up_pp": 6.043, "t": 2.192},
+                      "2025": {"disc_up_pp": 6.719, "t": 1.621},
+                      "2026": {"disc_up_pp": 8.081, "t": 2.952}},
+    "drop_regime_rel": {"up_calm": {"disc_up_pp": 8.131, "t": 2.45},
+                        "up_turbulent": {"disc_up_pp": 4.71, "t": 1.704},
+                        "down_calm": {"disc_up_pp": 7.298, "t": 2.705},
+                        "down_turbulent": {"disc_up_pp": 7.061, "t": 2.834}},
+    "nonoverlap_halves_rel": {"parity0": {"disc_up_pp": 6.989, "t": 1.893, "n_dates": 21},
+                              "parity1": {"disc_up_pp": 7.134, "t": 2.074, "n_dates": 21},
+                              "why": "h20 labels overlap at step=10; every-2nd-test-date halves are non-overlapping; effect size identical in both -> not an overlap artifact"},
+    "weakest_cut": "drop up_turbulent (removes 31/67 dates): 4.71pp t1.70 — direction holds, still ~4.5 sigma vs null, but t<2 on its own dates"
+  },
+
+  "by_horizon_best_rel": {
+    "h5": {"best": "abl_no_ivol ew_signed 4.92pp t1.67; nothing clears t2 and brier skills ~0/negative", "verdict": "no edge at +5d"},
+    "h10": {"best": "min_pair{ivol_60,ep_ttm} ew_signed 5.45pp t1.97 (abs 5.40 t2.73); min_pair_strev icw 5.26pp t2.13", "verdict": "weak-positive, below h20"},
+    "h20": {"best": "abl_no_rvol icw 7.06pp t2.83", "verdict": "positive — probability differentiation compounds with horizon"}
+  },
+
+  "ablation_story": {
+    "carriers": "ivol_60 and ep_ttm carry the discrimination. h10: drop ep_ttm -> 3.76pp (worst cut); minimal pair {ivol_60,ep_ttm} BEATS full core (5.45 vs 4.57). h20: drop ivol_60 -> 4.40pp (worst cut), drop ep_ttm -> 5.38, drop turnover_20 -> 5.38.",
+    "redundant": "rvol_20 is pure dilution: dropping it helps at every horizon (h20: 7.06 vs core 6.29). max5 ~neutral (its info is inside ivol_60). The vol family (rvol_20/ivol_60/max5) is one factor; ivol_60 is its best single representative.",
+    "harmful": "beta_60 hurts everywhere (core_beta worse than core at h5/h10/h20, brier skill goes negative).",
+    "strev": "core+strev helps at h10 (5.11 vs 4.57 rel; abs t2.88) but does not beat dropping rvol_20 at h20; min_pair_strev abs t3.39 at h20 is good but still below abl_no_rvol.",
+    "turnover_20": "dilutes at h10 (dropping it helps: 5.22 vs 4.57) but contributes at h20 (dropping it hurts: 5.38 vs 6.29) — kept in the best h20 set.",
+    "method": "ic_weighted ~= ew_signed (7.06 vs 6.54 rel h20); fitted IC weights add a little at h20, nothing at h10. Use ew_signed if simplicity is worth 0.5pp."
+  },
+
+  "regime_conditioning_verdict": {
+    "answer": "NO — empirical_regime does not help the probability layer (same as the magnitude layer).",
+    "evidence": "h20 best set: empirical_regime s0.3 rel 6.95pp bs 0.00164 vs empirical 7.06pp bs 0.00153 (disc unchanged within noise, no brier gain); under abs target brier skill turns NEGATIVE (s0.5: -0.0047; s0.3: -0.0012) because regime-matched pools shift the level toward small same-regime samples. h10: same pattern; core ew rel s0.5 drops disc to 2.58.",
+    "mechanism": "calibration variant can only change the LEVEL mapping, not within-date ranks; the level is dominated by the unknowable market move, so conditioning on the CURRENT regime adds variance, not signal."
+  },
+
+  "configs_tried": {
+    "sweep_evals": 120,
+    "breakdown": "stage1 h10: 9 sets x {ew_signed,ic_weighted} x {rel,abs} = 36; stage2 h5+h20: 9x2 rel x2 horizons + 2 core abs = 38; stage3: min_pair_strev 3 horizons x 2 methods x 2 targets = 12 + regime variants 8 cfg-combos x {s0.3,s0.5} x {rel,abs} h10 = 16 + h20 = 16 + 2 abs baselines = 46",
+    "honesty_runs": 30,
+    "files": ["reports/prob_sweep_stage1.json", "reports/prob_sweep_stage2.json",
+              "reports/prob_sweep_stage3.json", "reports/prob_honesty.json"],
+    "scripts": ["prob_variants/prob_sweep.py", "prob_variants/make_specs.py"]
+  },
+
+  "honest_caveats": [
+    "The claim is RELATIVE discrimination only: top-20% vs bottom-20% by predicted P differ by ~7pp in P(beat the liquid median) over 20d. Brier skill is ~0.0015 — the calibrated LEVEL adds almost nothing beyond the train base rate; date share of up-rate variance and date up-rate range 0.12..0.97 still mean absolute P(up) is mostly the market.",
+    "disc_ret ~ 0/negative: stocks with high P(up) do NOT earn more on average. Product must pair this layer (frequency tilt) with final_model.json (magnitude); they are different axes and rank different stocks.",
+    "h20 disc t-stats use overlapping windows; honest t on non-overlapping halves is ~1.9-2.1 per half, with effect size unchanged. The shuffle-null z (~6.9) is computed on the same overlapping structure so it is like-for-like.",
+    "Weakest subset: removing all 31 up_turbulent test dates leaves 4.71pp t1.70 — direction robust, significance on that thin cut is not.",
+    "Best-of-120 selection: expected max null ~3.2pp; observed 7.06pp clears it, but the exact 7.06 number is still an optimistic point estimate; honest expectation going forward is ~5-7pp.",
+    "ic_weighted weights are fit on raw forward returns (not the up indicator) — by-design walk-forward via harness; no extra leakage surface was added (all scoring through audited harness.walk_forward, all calibration through audited caliblib)."
+  ]
+}

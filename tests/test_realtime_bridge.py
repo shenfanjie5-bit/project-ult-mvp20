@@ -1,0 +1,3233 @@
+"""Tests for the realtime -> final_score bridge in mvp20.aggregator.
+
+Covers:
+- ``_realtime_signal``: the signed normalizer (score passthrough, signed
+  percentile with valuation/risk inversion, yoy_pct, curated signed-percent
+  fields incl. premium sign-flip, unmapped shapes -> None).
+- ``synthesize_realtime_nodes``: gating (participates_in_score, mock source,
+  data_status, dedupe vs authored overlay) and node shape/direction.
+- End-to-end: realtime snapshot lifts ``aggregate_company_graph`` ->
+  ``score_company`` off zero, with the correct valuation sign, and the same
+  setup with ``realtime_snapshot=None`` stays ~0 (proves the bridge is cause).
+"""
+
+from __future__ import annotations
+
+import math
+
+import pytest
+
+from mvp20.aggregator import (
+    _realtime_signal,
+    aggregate_company_graph,
+    synthesize_realtime_nodes,
+)
+from mvp20.field_governance import (
+    DataPointGovernance,
+    FieldGovernanceRegistry,
+)
+from mvp20.scoring import score_company
+
+
+# ---------------------------------------------------------------------------
+# Fake governance registry — small + explicit so tests don't depend on the
+# full config/data_point_roles.yaml.
+# ---------------------------------------------------------------------------
+
+
+def _gov(dp_id: str, *, target: str, participates: bool = True) -> DataPointGovernance:
+    return DataPointGovernance(
+        dp_id=dp_id,
+        field_role="score_component" if participates else "audit",
+        score_target=target,
+        calculation_type="raw_value",
+        aggregation_policy="none",
+        missing_policy="unknown_reduce_confidence",
+        fallback_policy="unknown_zero_score",
+        proxy_candidates=(),
+        min_required_coverage=0.5,
+        neutral_value=0.0,
+        confidence_penalty=1.0,
+        participates_in_score=participates,
+    )
+
+
+def _registry(rules: dict[str, DataPointGovernance]) -> FieldGovernanceRegistry:
+    return FieldGovernanceRegistry(rules, schema_version=1, source="test")
+
+
+# ---------------------------------------------------------------------------
+# _realtime_signal
+# ---------------------------------------------------------------------------
+
+
+def test_active_inflow_funding_signed_by_main_net():
+    """Phase-2a wiring: L7.flow.active_inflow main_net (万元, signed) → funding_score.
+    Inflow positive, outflow negative, ~5亿 knee, missing → None."""
+    import math
+    s = _realtime_signal("L7.flow.active_inflow", {"main_net": 28121.0}, "funding_score")
+    assert s == pytest.approx(math.tanh(28121.0 / 50000.0))  # +inflow → positive
+    assert s > 0
+    out = _realtime_signal("L7.flow.active_inflow", {"main_net": -4958.0}, "funding_score")
+    assert out == pytest.approx(math.tanh(-4958.0 / 50000.0)) and out < 0  # outflow → negative
+    assert _realtime_signal("L7.flow.active_inflow", {"big_orders_net": 1.0}, "funding_score") is None  # no main_net
+
+
+def test_margin_short_not_wired_no_common_mode():
+    """Phase-2a: L7.trade.margin_short is deliberately NOT wired (turnover rate is
+    a common-mode positive; A-share 融券 noisy) → None, no funding injection."""
+    payload = {"margin_balance": 1e10, "short_balance": 2e7,
+               "margin_buy_today": 8e8, "short_sell_today": 7e4}
+    assert _realtime_signal("L7.trade.margin_short", payload, "funding_score") is None
+
+
+def test_discussion_hot_list_maps_to_priced_in_discount():
+    hot = _realtime_signal(
+        "L6.priced.discussion",
+        {"dc_hot_count_30d": 20, "ths_hot_count_30d": 0, "avg_rank_pct": 0.5},
+        "priced_in_discount",
+    )
+    mild = _realtime_signal(
+        "L6.priced.discussion",
+        {"dc_hot_count_30d": 1, "ths_hot_count_30d": 0, "avg_rank_pct": 5.0},
+        "priced_in_discount",
+    )
+
+    assert hot == pytest.approx(0.65 * math.tanh(20 / 8.0) + 0.35 * 0.9)
+    assert hot > mild > 0.0
+    assert _realtime_signal("L6.priced.discussion", {}, "priced_in_discount") is None
+
+
+def test_insider_sell_only_penalizes_net_selling():
+    sell = _realtime_signal(
+        "L8.gov.insider_sell",
+        {"net_change_pct": -3.0, "decreases": 2},
+        "risk_discount",
+    )
+    buy = _realtime_signal(
+        "L8.gov.insider_sell",
+        {"net_change_pct": 2.5, "increases": 3, "decreases": 0},
+        "risk_discount",
+    )
+
+    assert sell == pytest.approx(math.tanh(1.0) + 0.10)
+    assert buy == pytest.approx(0.0)
+    assert _realtime_signal("L8.gov.insider_sell", {"count_90d": 2}, "risk_discount") is None
+
+
+def test_management_change_scores_unique_people_and_skips_legacy_duplicate():
+    payload = {
+        "events": [
+            {"type": "高管变动", "person": "A", "title": "董事长", "end_date": None},
+            {"type": "高管变动", "person": "A", "title": "战略委员会委员", "end_date": None},
+            {"type": "高管离职", "person": "B", "title": "财务总监", "end_date": "20260601"},
+            {"type": "高管变动", "person": "C", "title": "董事", "end_date": None},
+        ],
+        "count_window": 4,
+    }
+
+    scored = _realtime_signal("L8.gov.management_change", payload, "risk_discount")
+
+    # A: core appointment max(0.35*1.5, committee duplicate 0.35) = 0.525
+    # B: core departure = 1.5
+    # C: non-core appointment = 0.35
+    assert scored == pytest.approx(math.tanh((0.525 + 1.5 + 0.35) / 3.0))
+    assert _realtime_signal("L9.company.mgmt_litigation", payload, "risk_discount") is None
+    assert _realtime_signal("L7.flow.block_trade", {"total_amount": 10000.0}, "funding_score") is None
+
+
+def test_volume_turnover_routes_to_liquidity_multiplier():
+    high = _realtime_signal(
+        "L7.trade.volume_turnover",
+        {"volume_ratio": 1.6, "turnover_rate_pct": 2.0},
+        "liquidity_multiplier",
+    )
+    low = _realtime_signal(
+        "L7.trade.volume_turnover",
+        {"volume_ratio": 0.4, "turnover_rate_pct": 0.1},
+        "liquidity_multiplier",
+    )
+
+    assert high is not None and high > 0
+    assert low is not None and low < 0
+    assert _realtime_signal(
+        "L7.trade.volume_turnover", {"trade_date": "20260610"}, "liquidity_multiplier"
+    ) is None
+
+
+def test_multiplier_payload_routes_as_delta_only_for_multiplier_targets():
+    assert _realtime_signal(
+        "L6.sens.cashflow", {"multiplier": 1.2}, "valuation_sensitivity_multiplier"
+    ) == pytest.approx(0.2)
+    assert _realtime_signal(
+        "L6.sens.growth_margin", {"multiplier": 0.75}, "valuation_sensitivity_multiplier"
+    ) == pytest.approx(-0.25)
+    assert _realtime_signal(
+        "L7.env.risk_appetite", {"multiplier": 1.001}, "market_regime_multiplier"
+    ) == pytest.approx(0.001)
+    assert _realtime_signal(
+        "L6.sens.cashflow", {"multiplier": 1.2}, "fundamental_score"
+    ) is None
+
+
+def test_confidence_multiplier_payload_emits_neutral_signal():
+    assert _realtime_signal(
+        "L10.industry.pmi",
+        {"manufacturing_pmi": 51.0},
+        "confidence_multiplier",
+    ) == pytest.approx(0.0)
+
+
+def test_market_environment_multiplier_payloads_are_directional():
+    trend = _realtime_signal(
+        "L7.env.market_trend",
+        {"scalar": -0.04},
+        "market_regime_multiplier",
+    )
+    style = _realtime_signal(
+        "L7.env.style",
+        {"growth_minus_value": 0.03},
+        "market_regime_multiplier",
+    )
+    liquidity = _realtime_signal(
+        "L7.env.liquidity",
+        {"m2_yoy_pct": 9.0, "m1_yoy_pct": 6.0},
+        "market_regime_multiplier",
+    )
+    rates = _realtime_signal(
+        "L7.env.rates",
+        {"lpr_1y_change_bp": -10.0, "lpr_5y_change_bp": -10.0},
+        "market_regime_multiplier",
+    )
+
+    assert trend is not None and trend < 0
+    assert style is not None and style > 0
+    assert liquidity is not None and liquidity > 0
+    assert rates is not None and rates > 0
+    assert _realtime_signal("L7.env.rates", {"as_of": "20260320"}, "market_regime_multiplier") is None
+
+
+def test_funding_and_theme_multiplier_payloads_are_directional():
+    etf = _realtime_signal(
+        "L7.flow.etf_inflow",
+        {"etf_avg_delta_pct": 2.0},
+        "funding_multiplier",
+    )
+    north = _realtime_signal(
+        "L7.flow.passive_northbound",
+        {"north_net_amount": -250000.0},
+        "funding_multiplier",
+    )
+    theme = _realtime_signal(
+        "L7.mood.theme",
+        {"concept_count": 12, "top_concepts": [{"pct_change": 2.0}, {"pct_change": 1.0}]},
+        "theme_multiplier",
+    )
+
+    assert etf is not None and etf > 0
+    assert north is not None and north < 0
+    assert theme is not None and theme > 0
+    assert _realtime_signal("L7.flow.etf_inflow", {"etf_sampled": 20}, "funding_multiplier") is None
+
+
+def test_l0_sentiment_payloads_are_directional():
+    institutional = _realtime_signal(
+        "L0.sentiment.institutional",
+        {"delta_30d_pp": 1.0},
+        "funding_multiplier",
+    )
+    leader_drag = _realtime_signal(
+        "L0.sentiment.leader_drag",
+        {"leader_5d_pct": 3.0, "follower_5d_pct": 1.0},
+        "reflexivity_multiplier",
+    )
+    sector_heat = _realtime_signal(
+        "L0.sentiment.sector_heat",
+        {"avg_change_pct": -2.0, "total_fund_inflow": -50.0},
+        "theme_multiplier",
+    )
+    social = _realtime_signal(
+        "L0.sentiment.social",
+        {"engagement_proxy": 2.0, "avg_rank": 25.0},
+        "sentiment_score",
+    )
+
+    assert institutional is not None and institutional > 0
+    assert leader_drag is not None and leader_drag > 0
+    assert sector_heat is not None and sector_heat < 0
+    assert social is not None and social > 0
+
+
+def test_cost_and_segment_payloads_are_directional():
+    capital = _realtime_signal(
+        "L0.cost.capital",
+        {"implied_cost_of_capital_pct": 4.0},
+        "fundamental_score",
+    )
+    energy = _realtime_signal(
+        "L0.cost.energy_logistics",
+        {"crude_pct": -2.0, "bdi_pct": -4.0},
+        "fundamental_score",
+    )
+    raw_material = _realtime_signal(
+        "L0.cost.raw_material",
+        {"avg_pct_change": 3.0},
+        "fundamental_score",
+    )
+    segment_growth = _realtime_signal(
+        "L2.segment.growth",
+        {"segments": [{"yoy_pct": 20.0}, {"yoy_pct": -5.0}]},
+        "fundamental_score",
+    )
+    segment_margin = _realtime_signal(
+        "L2.segment.gross_margin",
+        {"segments": [{"gross_margin_pct": 55.0}, {"gross_margin_pct": 35.0}]},
+        "fundamental_score",
+    )
+    operating_cost = _realtime_signal(
+        "L4.cost.raw_material",
+        {"raw_material_cost_pct": 70.0, "cogs_yoy_pct": 20.0},
+        "fundamental_score",
+    )
+
+    assert capital is not None and capital > 0
+    assert energy is not None and energy > 0
+    assert raw_material is not None and raw_material < 0
+    assert segment_growth is not None and segment_growth > 0
+    assert segment_margin is not None and segment_margin > 0
+    assert operating_cost is not None and operating_cost < 0
+    assert _realtime_signal("L2.segment.growth", {"segments": []}, "fundamental_score") is None
+
+
+def test_macro_and_capital_return_payloads_are_directional():
+    buyback_zero = _realtime_signal(
+        "L9.company.buyback_dividend",
+        {"cash_div_per_share": 0.0, "stk_div_per_share": 0.0},
+        "expectation_gap",
+    )
+    buyback_positive = _realtime_signal(
+        "L9.company.buyback_dividend",
+        {"cash_div_per_share": 0.5, "stk_div_per_share": 0.1},
+        "expectation_gap",
+    )
+    block_none = _realtime_signal(
+        "L9.capital.etf_block",
+        {"events_count": 0, "event_active": False},
+        "expectation_gap",
+    )
+    block_active = _realtime_signal(
+        "L9.capital.etf_block",
+        {"events_count": 2, "total_amount_cny": 80_000_000.0, "event_active": True},
+        "expectation_gap",
+    )
+    cpi_pressure = _realtime_signal(
+        "L9.macro.cpi_employment",
+        {"cpi_yoy_pct": 4.0, "ppi_yoy_pct": 6.0},
+        "expectation_gap",
+    )
+    compete_risk_none = _realtime_signal(
+        "L9.industry.compete_risk",
+        {"count_24h": 0, "event_active": False},
+        "risk_discount",
+    )
+    compete_risk_hit = _realtime_signal(
+        "L9.industry.compete_risk",
+        {"count_24h": 2, "event_active": True},
+        "risk_discount",
+    )
+    policy_neutral = _realtime_signal(
+        "L9.industry.policy_change",
+        {"net_policy_score": 0, "count_24h": 1},
+        "policy_sensitivity_multiplier",
+    )
+    policy_supportive = _realtime_signal(
+        "L9.industry.policy_change",
+        {"net_policy_score": 2, "count_24h": 2},
+        "policy_sensitivity_multiplier",
+    )
+    policy_restrictive = _realtime_signal(
+        "L9.industry.policy_change",
+        {"net_policy_score": -2, "count_24h": 2},
+        "policy_sensitivity_multiplier",
+    )
+    media_neutral = _realtime_signal(
+        "L9.media.report",
+        {"net_media_score": 0, "count_24h": 5},
+        "expectation_gap",
+    )
+    media_positive = _realtime_signal(
+        "L9.media.report",
+        {"net_media_score": 3, "positive_media_count": 3, "negative_media_count": 0},
+        "expectation_gap",
+    )
+    media_negative = _realtime_signal(
+        "L9.media.report",
+        {"net_media_score": -3, "positive_media_count": 0, "negative_media_count": 3},
+        "expectation_gap",
+    )
+    liquidity_small = _realtime_signal(
+        "L9.macro.liquidity",
+        {"m2_yoy_change_pct": 0.1},
+        "expectation_gap",
+    )
+    liquidity_accelerating = _realtime_signal(
+        "L9.macro.liquidity",
+        {"m2_yoy_change_pct": 1.0},
+        "expectation_gap",
+    )
+    liquidity_decelerating = _realtime_signal(
+        "L9.macro.liquidity",
+        {"m2_yoy_change_pct": -1.0},
+        "expectation_gap",
+    )
+    rate_cut = _realtime_signal(
+        "L9.macro.rates",
+        {"lpr_1y_change_bp": -10.0, "lpr_5y_change_bp": -10.0},
+        "risk_discount",
+    )
+    rate_hike = _realtime_signal(
+        "L9.macro.rates",
+        {"lpr_1y_change_bp": 50.0, "lpr_5y_change_bp": 50.0},
+        "risk_discount",
+    )
+
+    assert buyback_zero == pytest.approx(0.0)
+    assert buyback_positive is not None and buyback_positive > 0
+    assert block_none == pytest.approx(0.0)
+    assert block_active is not None and 0 < block_active <= 0.35
+    assert _realtime_signal("L9.capital.etf_block", {"event_active": True}, "expectation_gap") is None
+    assert cpi_pressure is not None and cpi_pressure < 0
+    assert compete_risk_none == pytest.approx(0.0)
+    assert compete_risk_hit is not None and compete_risk_hit > 0
+    assert _realtime_signal("L9.industry.compete_risk", {"event_active": True}, "risk_discount") is None
+    assert policy_neutral == pytest.approx(0.0)
+    assert policy_supportive is not None and policy_supportive > 0
+    assert policy_restrictive is not None and policy_restrictive < 0
+    assert _realtime_signal("L9.industry.policy_change", {"count_24h": 1}, "policy_sensitivity_multiplier") is None
+    assert media_neutral == pytest.approx(0.0)
+    assert media_positive is not None and media_positive > 0
+    assert media_negative is not None and media_negative < 0
+    assert _realtime_signal("L9.media.report", {"count_24h": 10}, "expectation_gap") is None
+    assert liquidity_small == pytest.approx(0.0)
+    assert liquidity_accelerating is not None and liquidity_accelerating > 0
+    assert liquidity_decelerating is not None and liquidity_decelerating < 0
+    assert _realtime_signal("L9.macro.liquidity", {"m2_yoy_pct": 8.6}, "expectation_gap") is None
+    assert rate_cut == pytest.approx(0.0)
+    assert rate_hike is not None and rate_hike > 0
+
+
+def test_signal_score_passthrough_clipped():
+    assert _realtime_signal("x", {"score": 0.4}, "fundamental_score") == pytest.approx(0.4)
+    assert _realtime_signal("x", {"score": -0.4}, "fundamental_score") == pytest.approx(-0.4)
+    # Out-of-range explicit sub-scores are clipped, not rejected.
+    assert _realtime_signal("x", {"score": 1.5}, "fundamental_score") == pytest.approx(1.0)
+    assert _realtime_signal("x", {"intensity": -2.0}, "fundamental_score") == pytest.approx(-1.0)
+    assert _realtime_signal("x", {"strength": 0.25}, "fundamental_score") == pytest.approx(0.25)
+
+
+def test_signal_percentile_inverted_for_valuation():
+    # High percentile + valuation_rerating => expensive => NEGATIVE drag.
+    val = _realtime_signal(
+        "x", {"pe_percentile": 0.95, "pb_percentile": 0.9}, "valuation_rerating"
+    )
+    assert val == pytest.approx((0.95 - 0.5) * 2.0 * -1.0)
+    assert val < 0
+
+
+def test_signal_percentile_inverted_for_risk_targets():
+    # risk_discount / overheat_risk / priced_in_discount all invert.
+    for target in ("risk_discount", "overheat_risk", "priced_in_discount"):
+        sig = _realtime_signal("x", {"crowd_percentile": 0.8}, target)
+        assert sig == pytest.approx((0.8 - 0.5) * 2.0 * -1.0)
+        assert sig < 0
+
+
+def test_signal_percentile_positive_for_non_inverted_target():
+    # Same high percentile on a non-inverted target stays POSITIVE.
+    sig = _realtime_signal("x", {"pct_percentile": 0.9}, "expectation_gap")
+    assert sig == pytest.approx((0.9 - 0.5) * 2.0)
+    assert sig > 0
+
+
+def test_signal_percentile_takes_max_of_multiple():
+    sig = _realtime_signal(
+        "x", {"pe_percentile": 0.2, "pb_percentile": 0.7}, "expectation_gap"
+    )
+    assert sig == pytest.approx((0.7 - 0.5) * 2.0)
+
+
+def test_signal_yoy_pct():
+    assert _realtime_signal("x", {"yoy_pct": 50.0}, "fundamental_score") == pytest.approx(
+        math.tanh(1.0)
+    )
+    assert _realtime_signal("x", {"yoy_pct": -50.0}, "fundamental_score") == pytest.approx(
+        -math.tanh(1.0)
+    )
+
+
+def test_signal_curated_eps_revision():
+    assert _realtime_signal(
+        "x", {"consensus_eps_revision_30d_pct": 10.0}, "expectation_gap"
+    ) == pytest.approx(math.tanh(10.0 / 20.0))
+
+
+def test_signal_curated_premium_is_sign_flipped():
+    # Premium to industry = expensive = NEGATIVE. Discount = positive.
+    rich = _realtime_signal(
+        "x", {"premium_vs_industry_pct": 30.0}, "valuation_rerating"
+    )
+    cheap = _realtime_signal(
+        "x", {"premium_vs_industry_pct": -30.0}, "valuation_rerating"
+    )
+    assert rich == pytest.approx(-math.tanh(30.0 / 30.0))
+    assert rich < 0
+    assert cheap == pytest.approx(math.tanh(30.0 / 30.0))
+    assert cheap > 0
+
+
+def test_signal_curated_second_derivative():
+    assert _realtime_signal(
+        "x", {"second_derivative": 1.0}, "valuation_rerating"
+    ) == pytest.approx(math.tanh(1.0))
+
+
+def test_signal_bare_numeric_passthrough_and_range():
+    assert _realtime_signal("x", 0.3, "fundamental_score") == pytest.approx(0.3)
+    assert _realtime_signal("x", -1.0, "fundamental_score") == pytest.approx(-1.0)
+    # Out-of-range bare numerics are ambiguous (not pre-normalized) -> None.
+    assert _realtime_signal("x", 5, "fundamental_score") is None
+    # bool is not a numeric signal.
+    assert _realtime_signal("x", True, "fundamental_score") is None
+
+
+def test_signal_unmapped_shapes_return_none():
+    # Bespoke financial dicts -> None (no fabricated direction).
+    assert _realtime_signal("x", {"ccc_days": 30}, "fundamental_score") is None
+    assert _realtime_signal("x", {"goodwill_to_assets": 0.1}, "fundamental_score") is None
+    assert _realtime_signal("x", {"leverage_ratio": 1.2}, "fundamental_score") is None
+    # multiplier dicts are centered at 1.0, not signed at 0 -> None.
+    assert _realtime_signal("x", {"multiplier": 1.2, "drivers": []}, "x") is None
+    assert _realtime_signal("x", None, "fundamental_score") is None
+    assert _realtime_signal("x", "strong", "fundamental_score") is None
+    assert _realtime_signal("x", [1, 2, 3], "fundamental_score") is None
+
+
+# ---------------------------------------------------------------------------
+# synthesize_realtime_nodes
+# ---------------------------------------------------------------------------
+
+
+def _full_snapshot() -> dict[str, dict]:
+    return {
+        "L6.derived.sub": {  # participating, derived score -> include
+            "value": {"score": 0.4},
+            "data_status": "Known",
+            "confidence": 0.7,
+            "source": "derive:test",
+            "updated_at": 1_700_000_000,
+        },
+        "L11.trade.signal": {  # participates_in_score=False -> exclude
+            "value": {"score": 0.9},
+            "data_status": "Known",
+            "confidence": 0.9,
+            "source": "derive:test",
+        },
+        "L6.mock.pe": {  # mock: source -> exclude
+            "value": {"score": 0.5},
+            "data_status": "Known",
+            "confidence": 0.8,
+            "source": "mock:tushare",
+        },
+        "L6.unknown.metric": {  # data_status Unknown -> exclude
+            "value": {"score": 0.5},
+            "data_status": "Unknown",
+            "confidence": 0.6,
+            "source": "derive:test",
+        },
+        "L6.unmapped.dict": {  # participating but unmapped shape -> skip
+            "value": {"ccc_days": 30},
+            "data_status": "Known",
+            "confidence": 0.6,
+            "source": "tushare:x",
+        },
+        "L6.already.authored": {  # in existing_dp_ids -> exclude (dedupe)
+            "value": {"score": 0.5},
+            "data_status": "Known",
+            "confidence": 0.6,
+            "source": "derive:test",
+        },
+    }
+
+
+def _full_registry() -> FieldGovernanceRegistry:
+    return _registry({
+        "L6.derived.sub": _gov("L6.derived.sub", target="fundamental_score"),
+        "L11.trade.signal": _gov("L11.trade.signal", target="audit_only", participates=False),
+        "L6.mock.pe": _gov("L6.mock.pe", target="valuation_rerating"),
+        "L6.unknown.metric": _gov("L6.unknown.metric", target="fundamental_score"),
+        "L6.unmapped.dict": _gov("L6.unmapped.dict", target="fundamental_score"),
+        "L6.already.authored": _gov("L6.already.authored", target="fundamental_score"),
+    })
+
+
+def test_synthesize_gates_and_dedupes():
+    nodes = synthesize_realtime_nodes(
+        _full_snapshot(),
+        _full_registry(),
+        existing_dp_ids={"L6.already.authored"},
+        ts_code="300750.SZ",
+    )
+    emitted = {n["dp_id"] for n in nodes}
+    assert emitted == {"L6.derived.sub"}
+    assert "L11.trade.signal" not in emitted  # participates_in_score=False
+    assert "L6.mock.pe" not in emitted  # mock: source
+    assert "L6.unknown.metric" not in emitted  # Unknown status
+    assert "L6.unmapped.dict" not in emitted  # normalizer returned None
+    assert "L6.already.authored" not in emitted  # deduped vs overlay
+
+
+def test_synthesize_node_shape_and_direction():
+    snap = {
+        "L6.pos": {
+            "value": {"score": 0.4},
+            "data_status": "Known",
+            "confidence": 0.7,
+            "source": "derive:test",
+            "updated_at": 1_700_000_000,
+        },
+        "L6.neg": {  # high valuation percentile -> negative direction
+            "value": {"pe_percentile": 0.95},
+            "data_status": "Proxy",
+            "confidence": 0.6,
+            "source": "tushare:daily",
+        },
+    }
+    reg = _registry({
+        "L6.pos": _gov("L6.pos", target="fundamental_score"),
+        "L6.neg": _gov("L6.neg", target="valuation_rerating"),
+    })
+    nodes = {n["dp_id"]: n for n in synthesize_realtime_nodes(
+        snap, reg, existing_dp_ids=set(), ts_code="300750.SZ"
+    )}
+
+    pos = nodes["L6.pos"]
+    assert pos["node_id"] == "300750.SZ:L6.pos:rt"
+    assert pos["parent_node"] is None
+    assert pos["direction"] == "positive"
+    assert pos["value"] == {"score": pytest.approx(0.4)}
+    assert pos["data_status"] == "Known"
+    assert pos["confidence"] == pytest.approx(0.7)
+    assert pos["last_updated"] == 1_700_000_000
+    assert pos["synthetic_realtime"] is True
+
+    neg = nodes["L6.neg"]
+    assert neg["direction"] == "negative"  # high valuation = drag
+    # abs(signal) stored, sign carried by direction.
+    assert neg["value"]["score"] == pytest.approx(abs((0.95 - 0.5) * 2.0 * -1.0))
+
+
+def test_synthesize_confidence_multiplier_node_is_neutral():
+    registry = _registry({
+        "L10.industry.pmi": _gov("L10.industry.pmi", target="confidence_multiplier"),
+    })
+    snapshot = {
+        "L10.industry.pmi": {
+            "value": {"manufacturing_pmi": 51.0, "composite_pmi": 50.8},
+            "data_status": "Known",
+            "confidence": 0.72,
+            "source": "tushare:cn_pmi",
+        }
+    }
+
+    nodes = synthesize_realtime_nodes(
+        snapshot,
+        registry,
+        existing_dp_ids=set(),
+        ts_code="000001.SZ",
+    )
+
+    assert len(nodes) == 1
+    assert nodes[0]["dp_id"] == "L10.industry.pmi"
+    assert nodes[0]["value"] == {"score": 0.0}
+    assert nodes[0]["direction"] == "neutral"
+    assert nodes[0]["confidence"] == pytest.approx(0.72)
+
+
+def test_synthesize_returns_empty_without_registry():
+    assert synthesize_realtime_nodes(
+        _full_snapshot(), None, existing_dp_ids=set(), ts_code="X.SZ"
+    ) == []
+
+
+def test_unknown_authored_overlay_does_not_block_realtime_synthesis():
+    overlay = {
+        "ts_code": "X.SZ",
+        "nodes": [
+            {
+                "node_id": "X.SZ:L6.derived.sub",
+                "dp_id": "L6.derived.sub",
+                "node_name": "placeholder",
+                "direction": "positive",
+                "data_status": "Unknown",
+                "value": None,
+                "confidence": 0.5,
+            }
+        ],
+    }
+    snap = {
+        "L6.derived.sub": {
+            "value": {"score": 0.6},
+            "data_status": "Known",
+            "confidence": 0.8,
+            "source": "derive:test",
+        }
+    }
+
+    agg = aggregate_company_graph(
+        overlay,
+        role_registry=_full_registry(),
+        realtime_snapshot=snap,
+    )
+
+    assert "X.SZ:L6.derived.sub:rt" in agg
+    assert agg["X.SZ:L6.derived.sub:rt"]["synthetic_realtime"] is True
+
+
+def test_known_authored_overlay_still_blocks_realtime_double_count():
+    overlay = {
+        "ts_code": "X.SZ",
+        "nodes": [
+            {
+                "node_id": "X.SZ:L6.derived.sub",
+                "dp_id": "L6.derived.sub",
+                "node_name": "authored",
+                "direction": "positive",
+                "data_status": "Known",
+                "value": {"score": 0.2},
+                "confidence": 0.5,
+            }
+        ],
+    }
+    snap = {
+        "L6.derived.sub": {
+            "value": {"score": 0.6},
+            "data_status": "Known",
+            "confidence": 0.8,
+            "source": "derive:test",
+        }
+    }
+
+    agg = aggregate_company_graph(
+        overlay,
+        role_registry=_full_registry(),
+        realtime_snapshot=snap,
+    )
+
+    assert "X.SZ:L6.derived.sub:rt" not in agg
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: aggregate_company_graph + score_company
+# ---------------------------------------------------------------------------
+
+
+def _minimal_overlay() -> dict:
+    """Two authored nodes, both Unknown so they score ~0 on their own.
+
+    Carries governance fields inline (like the real compiled overlays) so
+    score_company detects the flat-governance path without a registry arg.
+    """
+
+    def node(node_id, dp_id, target):
+        return {
+            "node_id": node_id,
+            "dp_id": dp_id,
+            "node_name": node_id,
+            "parent_node": None,
+            "direction": "positive",
+            "base_weight": 1.0,
+            "active_weight": 1.0,
+            "materiality": 1.0,
+            "confidence": 0.5,
+            "data_status": "Unknown",
+            "status": "Unknown",
+            "value": None,
+            "field_role": "score_component",
+            "score_target": target,
+            "participates_in_score": True,
+        }
+
+    return {
+        "ts_code": "300750.SZ",
+        "industry_id": "STORAGE_GRID",
+        "nodes": [
+            node("auth_fund", "L5.is.eps", "fundamental_score"),
+            node("auth_val", "L6.mult.pe", "valuation_rerating"),
+        ],
+    }
+
+
+def _bridge_snapshot() -> dict[str, dict]:
+    return {
+        # Positive derived sub-score -> lifts fundamental_score.
+        "L11.long.score": {
+            "value": {"score": 0.4},
+            "data_status": "Known",
+            "confidence": 0.8,
+            "source": "derive:l11",
+            "updated_at": 1_700_000_000,
+        },
+        # High valuation percentile -> pushes valuation_rerating NEGATIVE.
+        "L6.state.historical_percentile": {
+            "value": {"pe_percentile": 0.95, "pb_percentile": 0.9},
+            "data_status": "Known",
+            "confidence": 0.7,
+            "source": "tushare:daily",
+            "updated_at": 1_700_000_000,
+        },
+    }
+
+
+def _bridge_registry() -> FieldGovernanceRegistry:
+    return _registry({
+        "L11.long.score": _gov("L11.long.score", target="fundamental_score"),
+        "L6.state.historical_percentile": _gov(
+            "L6.state.historical_percentile", target="valuation_rerating"
+        ),
+        # Authored dp_ids — present so dedupe + governance line up.
+        "L5.is.eps": _gov("L5.is.eps", target="fundamental_score"),
+        "L6.mult.pe": _gov("L6.mult.pe", target="valuation_rerating"),
+    })
+
+
+def test_end_to_end_bridge_lifts_score_off_zero():
+    overlay = _minimal_overlay()
+    reg = _bridge_registry()
+    snap = _bridge_snapshot()
+
+    # Without the bridge: authored nodes are Unknown -> ~0.
+    agg_none = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=None)
+    res_none = score_company(overlay, aggregated_nodes=agg_none)
+    assert res_none["short_total"] == pytest.approx(0.0, abs=1e-9)
+    assert res_none["medium_total"] == pytest.approx(0.0, abs=1e-9)
+    assert res_none["long_total"] == pytest.approx(0.0, abs=1e-9)
+
+    # With the bridge: synthetic realtime leaves drive a non-zero score.
+    agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
+    res = score_company(overlay, aggregated_nodes=agg)
+    nonzero = (
+        abs(res["short_total"]) + abs(res["medium_total"]) + abs(res["long_total"])
+    )
+    assert nonzero > 0.0
+
+    # Synthetic nodes exist and carry the right governance + sign.
+    val_node = agg["300750.SZ:L6.state.historical_percentile:rt"]
+    fund_node = agg["300750.SZ:L11.long.score:rt"]
+    assert val_node["score_target"] == "valuation_rerating"
+    assert val_node["score"] < 0  # high percentile => negative rerating
+    assert fund_node["score_target"] == "fundamental_score"
+    assert fund_node["score"] > 0  # positive derived sub-score lifts target
+
+
+def test_end_to_end_role_components_directions():
+    """The valuation percentile drags valuation_rerating negative while the
+    positive sub-score lifts fundamental_score positive."""
+
+    from mvp20.scoring import _role_components_from_flat
+
+    overlay = _minimal_overlay()
+    reg = _bridge_registry()
+    agg = aggregate_company_graph(
+        overlay, role_registry=reg, realtime_snapshot=_bridge_snapshot()
+    )
+    comps = _role_components_from_flat(agg)
+    assert comps["valuation_rerating"] < 0
+    # fundamental_score isn't a direct role-component key, but it flows into the
+    # company score via industry_variables; assert the node sign instead.
+    fund_node = agg["300750.SZ:L11.long.score:rt"]
+    assert fund_node["score"] > 0
+
+
+def test_realtime_snapshot_none_is_backcompat():
+    """Passing no snapshot must not add any synthetic nodes."""
+
+    overlay = _minimal_overlay()
+    reg = _bridge_registry()
+    agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=None)
+    assert not any(nid.endswith(":rt") for nid in agg)
+    # Only the authored nodes are present.
+    assert set(agg) == {"auth_fund", "auth_val"}
+
+
+def test_confidence_multiplier_node_is_score_neutral():
+    """confidence_multiplier-target realtime fields are consumed via confidence
+    (scoring._confidence_multiplier_from_flat), NOT a directional score. A
+    percentile payload that would otherwise yield a large signed magnitude must
+    be synthesized with a NEUTRAL direction / zero score so it cannot pollute
+    the top-path ranking — while still being present to contribute confidence.
+    A directional target (valuation_rerating) with the same payload keeps its
+    signed magnitude."""
+
+    reg = _registry({
+        "L10.val.historical_quantile": _gov(
+            "L10.val.historical_quantile", target="confidence_multiplier"
+        ),
+        "L6.path.tag": _gov("L6.path.tag", target="valuation_rerating"),
+    })
+    snap = {
+        "L10.val.historical_quantile": {
+            "value": {"pe_percentile": 1.0, "pb_percentile": 0.9},
+            "data_status": "Known", "source": "derived:pe_pb_history",
+            "confidence": 0.6,
+        },
+        "L6.path.tag": {
+            "value": {"pe_percentile": 1.0}, "data_status": "Known",
+            "source": "derive:l6_path_tag", "confidence": 0.5,
+        },
+    }
+    nodes = {
+        n["dp_id"]: n
+        for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="X"
+        )
+    }
+
+    cm = nodes["L10.val.historical_quantile"]
+    assert cm["direction"] == "neutral"
+    assert cm["value"]["score"] == 0.0
+    assert cm["confidence"] == pytest.approx(0.6)  # confidence preserved
+
+    val = nodes["L6.path.tag"]
+    assert val["direction"] == "negative"  # high percentile inverted for valuation
+    assert val["value"]["score"] > 0       # magnitude preserved
+
+
+# ---------------------------------------------------------------------------
+# Per-field realtime rules (the 8 governance fields) — unit tests on
+# ``_realtime_signal`` + end-to-end DIRECTION tests on the final score.
+# ---------------------------------------------------------------------------
+
+
+# 1. L6.priced.analyst_revision → expectation_gap (additive, signed)
+
+
+def test_field_analyst_revision_signed_and_clipped():
+    assert _realtime_signal(
+        "L6.priced.analyst_revision",
+        {"net_revision_score": 0.8},
+        "expectation_gap",
+    ) == pytest.approx(0.8)
+    assert _realtime_signal(
+        "L6.priced.analyst_revision",
+        {"net_revision_score": -0.6},
+        "expectation_gap",
+    ) == pytest.approx(-0.6)
+    # Out-of-range is clipped, not rejected.
+    assert _realtime_signal(
+        "L6.priced.analyst_revision",
+        {"net_revision_score": 2.0},
+        "expectation_gap",
+    ) == pytest.approx(1.0)
+    # Missing key → None.
+    assert _realtime_signal(
+        "L6.priced.analyst_revision", {"foo": 1}, "expectation_gap"
+    ) is None
+
+
+# 2. L9.company.earnings_guidance → expectation_gap (additive, signed)
+
+
+def test_field_earnings_guidance_uses_validated_coefficient():
+    # G5: the score path consumes event_coefficient.forecast_coefficient —
+    # the SAME validated encoding the display path serves — instead of its
+    # own unvalidated tanh(midpoint/100). Type-keyed: 预增 +, 预减 −.
+    from mvp20.event_coefficient import forecast_coefficient
+
+    pos_payload = {"type": "预增", "change_pct_min": 40.0, "change_pct_max": 80.0}
+    sig = _realtime_signal(
+        "L9.company.earnings_guidance", pos_payload, "expectation_gap"
+    )
+    assert sig == pytest.approx(forecast_coefficient(pos_payload)["coefficient"])
+    assert sig > 0
+
+    neg_payload = {"type": "预减", "change_pct_min": -50.0, "change_pct_max": -30.0}
+    neg = _realtime_signal(
+        "L9.company.earnings_guidance", neg_payload, "expectation_gap"
+    )
+    assert neg == pytest.approx(forecast_coefficient(neg_payload)["coefficient"])
+    assert neg < 0
+
+    # no clear directional type (不确定 / missing) → SKIPPED, never shown as 0
+    assert _realtime_signal(
+        "L9.company.earnings_guidance",
+        {"type": "不确定", "change_pct_min": 10.0, "change_pct_max": 20.0},
+        "expectation_gap",
+    ) is None
+    assert _realtime_signal(
+        "L9.company.earnings_guidance",
+        {"change_pct_min": 40.0, "change_pct_max": 80.0},  # no type at all
+        "expectation_gap",
+    ) is None
+
+
+# 3. L5.fcst.guidance_change → expectation_gap (additive, signed)
+
+
+def test_field_guidance_change_direction_and_floor():
+    # Real source vocab is upgraded/downgraded; spec also lists up/down.
+    # Magnitude is de-saturated: tanh(|current_range_pct|/100), so +50% →
+    # tanh(0.5)≈0.462 (not 0.5, not pinned at 1.0).
+    up = _realtime_signal(
+        "L5.fcst.guidance_change",
+        {"change_direction": "upgraded", "current_range_pct": 50.0},
+        "expectation_gap",
+    )
+    assert up == pytest.approx(math.tanh(0.5))
+    down = _realtime_signal(
+        "L5.fcst.guidance_change",
+        {"change_direction": "downgraded", "current_range_pct": 50.0},
+        "expectation_gap",
+    )
+    assert down == pytest.approx(-math.tanh(0.5))
+    # "up" alias also works.
+    assert _realtime_signal(
+        "L5.fcst.guidance_change",
+        {"change_direction": "up", "current_range_pct": 50.0},
+        "expectation_gap",
+    ) == pytest.approx(math.tanh(0.5))
+    # Nonzero direction floored at ~0.1 even when the range is tiny
+    # (tanh(0.01)≈0.01 < floor → floor wins).
+    floored = _realtime_signal(
+        "L5.fcst.guidance_change",
+        {"change_direction": "upgraded", "current_range_pct": 1.0},
+        "expectation_gap",
+    )
+    assert floored == pytest.approx(0.1)
+    # unchanged → 0.0 (not None).
+    assert _realtime_signal(
+        "L5.fcst.guidance_change",
+        {"change_direction": "unchanged", "current_range_pct": 20.0},
+        "expectation_gap",
+    ) == pytest.approx(0.0)
+    # Unknown direction ("new") → None.
+    assert _realtime_signal(
+        "L5.fcst.guidance_change",
+        {"change_direction": "new", "current_range_pct": 20.0},
+        "expectation_gap",
+    ) is None
+    # Missing direction → None.
+    assert _realtime_signal(
+        "L5.fcst.guidance_change", {"current_range_pct": 20.0}, "expectation_gap"
+    ) is None
+
+
+def test_field_preprice_surprise_routes_runup_to_expectation_gap():
+    # ``run_up_*_pct`` is a decimal ratio (0.10 = +10%). Prefer the 20d
+    # window, then fall back to 10d/5d when history is thin.
+    pos = _realtime_signal(
+        "L5.surprise.preprice",
+        {"run_up_5d_pct": 0.01, "run_up_10d_pct": 0.05, "run_up_20d_pct": 0.10},
+        "expectation_gap",
+    )
+    neg = _realtime_signal(
+        "L5.surprise.preprice",
+        {"run_up_20d_pct": -0.10},
+        "expectation_gap",
+    )
+    fallback = _realtime_signal(
+        "L5.surprise.preprice",
+        {"run_up_10d_pct": 0.04, "run_up_5d_pct": 0.20},
+        "expectation_gap",
+    )
+
+    assert pos == pytest.approx(math.tanh(0.10 / 0.20))
+    assert neg == pytest.approx(-math.tanh(0.10 / 0.20))
+    assert fallback == pytest.approx(math.tanh(0.04 / 0.20))
+    assert _realtime_signal(
+        "L5.surprise.preprice",
+        {"ann_date": "20260415"},
+        "expectation_gap",
+    ) is None
+
+
+# 4. L7.mood.analyst_rating → sentiment_score (additive, signed)
+
+
+def test_field_analyst_rating_recentered_on_consensus():
+    # A-share ratings cluster near the top (universe mean 4.63), so the rule
+    # re-centers on the consensus: signal = clip((avg - 4.63) / 0.46, -1, 1).
+    # Above-consensus → positive, consensus → 0, below-consensus → negative.
+    # 5.0 → (5.0-4.63)/0.46 ≈ +0.804.
+    assert _realtime_signal(
+        "L7.mood.analyst_rating", {"avg_rating_score": 5.0}, "sentiment_score"
+    ) == pytest.approx(0.804, abs=1e-3)
+    # 4.63 (= universe mean) → exactly neutral.
+    assert _realtime_signal(
+        "L7.mood.analyst_rating", {"avg_rating_score": 4.63}, "sentiment_score"
+    ) == pytest.approx(0.0)
+    # 4.5 (modal bucket) is just below consensus → mildly negative.
+    assert _realtime_signal(
+        "L7.mood.analyst_rating", {"avg_rating_score": 4.5}, "sentiment_score"
+    ) == pytest.approx((4.5 - 4.63) / 0.46)
+    # 4.0 is > 1σ below consensus → clips at -1.0.
+    assert _realtime_signal(
+        "L7.mood.analyst_rating", {"avg_rating_score": 4.0}, "sentiment_score"
+    ) == pytest.approx(-1.0)
+    # Missing key → None (unchanged).
+    assert _realtime_signal(
+        "L7.mood.analyst_rating", {"n_reports": 5}, "sentiment_score"
+    ) is None
+
+
+def test_media_social_and_social_buzz_are_not_direct_score_formulas():
+    # ths_hot attention is already consumed by derived L7.mood.fomo
+    # (overheat_risk/risk_discount). The raw hot-list fields remain governance
+    # review items here to avoid reusing the same heat evidence as direct
+    # positive sentiment/expectation_gap.
+    assert _realtime_signal(
+        "L7.mood.media_social",
+        {"rank_overall": 1, "in_top_100": True, "concept_tag_count": 20, "change_pct": 5.0},
+        "sentiment_score",
+    ) is None
+    assert _realtime_signal(
+        "L9.media.social_buzz",
+        {"in_xq_top_buzz": True, "rank_among_buzz_top": 10, "follow_count": 80000.0},
+        "expectation_gap",
+    ) is None
+
+
+def test_field_margin_anomaly_is_positive_expectation_gap_with_severity_gate():
+    warn = _realtime_signal(
+        "L9.capital.margin_anomaly",
+        {"rzmre_5d": 2.0, "rzmre_30d": 1.0, "surge_ratio": 2.0, "alert_severity": "WARN"},
+        "expectation_gap",
+    )
+    error = _realtime_signal(
+        "L9.capital.margin_anomaly",
+        {"rzmre_5d": 3.5, "rzmre_30d": 1.0, "surge_ratio": 3.5, "alert_severity": "ERROR"},
+        "expectation_gap",
+    )
+    assert warn == pytest.approx(0.35)
+    assert error == pytest.approx(0.60)
+    assert 0 < warn < error
+    # Producer severity is required: no alert classification means no score.
+    assert _realtime_signal(
+        "L9.capital.margin_anomaly",
+        {"rzmre_5d": 3.0, "rzmre_30d": 1.0, "surge_ratio": 3.0},
+        "expectation_gap",
+    ) is None
+    assert _realtime_signal(
+        "L9.capital.margin_anomaly",
+        {"rzmre_5d": 3.0, "rzmre_30d": 1.0, "surge_ratio": 3.0, "alert_severity": "INFO"},
+        "expectation_gap",
+    ) is None
+
+
+def test_synthesize_emits_margin_anomaly_positive_node():
+    reg = _registry({
+        "L9.capital.margin_anomaly": _gov("L9.capital.margin_anomaly", target="expectation_gap"),
+    })
+    snap = {
+        "L9.capital.margin_anomaly": {
+            "value": {
+                "rzmre_5d": 4.0,
+                "rzmre_30d": 1.0,
+                "surge_ratio": 4.0,
+                "alert_severity": "ERROR",
+            },
+            "data_status": "Known", "confidence": 0.75,
+            "source": "tushare:margin_detail.history", "updated_at": 1_700_000_000,
+        }
+    }
+    nodes = {
+        n["dp_id"]: n for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="300750.SZ"
+        )
+    }
+    assert "L9.capital.margin_anomaly" in nodes
+    node = nodes["L9.capital.margin_anomaly"]
+    assert node["direction"] == "positive"
+    assert node["value"]["score"] == pytest.approx(0.60)
+
+
+# 5. L6.state.expansion_compression → valuation_rerating (additive, signed)
+
+
+def test_field_expansion_compression_expensive_is_negative():
+    rich = _realtime_signal(
+        "L6.state.expansion_compression",
+        {"ratio_vs_250d": 1.4, "regime": "expanded"},
+        "valuation_rerating",
+    )
+    assert rich == pytest.approx(-math.tanh((1.4 - 1.0) * 2.0))
+    assert rich < 0  # expanded / expensive must drag the score down
+    cheap = _realtime_signal(
+        "L6.state.expansion_compression",
+        {"ratio_vs_250d": 0.7, "regime": "compressed"},
+        "valuation_rerating",
+    )
+    assert cheap == pytest.approx(-math.tanh((0.7 - 1.0) * 2.0))
+    assert cheap > 0
+    # ratio at 1.0 → neutral.
+    assert _realtime_signal(
+        "L6.state.expansion_compression",
+        {"ratio_vs_250d": 1.0},
+        "valuation_rerating",
+    ) == pytest.approx(0.0)
+    # ratio missing → fall back to regime.
+    assert _realtime_signal(
+        "L6.state.expansion_compression",
+        {"regime": "expanded"},
+        "valuation_rerating",
+    ) == pytest.approx(-0.5)
+    assert _realtime_signal(
+        "L6.state.expansion_compression",
+        {"regime": "compressed"},
+        "valuation_rerating",
+    ) == pytest.approx(0.5)
+    # No ratio + no regime → None.
+    assert _realtime_signal(
+        "L6.state.expansion_compression", {"slope": 0.1}, "valuation_rerating"
+    ) is None
+
+
+# 6. L8.val.overvalued → risk_discount (magnitude, sign ignored downstream)
+
+
+def test_field_overvalued_magnitude():
+    sig = _realtime_signal(
+        "L8.val.overvalued",
+        {"max_quantile": 0.95, "severity": "high"},
+        "risk_discount",
+    )
+    # FU-1 (A): overvalued's risk-side contribution is scaled to HALF — the same
+    # PE/PB percentile already drives valuation_rerating, so 0.95 → 0.475.
+    assert sig == pytest.approx(0.475)
+    assert sig >= 0
+    # Clip to [0, 1] BEFORE the 0.5 scale → 1.4 clips to 1.0, then ×0.5 = 0.5.
+    assert _realtime_signal(
+        "L8.val.overvalued", {"max_quantile": 1.4}, "risk_discount"
+    ) == pytest.approx(0.5)
+    # Missing key → None.
+    assert _realtime_signal(
+        "L8.val.overvalued", {"severity": "high"}, "risk_discount"
+    ) is None
+
+
+# 7. L8.val.priced_in → risk_discount (magnitude)
+
+
+def test_field_priced_in_magnitude():
+    assert _realtime_signal(
+        "L8.val.priced_in", {"priced_in_score": 0.7}, "risk_discount"
+    ) == pytest.approx(0.7)
+    assert _realtime_signal(
+        "L8.val.priced_in", {"priced_in_score": 1.5}, "risk_discount"
+    ) == pytest.approx(1.0)
+    # Missing key → None.
+    assert _realtime_signal(
+        "L8.val.priced_in", {"foo": 1}, "risk_discount"
+    ) is None
+
+
+# 8. L6.priced.run_up → priced_in_discount (magnitude; only a run-UP counts)
+
+
+def test_field_run_up_only_counts_upside():
+    # +18% over 20d → 0.18 / 0.20 = 0.9 magnitude.
+    sig = _realtime_signal(
+        "L6.priced.run_up",
+        {"d20_pct": 0.18, "d5_pct": 0.05, "d60_pct": 0.3},
+        "priced_in_discount",
+    )
+    assert sig == pytest.approx(0.18 / 0.20)
+    # Saturates at 1.0 for >= +20%.
+    assert _realtime_signal(
+        "L6.priced.run_up", {"d20_pct": 0.5}, "priced_in_discount"
+    ) == pytest.approx(1.0)
+    # A DECLINE must NOT count as priced-in → 0 magnitude.
+    assert _realtime_signal(
+        "L6.priced.run_up", {"d20_pct": -0.1}, "priced_in_discount"
+    ) == pytest.approx(0.0)
+    # d20 missing → fall back to d5.
+    assert _realtime_signal(
+        "L6.priced.run_up", {"d20_pct": None, "d5_pct": 0.1}, "priced_in_discount"
+    ) == pytest.approx(0.1 / 0.20)
+    # All None → None.
+    assert _realtime_signal(
+        "L6.priced.run_up",
+        {"d20_pct": None, "d5_pct": None, "d60_pct": None},
+        "priced_in_discount",
+    ) is None
+
+
+# 9. L5.bs.leverage → fundamental_score (additive, signed; higher debt = worse)
+
+
+def test_field_leverage_higher_debt_is_negative():
+    # 0.5 is neutral; 1.0 → -clip(0.5*1.5)= -0.75; 0.2 → -clip(-0.3*1.5)= +0.45.
+    assert _realtime_signal(
+        "L5.bs.leverage", {"leverage_ratio": 1.0}, "fundamental_score"
+    ) == pytest.approx(-0.75)
+    assert _realtime_signal(
+        "L5.bs.leverage", {"leverage_ratio": 1.0}, "fundamental_score"
+    ) < 0
+    assert _realtime_signal(
+        "L5.bs.leverage", {"leverage_ratio": 0.2}, "fundamental_score"
+    ) == pytest.approx(0.45)
+    assert _realtime_signal(
+        "L5.bs.leverage", {"leverage_ratio": 0.2}, "fundamental_score"
+    ) > 0
+    # 0.5 → exactly neutral.
+    assert _realtime_signal(
+        "L5.bs.leverage", {"leverage_ratio": 0.5}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Saturates: very high leverage clips at -1.0.
+    assert _realtime_signal(
+        "L5.bs.leverage", {"leverage_ratio": 2.0}, "fundamental_score"
+    ) == pytest.approx(-1.0)
+    # Missing key → None.
+    assert _realtime_signal(
+        "L5.bs.leverage", {"foo": 1}, "fundamental_score"
+    ) is None
+
+
+# 10. L5.bs.goodwill_ppe → fundamental_score (additive, signed; goodwill = risk)
+
+
+def test_field_goodwill_higher_is_strongly_negative():
+    # 0.4 → -clip(0.4*2.5)= -1.0 (strongly negative); 0.0 → 0.
+    assert _realtime_signal(
+        "L5.bs.goodwill_ppe", {"goodwill_to_assets": 0.4}, "fundamental_score"
+    ) == pytest.approx(-1.0)
+    assert _realtime_signal(
+        "L5.bs.goodwill_ppe", {"goodwill_to_assets": 0.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # A small goodwill share is mildly negative (0.1 → -0.25).
+    assert _realtime_signal(
+        "L5.bs.goodwill_ppe", {"goodwill_to_assets": 0.1}, "fundamental_score"
+    ) == pytest.approx(-0.25)
+    # Missing key → None.
+    assert _realtime_signal(
+        "L5.bs.goodwill_ppe", {"ppe_to_assets": 0.3}, "fundamental_score"
+    ) is None
+
+
+# ---------------------------------------------------------------------------
+# Company-fundamental-QUALITY fields (5) → fundamental_score (additive, signed).
+# Cross-sectional re-center clip((value - MEDIAN) / SCALE, -1, 1) vs the
+# A-share universe; direction per field. (Industry-mixing caveat lives on the
+# constants block in aggregator.py.)
+# ---------------------------------------------------------------------------
+
+
+# 11. L5.is.gross_margin → fundamental_score (higher margin = better → POSITIVE)
+
+
+def test_field_gross_margin_higher_is_positive():
+    # ASYMMETRIC re-center (M-2 fix): clip(delta/scale, -1, 1) where delta =
+    # gm - 0.29, scale = 0.22 above the median (POSITIVE side unchanged) and a
+    # WIDER 0.35 below it, so a structurally thin (single-digit) margin reads
+    # moderately negative instead of flooring at -1.0, while a genuinely
+    # collapsed margin still approaches -1.0.
+    # --- Positive side: unchanged from the symmetric scale ---
+    # 0.51 → (0.51-0.29)/0.22 = 1.0 (saturates positive).
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": 0.51}, "fundamental_score"
+    ) == pytest.approx(1.0)
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": 0.51}, "fundamental_score"
+    ) > 0
+    # 0.40 → (0.40-0.29)/0.22 = +0.5 (above median, un-saturated).
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": 0.40}, "fundamental_score"
+    ) == pytest.approx((0.40 - 0.29) / 0.22)
+    # --- Negative side: wider 0.35 scale (M-2). ---
+    # 0.10 → (0.10-0.29)/0.35 ≈ -0.543 (below median → negative, but NOT floored).
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": 0.10}, "fundamental_score"
+    ) == pytest.approx((0.10 - 0.29) / 0.35)
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": 0.10}, "fundamental_score"
+    ) < 0
+    # Structurally thin EMS/代工 margin (~7%) is moderately negative, NOT pinned
+    # at -1.0 (the bug M-2 fixes; previously (0.07-0.29)/0.22 = -1.0).
+    thin = _realtime_signal(
+        "L5.is.gross_margin", {"scalar": 0.07}, "fundamental_score"
+    )
+    assert thin == pytest.approx((0.07 - 0.29) / 0.35)
+    assert -0.8 < thin < -0.4
+    # A genuinely collapsed / negative gross margin still saturates to -1.0
+    # (direction stays negative — the asymmetry must NOT rescue a real loss).
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": -0.10}, "fundamental_score"
+    ) == pytest.approx(-1.0)
+    # At the median → exactly neutral.
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": 0.29}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing / None / non-numeric metric key → None.
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"net": 0.2}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.is.gross_margin", {"scalar": None}, "fundamental_score"
+    ) is None
+
+
+# 12. L5.is.margins → fundamental_score (higher net margin = better → POSITIVE)
+
+
+def test_field_net_margins_higher_is_positive():
+    # clip((nm - 0.12) / 0.16, -1, 1) — uses the ``net`` key (not operating).
+    # 0.20 → (0.20-0.12)/0.16 = +0.5 (above median → positive).
+    assert _realtime_signal(
+        "L5.is.margins", {"net": 0.20, "operating": 0.05}, "fundamental_score"
+    ) == pytest.approx((0.20 - 0.12) / 0.16)
+    assert _realtime_signal(
+        "L5.is.margins", {"net": 0.20}, "fundamental_score"
+    ) > 0
+    # 0.02 → (0.02-0.12)/0.16 = -0.625 (below median → negative).
+    assert _realtime_signal(
+        "L5.is.margins", {"net": 0.02}, "fundamental_score"
+    ) == pytest.approx((0.02 - 0.12) / 0.16)
+    assert _realtime_signal(
+        "L5.is.margins", {"net": 0.02}, "fundamental_score"
+    ) < 0
+    # At the median → neutral.
+    assert _realtime_signal(
+        "L5.is.margins", {"net": 0.12}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # ``operating`` present but ``net`` missing → None (must read the net key).
+    assert _realtime_signal(
+        "L5.is.margins", {"operating": 0.25}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.is.margins", {"net": None}, "fundamental_score"
+    ) is None
+
+
+# 13. L4.eff.cycle → fundamental_score (lower cash-cycle = better → INVERSE)
+
+
+def test_field_cycle_lower_ccc_is_positive():
+    # -clip((ccc - 36.0) / 100.0, -1, 1) — high cycle is BAD → negative.
+    # 136 → -clip((136-36)/100) = -1.0 (slow cycle saturates negative).
+    assert _realtime_signal(
+        "L4.eff.cycle", {"ccc_days": 136.0}, "fundamental_score"
+    ) == pytest.approx(-1.0)
+    assert _realtime_signal(
+        "L4.eff.cycle", {"ccc_days": 136.0}, "fundamental_score"
+    ) < 0  # high cycle is bad
+    # 86 → -clip((86-36)/100) = -0.5 (above median → still negative, un-saturated).
+    assert _realtime_signal(
+        "L4.eff.cycle", {"ccc_days": 86.0}, "fundamental_score"
+    ) == pytest.approx(-(86.0 - 36.0) / 100.0)
+    # 16 → -clip((16-36)/100) = +0.2 (below median → positive).
+    assert _realtime_signal(
+        "L4.eff.cycle", {"ccc_days": 16.0}, "fundamental_score"
+    ) == pytest.approx(-(16.0 - 36.0) / 100.0)
+    assert _realtime_signal(
+        "L4.eff.cycle", {"ccc_days": 16.0}, "fundamental_score"
+    ) > 0
+    # At the median → neutral.
+    assert _realtime_signal(
+        "L4.eff.cycle", {"ccc_days": 36.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing / non-numeric → None.
+    assert _realtime_signal(
+        "L4.eff.cycle", {"days": 30}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L4.eff.cycle", {"ccc_days": "slow"}, "fundamental_score"
+    ) is None
+
+
+# 14. L4.eff.turnover → fundamental_score (lower inventory days = better → INVERSE)
+
+
+def test_field_turnover_lower_days_is_positive():
+    # -clip((td - 96.0) / 120.0, -1, 1) — high inventory days is BAD → negative.
+    # 216 → -clip((216-96)/120) = -1.0 (saturates negative).
+    assert _realtime_signal(
+        "L4.eff.turnover", {"inventory_turnover_days": 216.0}, "fundamental_score"
+    ) == pytest.approx(-1.0)
+    assert _realtime_signal(
+        "L4.eff.turnover", {"inventory_turnover_days": 216.0}, "fundamental_score"
+    ) < 0  # slow turnover is bad
+    # 156 → -clip((156-96)/120) = -0.5 (above median → negative, un-saturated).
+    assert _realtime_signal(
+        "L4.eff.turnover", {"inventory_turnover_days": 156.0}, "fundamental_score"
+    ) == pytest.approx(-(156.0 - 96.0) / 120.0)
+    # 36 → -clip((36-96)/120) = +0.5 (below median → positive).
+    assert _realtime_signal(
+        "L4.eff.turnover", {"inventory_turnover_days": 36.0}, "fundamental_score"
+    ) == pytest.approx(-(36.0 - 96.0) / 120.0)
+    assert _realtime_signal(
+        "L4.eff.turnover", {"inventory_turnover_days": 36.0}, "fundamental_score"
+    ) > 0
+    # At the median → neutral.
+    assert _realtime_signal(
+        "L4.eff.turnover", {"inventory_turnover_days": 96.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing key → None.
+    assert _realtime_signal(
+        "L4.eff.turnover", {"turnover_ratio": 4.0}, "fundamental_score"
+    ) is None
+
+
+# 15. L4.cost.labor → fundamental_score (cost UP = bad → NEGATIVE; self-contained)
+
+
+def test_field_labor_cost_up_is_negative():
+    # -clip(tanh(yoy / 5.0), -1, 1). Cost rising → negative; falling → positive.
+    # +10% → -tanh(2.0) ≈ -0.964 (above 0 / rising cost → negative).
+    assert _realtime_signal(
+        "L4.cost.labor", {"labor_cost_yoy_pct": 10.0}, "fundamental_score"
+    ) == pytest.approx(-math.tanh(10.0 / 5.0))
+    assert _realtime_signal(
+        "L4.cost.labor", {"labor_cost_yoy_pct": 10.0}, "fundamental_score"
+    ) < 0  # rising labor cost drags fundamental down
+    # -10% → -tanh(-2.0) ≈ +0.964 (falling cost → positive).
+    assert _realtime_signal(
+        "L4.cost.labor", {"labor_cost_yoy_pct": -10.0}, "fundamental_score"
+    ) == pytest.approx(-math.tanh(-10.0 / 5.0))
+    assert _realtime_signal(
+        "L4.cost.labor", {"labor_cost_yoy_pct": -10.0}, "fundamental_score"
+    ) > 0
+    # 0% yoy → neutral.
+    assert _realtime_signal(
+        "L4.cost.labor", {"labor_cost_yoy_pct": 0.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing key → None.
+    assert _realtime_signal(
+        "L4.cost.labor", {"labor_cost": 1000.0}, "fundamental_score"
+    ) is None
+
+
+# ---------------------------------------------------------------------------
+# R-2a: company financial-QUALITY ratios (L5.fina.*) → fundamental_score
+# (additive, signed). Each reads the snapshot ``value`` field; tanh re-center on
+# the A-share universe benchmark (R-2; R-3 upgrades to a细分赛道 cross-section).
+# Direction per field. (Benchmarks verified vs realtime_current, mode=ro.)
+# ---------------------------------------------------------------------------
+
+
+# 16. L5.fina.roe → fundamental_score (higher ROE = better → POSITIVE)
+
+
+def test_field_roe_higher_is_positive():
+    # tanh((v - 3.1)/2.0). 3.1 → neutral; above → positive, below → negative.
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 5.5648}, "fundamental_score"
+    ) == pytest.approx(math.tanh((5.5648 - 3.1) / 2.0))
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 5.5648}, "fundamental_score"
+    ) > 0
+    # Below the median ROE → negative.
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 0.9093}, "fundamental_score"
+    ) == pytest.approx(math.tanh((0.9093 - 3.1) / 2.0))
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 0.9093}, "fundamental_score"
+    ) < 0
+    # At the benchmark → exactly neutral.
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": 3.1}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Stays inside [-1, 1] for an extreme ROE.
+    assert -1.0 <= _realtime_signal(
+        "L5.fina.roe", {"value": 100.0}, "fundamental_score"
+    ) <= 1.0
+    # Missing / None / non-numeric value → None.
+    assert _realtime_signal(
+        "L5.fina.roe", {"period": "2025Q1"}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": None}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.fina.roe", {"value": "n/a"}, "fundamental_score"
+    ) is None
+
+
+# 17. L5.fina.roa → fundamental_score (higher ROA = better → POSITIVE)
+
+
+def test_field_roa_higher_is_positive():
+    # tanh((v - 1.8)/1.2). 1.8 → neutral.
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": 2.2435}, "fundamental_score"
+    ) == pytest.approx(math.tanh((2.2435 - 1.8) / 1.2))
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": 2.2435}, "fundamental_score"
+    ) > 0
+    # Below median → negative.
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": 0.6702}, "fundamental_score"
+    ) < 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": 1.8}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.roa", {"period": "2025Q1"}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.fina.roa", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# 18. L5.fina.debt_ratio → fundamental_score (higher debt = worse → INVERSE)
+
+
+def test_field_debt_ratio_higher_is_negative():
+    # -tanh((v - 47.0)/20.0). High debt is BAD → negative; low debt → positive.
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 65.871}, "fundamental_score"
+    ) == pytest.approx(-math.tanh((65.871 - 47.0) / 20.0))
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 65.871}, "fundamental_score"
+    ) < 0  # high leverage drags fundamental down
+    # Low debt (below the benchmark) → positive.
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 7.43}, "fundamental_score"
+    ) == pytest.approx(-math.tanh((7.43 - 47.0) / 20.0))
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 7.43}, "fundamental_score"
+    ) > 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": 47.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"period": "2025Q1"}, "fundamental_score"
+    ) is None
+    assert _realtime_signal(
+        "L5.fina.debt_ratio", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# 19. L5.fina.ocf_quality → fundamental_score (higher = better; winsorized tail)
+
+
+def test_field_ocf_quality_winsorized_and_positive():
+    # c = clip(v, -50, 150); tanh((c - 10.0)/30.0). 10.0 → neutral.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": 11.0826}, "fundamental_score"
+    ) == pytest.approx(math.tanh((11.0826 - 10.0) / 30.0))
+    # A negative OCF-quality (below the benchmark) → negative.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": -5.6552}, "fundamental_score"
+    ) == pytest.approx(math.tanh((-5.6552 - 10.0) / 30.0))
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": -5.6552}, "fundamental_score"
+    ) < 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": 10.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # WINSORIZE: an extreme tail (raw max ≈2863) is clipped to 150 BEFORE tanh,
+    # so it doesn't pin harder than a value of exactly 150 would.
+    extreme = _realtime_signal(
+        "L5.fina.ocf_quality", {"value": 2863.62}, "fundamental_score"
+    )
+    capped = _realtime_signal(
+        "L5.fina.ocf_quality", {"value": 150.0}, "fundamental_score"
+    )
+    assert extreme == pytest.approx(capped)
+    assert extreme == pytest.approx(math.tanh((150.0 - 10.0) / 30.0))
+    assert 0.0 < extreme < 1.0  # tanh-bounded, not a raw 2863
+    # The lower tail is winsorized at -50 too.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": -73.06}, "fundamental_score"
+    ) == pytest.approx(math.tanh((-50.0 - 10.0) / 30.0))
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.ocf_quality", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# 20. L5.fina.net_profit_yoy → fundamental_score (growth → POSITIVE)
+
+
+def test_field_net_profit_yoy_growth_is_positive():
+    # tanh((v - 20.0)/50.0). 20.0 → neutral; strong growth → positive.
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": 70.0}, "fundamental_score"
+    ) == pytest.approx(math.tanh((70.0 - 20.0) / 50.0))
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": 70.0}, "fundamental_score"
+    ) > 0
+    # A profit collapse (yoy below the benchmark) → negative.
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": -46.5817}, "fundamental_score"
+    ) == pytest.approx(math.tanh((-46.5817 - 20.0) / 50.0))
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": -46.5817}, "fundamental_score"
+    ) < 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": 20.0}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Extreme growth stays bounded.
+    assert -1.0 <= _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": 1801.3}, "fundamental_score"
+    ) <= 1.0
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.net_profit_yoy", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# 21. L5.fina.asset_turnover → fundamental_score (higher turnover = better)
+
+
+def test_field_asset_turnover_higher_is_positive():
+    # tanh((v - 0.13)/0.08). 0.13 → neutral.
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": 0.2152}, "fundamental_score"
+    ) == pytest.approx(math.tanh((0.2152 - 0.13) / 0.08))
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": 0.2152}, "fundamental_score"
+    ) > 0
+    # Below the benchmark → negative.
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": 0.0914}, "fundamental_score"
+    ) < 0
+    # At the benchmark → neutral.
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": 0.13}, "fundamental_score"
+    ) == pytest.approx(0.0)
+    # Missing / None → None.
+    assert _realtime_signal(
+        "L5.fina.asset_turnover", {"value": None}, "fundamental_score"
+    ) is None
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: a high-quality fundamental snapshot (high margins, fast cash
+# cycle, falling labor cost) yields a POSITIVE fundamental contribution to the
+# company score; a low-quality one (thin margins, slow cycle, rising cost)
+# yields a negative contribution. Routes through the dead-sink industry_contrib.
+# ---------------------------------------------------------------------------
+
+
+def _quality_snapshot(*, high: bool) -> dict[str, dict]:
+    """Five fundamental-quality fields for one company, all Known, all
+    targeting fundamental_score. ``high`` picks a best-in-class vs a
+    worst-in-class profile."""
+
+    if high:
+        payloads = {
+            "L5.is.gross_margin": {"scalar": 0.55},          # rich gross margin
+            "L5.is.margins": {"net": 0.30, "operating": 0.35},  # rich net margin
+            "L4.eff.cycle": {"ccc_days": -40.0},             # negative cash cycle
+            "L4.eff.turnover": {"inventory_turnover_days": 20.0},  # fast turnover
+            "L4.cost.labor": {"labor_cost_yoy_pct": -8.0},   # labor cost falling
+        }
+    else:
+        payloads = {
+            "L5.is.gross_margin": {"scalar": 0.05},          # thin gross margin
+            "L5.is.margins": {"net": -0.05, "operating": 0.01},  # loss-making
+            "L4.eff.cycle": {"ccc_days": 160.0},             # very slow cash cycle
+            "L4.eff.turnover": {"inventory_turnover_days": 240.0},  # slow turnover
+            "L4.cost.labor": {"labor_cost_yoy_pct": 12.0},   # labor cost surging
+        }
+    return {
+        dp_id: {
+            "value": payload,
+            "data_status": "Known",
+            "confidence": 1.0,
+            "source": "tushare:test",
+            "updated_at": 1_700_000_000,
+        }
+        for dp_id, payload in payloads.items()
+    }
+
+
+def _quality_registry() -> FieldGovernanceRegistry:
+    return _registry({
+        "L5.is.eps": _gov("L5.is.eps", target="fundamental_score"),
+        "L5.is.gross_margin": _gov("L5.is.gross_margin", target="fundamental_score"),
+        "L5.is.margins": _gov("L5.is.margins", target="fundamental_score"),
+        "L4.eff.cycle": _gov("L4.eff.cycle", target="fundamental_score"),
+        "L4.eff.turnover": _gov("L4.eff.turnover", target="fundamental_score"),
+        "L4.cost.labor": _gov("L4.cost.labor", target="fundamental_score"),
+    })
+
+
+def test_e2e_quality_fundamentals_drive_contribution_sign():
+    """High-quality fundamentals → positive industry_contrib (and base_score);
+    low-quality → negative. The 5 new fields all route through the dead-sink
+    fundamental_score path collapsed into ``realtime_fundamental``."""
+
+    overlay = _deadsink_overlay()  # one Unknown fundamental seed → base ~0 alone
+    reg = _quality_registry()
+
+    agg_hi = aggregate_company_graph(
+        overlay, role_registry=reg, realtime_snapshot=_quality_snapshot(high=True)
+    )
+    res_hi = score_company(overlay, aggregated_nodes=agg_hi)
+    contrib_hi = res_hi["company_score"]["components"]["industry_contrib"]
+    base_hi = res_hi["core_final_score"]["base_score"]
+
+    agg_lo = aggregate_company_graph(
+        overlay, role_registry=reg, realtime_snapshot=_quality_snapshot(high=False)
+    )
+    res_lo = score_company(overlay, aggregated_nodes=agg_lo)
+    contrib_lo = res_lo["company_score"]["components"]["industry_contrib"]
+    base_lo = res_lo["core_final_score"]["base_score"]
+
+    assert contrib_hi > 0  # rich margins + fast cycle + falling cost lift it
+    assert contrib_lo < 0  # thin margins + slow cycle + rising cost drag it
+    assert contrib_hi > contrib_lo
+    assert base_hi > base_lo
+
+
+# ---------------------------------------------------------------------------
+# Dead-sink routing: a synthetic ``fundamental_score`` node must now INCREASE
+# the company score (was a dead sink — moved base_score by +0.000), while a
+# synthetic live-sink target (valuation_rerating) keeps counting EXACTLY ONCE
+# via the flat sink and is NOT also routed through industry_variables.
+# ---------------------------------------------------------------------------
+
+
+def _deadsink_overlay() -> dict:
+    """One authored Unknown seed (score ~0) so any non-zero base score comes
+    entirely from the synthetic realtime node under test."""
+
+    return {
+        "ts_code": "300750.SZ",
+        "industry_id": "STORAGE_GRID",
+        "nodes": [
+            {
+                "node_id": "auth_seed",
+                "dp_id": "L5.is.eps",
+                "node_name": "auth_seed",
+                "parent_node": None,
+                "direction": "positive",
+                "base_weight": 1.0,
+                "active_weight": 1.0,
+                "materiality": 1.0,
+                "confidence": 0.5,
+                "data_status": "Unknown",
+                "status": "Unknown",
+                "value": None,
+                "field_role": "score_component",
+                "score_target": "fundamental_score",
+                "participates_in_score": True,
+            }
+        ],
+    }
+
+
+def test_fundamental_synthetic_node_now_increases_score():
+    """Replicates the verified dead-sink: a synthetic ``fundamental_score``
+    Known node (score 0.9) used to move base_score by +0.000. After routing
+    dead-sink synthetic nodes through industry_contrib it INCREASES the score
+    and shows up in the industry-variable contributions."""
+
+    from mvp20.scoring import _industry_variables_from_flat
+
+    overlay = _deadsink_overlay()
+    reg = _registry({
+        "L5.is.eps": _gov("L5.is.eps", target="fundamental_score"),
+        "L6.fund.metric": _gov("L6.fund.metric", target="fundamental_score"),
+    })
+    snap = {
+        "L6.fund.metric": {
+            "value": {"score": 0.9},
+            "data_status": "Known",
+            "confidence": 1.0,
+            "source": "derive:fund",
+            "updated_at": 1_700_000_000,
+        }
+    }
+    agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
+
+    # Flag survives aggregation so scoring can detect the synthetic origin.
+    synth = agg["300750.SZ:L6.fund.metric:rt"]
+    assert synth["synthetic_realtime"] is True
+    assert synth["score_target"] == "fundamental_score"
+    assert synth["score"] == pytest.approx(0.9)
+
+    res = score_company(overlay, aggregated_nodes=agg)
+    base = res["core_final_score"]["base_score"]
+    contrib = res["company_score"]["components"]["industry_contrib"]
+    # Was +0.000; now the full +0.9 reaches the score via the merit MEAN.
+    # industry_contrib (raw weighted_sum) is 0.9 (auth_seed score 0.0 adds nothing).
+    # R-2b follow-up: zero-score nodes (the auth_seed, score 0.0 = "no signal /
+    # abstain") are EXCLUDED from the coverage-weighted mean, so they no longer
+    # dilute it. The mean is over the one opinionated var [0.9 @ w=1.0] = 0.9
+    # (no tanh). Pre-R-2b base = tanh(0.9); R-2b first-cut (with dilution) = 0.9/1.3.
+    assert base == pytest.approx(0.9)
+    assert contrib == pytest.approx(0.9)
+
+    # Synthetic dead-sink nodes are now collapsed into a SINGLE damped-mean
+    # industry variable named "realtime_fundamental" (no longer one var per
+    # node_id), so its score is the collapsed 0.9.
+    ivars = _industry_variables_from_flat(agg, overlay)
+    rt = [v for v in ivars if v["node_id"] == "realtime_fundamental"]
+    assert len(rt) == 1
+    assert rt[0]["score"] == pytest.approx(0.9)
+
+
+def test_optionality_synthetic_node_routes_through_industry():
+    """``optionality_score`` is the other dead-sink target (no flat sink); it
+    must also reach the score via industry_contrib."""
+
+    overlay = _deadsink_overlay()
+    reg = _registry({
+        "L5.is.eps": _gov("L5.is.eps", target="fundamental_score"),
+        "L2.opt.newbiz": _gov("L2.opt.newbiz", target="optionality_score"),
+    })
+    snap = {
+        "L2.opt.newbiz": {
+            "value": {"score": 0.6},
+            "data_status": "Known",
+            "confidence": 1.0,
+            "source": "derive:opt",
+            "updated_at": 1_700_000_000,
+        }
+    }
+    agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
+    res = score_company(overlay, aggregated_nodes=agg)
+    # Raw weighted_sum 0.6 stays in industry_contrib (auth_seed score 0.0 adds
+    # nothing). R-2b follow-up: the zero-score auth_seed is EXCLUDED from the
+    # coverage-weighted mean (no-signal nodes don't dilute), so base_score is the
+    # mean over the one opinionated var [0.6 @ w=1.0] = 0.6 (no tanh).
+    assert res["company_score"]["components"]["industry_contrib"] == pytest.approx(0.6)
+    assert res["core_final_score"]["base_score"] == pytest.approx(0.6)
+
+
+def test_valuation_synthetic_node_counts_once_no_double_count():
+    """A synthetic ``valuation_rerating`` node already has a flat sink in
+    _role_components_from_flat (path #1). It must NOT be routed a second time
+    through industry_variables — assert (a) it is absent from the industry-
+    variable output, (b) industry_contrib stays 0, and (c) base_score equals
+    the single flat-sink contribution only."""
+
+    from mvp20.scoring import _industry_variables_from_flat
+
+    overlay = _deadsink_overlay()
+    reg = _registry({
+        "L5.is.eps": _gov("L5.is.eps", target="fundamental_score"),
+        "L6.val.pct": _gov("L6.val.pct", target="valuation_rerating"),
+    })
+    snap = {
+        "L6.val.pct": {
+            "value": {"pe_percentile": 0.95},
+            "data_status": "Known",
+            "confidence": 1.0,
+            "source": "tushare:daily",
+            "updated_at": 1_700_000_000,
+        }
+    }
+    agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
+
+    # (a) Not present in the industry-variable contributions.
+    ivars = _industry_variables_from_flat(agg, overlay)
+    assert not any(
+        str(v["node_id"]).endswith("L6.val.pct:rt") for v in ivars
+    )
+
+    res = score_company(overlay, aggregated_nodes=agg)
+    # (b) industry_contrib unchanged by the valuation node.
+    assert res["company_score"]["components"]["industry_contrib"] == pytest.approx(0.0)
+
+    # (c) Single-count: the node's signal is (0.95-0.5)*2*-1 = -0.9; it lands
+    # ONLY via the valuation_rerating flat sink, so base_score == -0.9, not -1.8.
+    expected_single = (0.95 - 0.5) * 2.0 * -1.0
+    assert res["role_components"]["valuation_rerating"] == pytest.approx(expected_single)
+    assert res["core_final_score"]["base_score"] == pytest.approx(expected_single)
+
+
+def test_e2e_leverage_and_goodwill_drag_fundamental_via_bridge():
+    """End-to-end: high leverage and high goodwill (both fundamental_score)
+    now reach the score through the dead-sink route and drag it negative,
+    while a clean balance sheet stays neutral/positive."""
+
+    heavy_lev = _base_score_for(
+        "L5.bs.leverage", "fundamental_score", {"leverage_ratio": 1.0}
+    )
+    light_lev = _base_score_for(
+        "L5.bs.leverage", "fundamental_score", {"leverage_ratio": 0.2}
+    )
+    assert heavy_lev < light_lev
+    assert heavy_lev < 0  # high leverage drags fundamental negative
+
+    high_gw = _base_score_for(
+        "L5.bs.goodwill_ppe", "fundamental_score", {"goodwill_to_assets": 0.4}
+    )
+    no_gw = _base_score_for(
+        "L5.bs.goodwill_ppe", "fundamental_score", {"goodwill_to_assets": 0.0}
+    )
+    assert high_gw < no_gw
+    assert no_gw == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end DIRECTION tests: a realtime snapshot for one field must move the
+# final ``base_score`` in the expected direction (additive: sign; discount:
+# more magnitude → lower). We compare two snapshots through the real
+# aggregate_company_graph + score_company path.
+# ---------------------------------------------------------------------------
+
+
+def _field_overlay(dp_id: str, target: str) -> dict:
+    """Minimal governance-flat overlay carrying ONE authored Unknown node so
+    the base score is ~0 until the realtime snapshot injects the field."""
+
+    return {
+        "ts_code": "300750.SZ",
+        "industry_id": "STORAGE_GRID",
+        "nodes": [
+            {
+                "node_id": "auth_seed",
+                "dp_id": "L5.is.eps",
+                "node_name": "auth_seed",
+                "parent_node": None,
+                "direction": "positive",
+                "base_weight": 1.0,
+                "active_weight": 1.0,
+                "materiality": 1.0,
+                "confidence": 0.5,
+                "data_status": "Unknown",
+                "status": "Unknown",
+                "value": None,
+                "field_role": "score_component",
+                "score_target": "fundamental_score",
+                "participates_in_score": True,
+            }
+        ],
+    }
+
+
+def _base_score_for(dp_id: str, target: str, payload: dict) -> float:
+    """Run the full bridge for a single realtime field and return base_score."""
+
+    overlay = _field_overlay(dp_id, target)
+    reg = _registry({
+        dp_id: _gov(dp_id, target=target),
+        "L5.is.eps": _gov("L5.is.eps", target="fundamental_score"),
+    })
+    snap = {
+        dp_id: {
+            "value": payload,
+            "data_status": "Known",
+            "confidence": 1.0,
+            "source": "tushare:test",
+            "updated_at": 1_700_000_000,
+        }
+    }
+    agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
+    res = score_company(overlay, aggregated_nodes=agg)
+    # ``base_score`` is the unweighted ``f + e + vr + cs - r - p`` sum; read it
+    # from the pre-market-adapter core score so the comparison isolates the
+    # field's contribution (no regime multiplier in the way).
+    return res["core_final_score"]["base_score"]
+
+
+def test_e2e_analyst_revision_up_beats_down():
+    up = _base_score_for(
+        "L6.priced.analyst_revision",
+        "expectation_gap",
+        {"net_revision_score": 0.8},
+    )
+    down = _base_score_for(
+        "L6.priced.analyst_revision",
+        "expectation_gap",
+        {"net_revision_score": -0.8},
+    )
+    assert up > down
+
+
+def test_e2e_earnings_guidance_beat_beats_miss():
+    beat = _base_score_for(
+        "L9.company.earnings_guidance",
+        "expectation_gap",
+        {"type": "预增", "change_pct_min": 50.0, "change_pct_max": 70.0,
+         "ann_date": "20231113"},  # fresh, within the 2d event window
+    )
+    miss = _base_score_for(
+        "L9.company.earnings_guidance",
+        "expectation_gap",
+        {"type": "预减", "change_pct_min": -50.0, "change_pct_max": -30.0,
+         "ann_date": "20231113"},
+    )
+    assert beat > miss
+    # G5 event-window decay: the same 预增 announced ~3 weeks before the
+    # snapshot anchor contributes NOTHING (alpha is t+1 event-window only)
+    stale_beat = _base_score_for(
+        "L9.company.earnings_guidance",
+        "expectation_gap",
+        {"type": "预增", "change_pct_min": 50.0, "change_pct_max": 70.0,
+         "ann_date": "20231020"},
+    )
+    assert stale_beat == pytest.approx(0.0, abs=1e-9)
+
+
+def test_e2e_guidance_change_up_beats_down():
+    up = _base_score_for(
+        "L5.fcst.guidance_change",
+        "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0},
+    )
+    down = _base_score_for(
+        "L5.fcst.guidance_change",
+        "expectation_gap",
+        {"change_direction": "downgraded", "current_range_pct": 50.0},
+    )
+    assert up > down
+
+
+def test_e2e_analyst_rating_buy_beats_sell():
+    # Re-centered on the A-share consensus (mean 4.63): a top rating still beats
+    # a rock-bottom one, but a CONSENSUS-rated (4.63) name now contributes ~0 to
+    # sentiment — not the old uniform +0.8 every stock used to get.
+    strong_buy = _base_score_for(
+        "L7.mood.analyst_rating", "sentiment_score", {"avg_rating_score": 5.0}
+    )
+    strong_sell = _base_score_for(
+        "L7.mood.analyst_rating", "sentiment_score", {"avg_rating_score": 1.0}
+    )
+    consensus = _base_score_for(
+        "L7.mood.analyst_rating", "sentiment_score", {"avg_rating_score": 4.63}
+    )
+    assert strong_buy > strong_sell
+    assert strong_buy > consensus  # above-consensus rated higher than consensus
+    assert consensus == pytest.approx(0.0, abs=1e-9)  # average rating → ~0 sentiment
+
+
+def test_e2e_expansion_compression_expensive_lowers_score():
+    expensive = _base_score_for(
+        "L6.state.expansion_compression",
+        "valuation_rerating",
+        {"ratio_vs_250d": 1.4, "regime": "expanded"},
+    )
+    cheap = _base_score_for(
+        "L6.state.expansion_compression",
+        "valuation_rerating",
+        {"ratio_vs_250d": 0.7, "regime": "compressed"},
+    )
+    assert expensive < cheap
+
+
+def test_e2e_overvalued_higher_quantile_lowers_score():
+    very = _base_score_for(
+        "L8.val.overvalued", "risk_discount", {"max_quantile": 0.95}
+    )
+    not_ov = _base_score_for(
+        "L8.val.overvalued", "risk_discount", {"max_quantile": 0.0}
+    )
+    assert very < not_ov
+
+
+def test_e2e_priced_in_higher_lowers_score():
+    high = _base_score_for(
+        "L8.val.priced_in", "risk_discount", {"priced_in_score": 0.9}
+    )
+    low = _base_score_for(
+        "L8.val.priced_in", "risk_discount", {"priced_in_score": 0.0}
+    )
+    assert high < low
+
+
+def test_e2e_run_up_lowers_score_decline_neutral():
+    run_up = _base_score_for(
+        "L6.priced.run_up", "priced_in_discount", {"d20_pct": 0.18}
+    )
+    flat = _base_score_for(
+        "L6.priced.run_up", "priced_in_discount", {"d20_pct": 0.0}
+    )
+    # A run-up is priced in → subtracts → lower than no run-up.
+    assert run_up < flat
+    # A decline is NOT priced in → same as flat (magnitude 0).
+    decline = _base_score_for(
+        "L6.priced.run_up", "priced_in_discount", {"d20_pct": -0.1}
+    )
+    assert decline == pytest.approx(flat)
+
+
+# ---------------------------------------------------------------------------
+# Same-disclosure dedup + de-saturation for the 业绩预告 guidance pair.
+# ``L9.company.earnings_guidance`` (LEVEL) and ``L5.fcst.guidance_change``
+# (REVISION) both target expectation_gap off the SAME forecast; emitting both
+# double-counts, and both used to pin at 1.0 for a strong forecast.
+# ---------------------------------------------------------------------------
+
+# BYD-like strong forecast: avg change_pct ≈ +102%, current_range_pct ≈ +102%.
+_BYD_EARNINGS_GUIDANCE = {"type": "预增", "change_pct_min": 86.0,
+                          "change_pct_max": 118.0, "ann_date": "20231113"}
+_BYD_GUIDANCE_CHANGE = {"change_direction": "upgraded", "current_range_pct": 102.0}
+
+
+def _guidance_pair_registry() -> FieldGovernanceRegistry:
+    return _registry({
+        "L9.company.earnings_guidance": _gov(
+            "L9.company.earnings_guidance", target="expectation_gap"
+        ),
+        "L5.fcst.guidance_change": _gov(
+            "L5.fcst.guidance_change", target="expectation_gap"
+        ),
+    })
+
+
+def _guidance_entry(value: dict, *, source: str = "tushare:forecast",
+                    data_status: str = "Known") -> dict:
+    return {
+        "value": value,
+        "data_status": data_status,
+        "confidence": 0.85,
+        "source": source,
+        "updated_at": 1_700_000_000,
+    }
+
+
+def test_guidance_desaturation_not_pinned():
+    # LEVEL (G5): the validated forecast coefficient — 预增 with +102% growth
+    # → tanh-bounded ≈ 0.97, strictly < 1.0 (never a pinned 1.0 node).
+    from mvp20.event_coefficient import forecast_coefficient
+
+    lvl = _realtime_signal(
+        "L9.company.earnings_guidance", _BYD_EARNINGS_GUIDANCE, "expectation_gap"
+    )
+    assert lvl == pytest.approx(
+        forecast_coefficient(_BYD_EARNINGS_GUIDANCE)["coefficient"])
+    assert lvl < 1.0
+    # REVISION: current_range_pct = 102 → tanh(1.02) ≈ 0.77, strictly < 1.0.
+    rev = _realtime_signal(
+        "L5.fcst.guidance_change",
+        {"current_range_pct": 102.0, "change_direction": "upgraded"},
+        "expectation_gap",
+    )
+    assert rev == pytest.approx(math.tanh(1.02))
+    assert rev < 1.0
+
+
+def test_guidance_change_downgraded_is_negative():
+    down = _realtime_signal(
+        "L5.fcst.guidance_change",
+        {"change_direction": "downgraded", "current_range_pct": 102.0},
+        "expectation_gap",
+    )
+    assert down == pytest.approx(-math.tanh(1.02))
+    assert down < 0
+
+
+def test_dedup_revision_subsumes_level_when_present():
+    # Both present + revision is a clean upgraded signal → only the REVISION
+    # field emits; the LEVEL field is suppressed (no double-count).
+    snap = {
+        "L9.company.earnings_guidance": _guidance_entry(_BYD_EARNINGS_GUIDANCE),
+        "L5.fcst.guidance_change": _guidance_entry(_BYD_GUIDANCE_CHANGE),
+    }
+    emitted = {
+        n["dp_id"] for n in synthesize_realtime_nodes(
+            snap, _guidance_pair_registry(), existing_dp_ids=set(),
+            ts_code="002594.SZ",
+        )
+    }
+    assert emitted == {"L5.fcst.guidance_change"}
+    assert "L9.company.earnings_guidance" not in emitted
+
+
+def test_dedup_keeps_level_when_revision_yields_none():
+    # change_direction="new" → guidance_change signal is None, so it does NOT
+    # suppress; earnings_guidance is KEPT as the fallback.
+    snap = {
+        "L9.company.earnings_guidance": _guidance_entry(_BYD_EARNINGS_GUIDANCE),
+        "L5.fcst.guidance_change": _guidance_entry(
+            {"change_direction": "new", "current_range_pct": 102.0}
+        ),
+    }
+    emitted = {
+        n["dp_id"] for n in synthesize_realtime_nodes(
+            snap, _guidance_pair_registry(), existing_dp_ids=set(),
+            ts_code="002594.SZ",
+        )
+    }
+    assert "L9.company.earnings_guidance" in emitted
+    assert "L5.fcst.guidance_change" not in emitted  # None signal → skipped
+
+
+def test_dedup_keeps_level_when_revision_absent():
+    # Only the LEVEL field present → emitted (nothing to dedup against).
+    snap = {
+        "L9.company.earnings_guidance": _guidance_entry(_BYD_EARNINGS_GUIDANCE),
+    }
+    emitted = {
+        n["dp_id"] for n in synthesize_realtime_nodes(
+            snap, _guidance_pair_registry(), existing_dp_ids=set(),
+            ts_code="002594.SZ",
+        )
+    }
+    assert emitted == {"L9.company.earnings_guidance"}
+
+
+def test_dedup_does_not_suppress_on_mock_primary():
+    # Revision present but from a mock source → it fails the synthesis gates, so
+    # it must NOT suppress the LEVEL field. earnings_guidance is kept.
+    snap = {
+        "L9.company.earnings_guidance": _guidance_entry(_BYD_EARNINGS_GUIDANCE),
+        "L5.fcst.guidance_change": _guidance_entry(
+            _BYD_GUIDANCE_CHANGE, source="mock:tushare"
+        ),
+    }
+    emitted = {
+        n["dp_id"] for n in synthesize_realtime_nodes(
+            snap, _guidance_pair_registry(), existing_dp_ids=set(),
+            ts_code="002594.SZ",
+        )
+    }
+    assert "L9.company.earnings_guidance" in emitted  # mock primary can't suppress
+    assert "L5.fcst.guidance_change" not in emitted   # mock source → not emitted
+
+
+def test_dedup_does_not_suppress_on_unknown_primary():
+    # Revision present but data_status Unknown → fails the gate, so it does NOT
+    # suppress the LEVEL field.
+    snap = {
+        "L9.company.earnings_guidance": _guidance_entry(_BYD_EARNINGS_GUIDANCE),
+        "L5.fcst.guidance_change": _guidance_entry(
+            _BYD_GUIDANCE_CHANGE, data_status="Unknown"
+        ),
+    }
+    emitted = {
+        n["dp_id"] for n in synthesize_realtime_nodes(
+            snap, _guidance_pair_registry(), existing_dp_ids=set(),
+            ts_code="002594.SZ",
+        )
+    }
+    assert "L9.company.earnings_guidance" in emitted
+
+
+def _guidance_pair_overlay() -> dict:
+    """Overlay with one authored Unknown seed so the base is ~0 until the
+    realtime guidance pair is injected."""
+
+    return {
+        "ts_code": "002594.SZ",
+        "industry_id": "AUTO",
+        "nodes": [
+            {
+                "node_id": "auth_seed",
+                "dp_id": "L5.is.eps",
+                "node_name": "auth_seed",
+                "parent_node": None,
+                "direction": "positive",
+                "base_weight": 1.0,
+                "active_weight": 1.0,
+                "materiality": 1.0,
+                "confidence": 0.5,
+                "data_status": "Unknown",
+                "status": "Unknown",
+                "value": None,
+                "field_role": "score_component",
+                "score_target": "fundamental_score",
+                "participates_in_score": True,
+            }
+        ],
+    }
+
+
+def test_e2e_guidance_pair_counts_one_expectation_gap_node():
+    """BYD-like strong-positive pair: exactly ONE synthetic expectation_gap node
+    survives (the revision), and its magnitude is de-saturated (< 1.0), so the
+    disclosure can't double-count two pinned 1.0 nodes."""
+
+    overlay = _guidance_pair_overlay()
+    reg = _registry({
+        "L9.company.earnings_guidance": _gov(
+            "L9.company.earnings_guidance", target="expectation_gap"
+        ),
+        "L5.fcst.guidance_change": _gov(
+            "L5.fcst.guidance_change", target="expectation_gap"
+        ),
+        "L5.is.eps": _gov("L5.is.eps", target="fundamental_score"),
+    })
+    snap = {
+        "L9.company.earnings_guidance": _guidance_entry(_BYD_EARNINGS_GUIDANCE),
+        "L5.fcst.guidance_change": _guidance_entry(_BYD_GUIDANCE_CHANGE),
+    }
+    agg = aggregate_company_graph(overlay, role_registry=reg, realtime_snapshot=snap)
+
+    # Synthetic expectation_gap nodes from the guidance pair.
+    eg_nodes = {
+        nid: r
+        for nid, r in agg.items()
+        if nid.endswith(":rt") and r.get("score_target") == "expectation_gap"
+    }
+    # Exactly ONE node (the revision), not two — the level field is deduped.
+    assert len(eg_nodes) == 1
+    assert "002594.SZ:L5.fcst.guidance_change:rt" in eg_nodes
+    assert "002594.SZ:L9.company.earnings_guidance:rt" not in agg
+
+    # The surviving node's contribution is de-saturated: |score| < 1.0 (and far
+    # below the ~2.0 two pinned 1.0 nodes would have produced).
+    eg_contribution = sum(abs(r["score"]) for r in eg_nodes.values())
+    assert eg_contribution < 1.0
+
+
+# ---------------------------------------------------------------------------
+# F1 / F3 regression: four recently-added A-share dp_ids produced correct
+# VALUES but contributed ZERO to the score because their magnitude lived under
+# a ``scalar`` (or ``magnitude``) key that no ``_realtime_signal`` shape read,
+# so the reducer returned None and ``synthesize_realtime_nodes`` dropped them.
+# These tests pin the real payload shapes (from the derive.py producers) →
+# correct NON-None signed signal, the node-emission, and that raw PEG stays
+# data-only because L6.state.peg_match is the scored form of the SAME PEG.
+#
+# Real payload keys (mvp20/derive.py):
+#   L6.mult.ev_ebitda  → {"scalar": <EV/EBITDA>, "unit": "ratio", ...}  (valuation_rerating)
+#   L6.mult.forward_pe → {"scalar": <fwd P/E>,   "unit": "ratio", ...}  (valuation_rerating)
+#   L6.priced.news_age → {"scalar": m, "magnitude": m, "age_days": ...} (priced_in_discount)
+#   L6.mult.peg        → {"scalar": <PEG>, "pe": .., "growth_pct": ...}  (valuation_rerating; data-only)
+#   L6.state.peg_match → {"scalar": s, "score": s, "band": ...}         (valuation_rerating; scored)
+# ---------------------------------------------------------------------------
+
+
+# 16. L6.mult.ev_ebitda → valuation_rerating (signed; HIGH multiple = NEGATIVE)
+
+
+def test_field_ev_ebitda_expensive_is_negative():
+    # Log-ratio re-center -tanh(ln(ev/13)/1.4): expensive → negative, cheap →
+    # positive, at the reference (13) → 0. Monotonic: a richer multiple is
+    # strictly MORE negative (no premature flooring across the AI-compute range).
+    rich = _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 370.4618}, "valuation_rerating"
+    )
+    mid = _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 98.2539}, "valuation_rerating"
+    )
+    less_rich = _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 68.9253}, "valuation_rerating"
+    )
+    assert rich == pytest.approx(-math.tanh(math.log(370.4618 / 13.0) / 1.4))
+    assert rich < 0
+    # The most expensive name is strictly the MOST negative.
+    assert rich < mid < less_rich < 0
+    # Not pinned at the floor even at EV/EBITDA 370 — discrimination preserved.
+    assert rich > -1.0
+    # A CHEAP multiple (below the reference) is mildly POSITIVE.
+    cheap = _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 8.0}, "valuation_rerating"
+    )
+    assert cheap == pytest.approx(-math.tanh(math.log(8.0 / 13.0) / 1.4))
+    assert cheap > 0
+    # At the reference → neutral.
+    assert _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 13.0}, "valuation_rerating"
+    ) == pytest.approx(0.0)
+    # Non-positive / missing / non-numeric scalar → None (no fabricated signal).
+    assert _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": 0.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.ev_ebitda", {"scalar": -5.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.ev_ebitda", {"unit": "ratio"}, "valuation_rerating"
+    ) is None
+
+
+# 17. L6.mult.forward_pe → valuation_rerating (signed; HIGH multiple = NEGATIVE)
+
+
+def test_field_forward_pe_expensive_is_negative():
+    # Log-ratio re-center -tanh(ln(fpe/22)/1.1). Same direction/shape as
+    # ev_ebitda; distinct multiple (forward earnings, not trailing PE/PB).
+    rich = _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": 117.7751}, "valuation_rerating"
+    )
+    less_rich = _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": 45.2778}, "valuation_rerating"
+    )
+    assert rich == pytest.approx(-math.tanh(math.log(117.7751 / 22.0) / 1.1))
+    assert rich < 0
+    assert rich < less_rich < 0       # higher fwd-PE → more negative
+    assert rich > -1.0                # 118 fwd-PE still not floored
+    # A CHEAP forward P/E (below 22) is mildly POSITIVE.
+    cheap = _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": 12.0}, "valuation_rerating"
+    )
+    assert cheap == pytest.approx(-math.tanh(math.log(12.0 / 22.0) / 1.1))
+    assert cheap > 0
+    # At the reference → neutral.
+    assert _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": 22.0}, "valuation_rerating"
+    ) == pytest.approx(0.0)
+    # Non-positive / missing → None.
+    assert _realtime_signal(
+        "L6.mult.forward_pe", {"scalar": -1.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.forward_pe", {"unit": "ratio"}, "valuation_rerating"
+    ) is None
+
+
+# 18. L6.priced.news_age → priced_in_discount (magnitude; fresh news = larger)
+
+
+def test_field_news_age_fresh_is_positive_magnitude():
+    # The producer already time-decays the magnitude into ``magnitude``/``scalar``
+    # ∈ [0, _NEWS_AGE_PEAK]. The rule surfaces it as a [0, 1] magnitude (a fresh
+    # catalyst → larger discount). Sign is ignored downstream, so it must be ≥ 0.
+    fresh = _realtime_signal(
+        "L6.priced.news_age",
+        {"scalar": 0.4653, "magnitude": 0.4653, "age_days": 11},
+        "priced_in_discount",
+    )
+    assert fresh == pytest.approx(0.4653)
+    assert fresh > 0
+    # A fresher catalyst → strictly larger magnitude.
+    fresher = _realtime_signal(
+        "L6.priced.news_age", {"magnitude": 0.5345}, "priced_in_discount"
+    )
+    assert fresher > fresh
+    # Falls back to ``scalar`` when ``magnitude`` key is absent (same value).
+    assert _realtime_signal(
+        "L6.priced.news_age", {"scalar": 0.30}, "priced_in_discount"
+    ) == pytest.approx(0.30)
+    # Clipped into [0, 1].
+    assert _realtime_signal(
+        "L6.priced.news_age", {"magnitude": 1.5}, "priced_in_discount"
+    ) == pytest.approx(1.0)
+    # Neither key present → None (absent → no node).
+    assert _realtime_signal(
+        "L6.priced.news_age", {"age_days": 3}, "priced_in_discount"
+    ) is None
+
+
+def test_manual_candidate_payloads_bridge_to_numeric_signals():
+    assert _realtime_signal(
+        "L6.mult.dcf", {"scalar": 0.35}, "valuation_rerating"
+    ) == pytest.approx(0.35)
+    assert _realtime_signal(
+        "L6.mult.dcf", {"score": -0.25}, "valuation_rerating"
+    ) == pytest.approx(-0.25)
+    assert _realtime_signal(
+        "L6.mult.dcf", {"assumptions": {}}, "valuation_rerating"
+    ) is None
+
+    assert _realtime_signal(
+        "L6.priced.realization_risk",
+        {"magnitude": 0.42},
+        "priced_in_discount",
+    ) == pytest.approx(0.42)
+    assert _realtime_signal(
+        "L8.val.slope_risk_off",
+        {"magnitude": 0.31},
+        "risk_discount",
+    ) == pytest.approx(0.31)
+    assert _realtime_signal(
+        "L8.val.slope_risk_off",
+        {"drivers": ["risk_appetite"]},
+        "risk_discount",
+    ) is None
+
+    assert _realtime_signal(
+        "L7.reflex.tag", {"multiplier": 1.08}, "reflexivity_multiplier"
+    ) == pytest.approx(0.08)
+    assert _realtime_signal(
+        "L7.trade.gamma", {"multiplier": 1.0}, "gamma_multiplier"
+    ) == pytest.approx(0.0)
+
+
+# 19. L6.mult.peg → valuation_rerating: deliberately DATA-ONLY (None). The PEG
+#     signal is carried by L6.state.peg_match (the banded scored form), so raw
+#     peg must NOT also be scored (would double-count PEG into valuation_rerating).
+
+
+def test_field_raw_peg_is_data_only_none():
+    # The bare PEG ratio matches NO _realtime_signal shape → None (not scored).
+    assert _realtime_signal(
+        "L6.mult.peg",
+        {"scalar": 1.9973, "pe": 318.68, "growth_pct": 159.55,
+         "growth_basis": "revenue_yoy"},
+        "valuation_rerating",
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.peg", {"scalar": 0.495}, "valuation_rerating"
+    ) is None
+
+
+def test_peg_match_carries_peg_signal():
+    # COVERAGE: the PEG signal reaches valuation_rerating via peg_match, whose
+    # payload carries an explicit ``score`` ∈ [-1, 1] (PEG<1 → +1 undervalued,
+    # >2 → -1 expensive). This is why raw peg is left data-only above.
+    undervalued = _realtime_signal(
+        "L6.state.peg_match",
+        {"scalar": 1.0, "score": 1.0, "band": "undervalued", "peg": 0.495},
+        "valuation_rerating",
+    )
+    expensive = _realtime_signal(
+        "L6.state.peg_match",
+        {"scalar": -0.9946, "score": -0.9946, "band": "fair", "peg": 1.9973},
+        "valuation_rerating",
+    )
+    assert undervalued == pytest.approx(1.0)
+    assert undervalued > 0
+    assert expensive == pytest.approx(-0.9946)
+    assert expensive < 0
+
+
+# --- synthesize_realtime_nodes: the 4 dp_ids now EMIT a scoring node ---------
+
+
+def test_synthesize_emits_nodes_for_the_four_fixed_dp_ids():
+    """The exact F1 regression: each real payload, run through the synthesis
+    gates, now produces a standalone-leaf node with the correct signed score
+    (was dropped → ZERO contribution). Raw peg stays absent (peg_match scores)."""
+
+    reg = _registry({
+        "L6.mult.ev_ebitda": _gov("L6.mult.ev_ebitda", target="valuation_rerating"),
+        "L6.mult.forward_pe": _gov("L6.mult.forward_pe", target="valuation_rerating"),
+        "L6.priced.news_age": _gov("L6.priced.news_age", target="priced_in_discount"),
+        "L6.mult.peg": _gov("L6.mult.peg", target="valuation_rerating"),
+        "L6.state.peg_match": _gov("L6.state.peg_match", target="valuation_rerating"),
+    })
+    snap = {
+        "L6.mult.ev_ebitda": {
+            "value": {"scalar": 370.4618, "unit": "ratio"},
+            "data_status": "Known", "confidence": 0.6,
+            "source": "derive:l6_mult_ev_ebitda", "updated_at": 1_700_000_000,
+        },
+        "L6.mult.forward_pe": {
+            "value": {"scalar": 117.7751, "unit": "ratio"},
+            "data_status": "Known", "confidence": 0.63,
+            "source": "derive:l6_mult_forward_pe", "updated_at": 1_700_000_000,
+        },
+        "L6.priced.news_age": {
+            "value": {"scalar": 0.4653, "magnitude": 0.4653, "age_days": 11},
+            "data_status": "Known", "confidence": 0.585,
+            "source": "derive:l6_priced_news_age", "updated_at": 1_700_000_000,
+        },
+        "L6.mult.peg": {
+            "value": {"scalar": 1.9973, "pe": 318.68, "growth_pct": 159.55},
+            "data_status": "Known", "confidence": 0.63,
+            "source": "derive:l6_mult_peg", "updated_at": 1_700_000_000,
+        },
+        "L6.state.peg_match": {
+            "value": {"scalar": -0.9946, "score": -0.9946, "band": "fair"},
+            "data_status": "Known", "confidence": 0.63,
+            "source": "derive:l6_state_peg_match", "updated_at": 1_700_000_000,
+        },
+    }
+    nodes = {
+        n["dp_id"]: n
+        for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="688256.SH"
+        )
+    }
+
+    # All three previously-dropped scored dp_ids now emit a node.
+    assert "L6.mult.ev_ebitda" in nodes
+    assert "L6.mult.forward_pe" in nodes
+    assert "L6.priced.news_age" in nodes
+
+    # ev_ebitda / forward_pe: HIGH multiple → NEGATIVE direction; the magnitude
+    # (abs of the signed signal) is stored on the node.
+    ev = nodes["L6.mult.ev_ebitda"]
+    assert ev["direction"] == "negative"
+    assert ev["value"]["score"] == pytest.approx(
+        abs(math.tanh(math.log(370.4618 / 13.0) / 1.4))
+    )
+    fpe = nodes["L6.mult.forward_pe"]
+    assert fpe["direction"] == "negative"
+    assert fpe["value"]["score"] == pytest.approx(
+        abs(math.tanh(math.log(117.7751 / 22.0) / 1.1))
+    )
+
+    # news_age: positive discount magnitude.
+    news = nodes["L6.priced.news_age"]
+    assert news["value"]["score"] == pytest.approx(0.4653)
+
+    # peg_match emits (it has always worked); raw peg is data-only → no node.
+    assert "L6.state.peg_match" in nodes
+    assert "L6.mult.peg" not in nodes
+
+
+# --- end-to-end: the 4 dp_ids move the final score in the correct direction --
+
+
+def test_e2e_ev_ebitda_expensive_lowers_score():
+    # A very expensive EV/EBITDA drives base_score strictly below a cheap one.
+    expensive = _base_score_for(
+        "L6.mult.ev_ebitda", "valuation_rerating", {"scalar": 370.4618}
+    )
+    cheap = _base_score_for(
+        "L6.mult.ev_ebitda", "valuation_rerating", {"scalar": 8.0}
+    )
+    assert expensive < cheap
+    assert expensive < 0  # expensive multiple drags valuation_rerating negative
+
+
+def test_e2e_forward_pe_expensive_lowers_score():
+    expensive = _base_score_for(
+        "L6.mult.forward_pe", "valuation_rerating", {"scalar": 117.7751}
+    )
+    cheap = _base_score_for(
+        "L6.mult.forward_pe", "valuation_rerating", {"scalar": 12.0}
+    )
+    assert expensive < cheap
+    assert expensive < 0
+
+
+def test_e2e_news_age_fresh_lowers_score():
+    # priced_in_discount SUBTRACTS its magnitude → a fresh catalyst lowers the
+    # base score vs no news (a node that doesn't emit). A bigger magnitude
+    # (fresher) lowers it more.
+    fresh = _base_score_for(
+        "L6.priced.news_age", "priced_in_discount",
+        {"scalar": 0.5345, "magnitude": 0.5345},
+    )
+    stale = _base_score_for(
+        "L6.priced.news_age", "priced_in_discount",
+        {"scalar": 0.10, "magnitude": 0.10},
+    )
+    # Fresher (larger discount) → strictly lower than a near-decayed one.
+    assert fresh < stale
+
+
+# ---------------------------------------------------------------------------
+# R2 dead-sink fixes: three more classes of "participating + Known + non-mock"
+# realtime fields that produced correct VALUES but contributed ZERO to the
+# score because no ``_realtime_signal`` shape read their payload key.
+# Real payload keys verified against runtime/hot.sqlite (mode=ro):
+#   (1) L6.priced.crowdedness → priced_in_discount: BARE ``percentile`` key
+#       (not ``*_percentile``) → the step-2 collector dropped it → 116
+#       high-crowding names (percentile ≈ 0.97) contributed ZERO discount.
+#   (2) L8 risk-alert cluster → risk_discount: ``alert_severity`` (WARN/ERROR)
+#       + bad-direction numeric, no score/percentile/yoy key → all dropped.
+#   (3) L6.mult.ps → valuation_rerating: clean ``scalar`` with no pe/pb
+#       percentile sink → dropped. (L6.mult.mcap_fcf stays DATA-ONLY: ~30% of
+#       the universe has NEGATIVE mcap/FCF, a different state from "expensive".)
+# ---------------------------------------------------------------------------
+
+
+# R2-1. L6.priced.crowdedness → priced_in_discount via the BARE ``percentile``
+#       key. priced_in_discount is an INVERTED target → high crowding = NEGATIVE
+#       (a drag), stored as a positive magnitude that the discount roll-up
+#       subtracts.
+
+
+def test_field_crowdedness_bare_percentile_inverts_for_priced_in():
+    # Real payload (000425.SZ): percentile ≈ 0.99, label "extreme". The bare
+    # ``percentile`` key now feeds the step-2 percentile path: signal =
+    # (pct - 0.5) * 2, inverted (priced_in_discount ∈ _REALTIME_INVERTED_TARGETS)
+    # → NEGATIVE. Was dropped (suffix-only match) → ZERO.
+    extreme = _realtime_signal(
+        "L6.priced.crowdedness",
+        {"percentile": 0.9897, "label": "extreme",
+         "current_turnover_rate": 3.0, "history_window_days": 97},
+        "priced_in_discount",
+    )
+    assert extreme == pytest.approx((0.9897 - 0.5) * 2.0 * -1.0)
+    assert extreme < 0  # extreme crowding is a priced-in drag
+    # A neutral crowding (≈ median) is ~0.
+    neutral = _realtime_signal(
+        "L6.priced.crowdedness", {"percentile": 0.4948}, "priced_in_discount"
+    )
+    assert neutral == pytest.approx((0.4948 - 0.5) * 2.0 * -1.0)
+    assert abs(neutral) < 0.05
+    # An UNcrowded name (low percentile) is mildly positive (not a drag).
+    quiet = _realtime_signal(
+        "L6.priced.crowdedness", {"percentile": 0.10}, "priced_in_discount"
+    )
+    assert quiet == pytest.approx((0.10 - 0.5) * 2.0 * -1.0)
+    assert quiet > 0
+
+
+def test_field_crowdedness_bare_percentile_only_matches_exact_key():
+    # Regression guard for the scoped fix: the bare-key match is EXACTLY
+    # ``"percentile"`` — a different field that merely contains the substring
+    # (e.g. ``industry_pct_rank`` / ``some_percentile_thing``) must NOT be read
+    # as a percentile, so a payload with no exact ``percentile``/``*_percentile``
+    # key falls through to None.
+    assert _realtime_signal(
+        "L6.priced.crowdedness",
+        {"industry_pct_rank": 0.95, "label": "crowded"},
+        "priced_in_discount",
+    ) is None
+
+
+def test_synthesize_emits_crowdedness_node_with_negative_direction():
+    # End of the bridge: a high-crowding crowdedness entry now EMITS a node
+    # (was dropped → no node at all). Direction negative; magnitude = abs(signal).
+    reg = _registry({
+        "L6.priced.crowdedness": _gov(
+            "L6.priced.crowdedness", target="priced_in_discount"
+        ),
+    })
+    snap = {
+        "L6.priced.crowdedness": {
+            "value": {"percentile": 0.9694, "label": "extreme",
+                      "current_turnover_rate": 6.04},
+            "data_status": "Known", "confidence": 0.6,
+            "source": "tushare:daily_basic.history", "updated_at": 1_700_000_000,
+        }
+    }
+    nodes = {
+        n["dp_id"]: n for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="000425.SZ"
+        )
+    }
+    assert "L6.priced.crowdedness" in nodes  # was absent (dead sink) before
+    crowd = nodes["L6.priced.crowdedness"]
+    assert crowd["direction"] == "negative"
+    assert crowd["value"]["score"] == pytest.approx(abs((0.9694 - 0.5) * 2.0 * -1.0))
+
+
+def test_e2e_crowdedness_extreme_lowers_score():
+    # priced_in_discount SUBTRACTS the magnitude → an extreme-crowding name has a
+    # strictly lower base_score than an uncrowded one.
+    extreme = _base_score_for(
+        "L6.priced.crowdedness", "priced_in_discount", {"percentile": 0.9694}
+    )
+    quiet = _base_score_for(
+        "L6.priced.crowdedness", "priced_in_discount", {"percentile": 0.10}
+    )
+    assert extreme < quiet
+
+
+# R2-2. L8 risk-alert cluster → risk_discount via ``alert_severity``. The 12
+#       dp_ids all carry WARN/ERROR; the alert encodes the bad direction, so the
+#       node is NEGATIVE and the magnitude (WARN 0.5 / ERROR 1.0) feeds the
+#       risk_discount roll-up (which takes abs()). Real payload keys per dp_id.
+
+
+_RISK_ALERT_REAL_PAYLOADS = {
+    "L8.fin.cash_ar": {
+        "ocf_to_ni": -1.501, "ar_yoy_pct": 0.2201,
+        "alert_severity": "ERROR", "latest_period": "20260331",
+    },
+    "L8.op.cost_overrun": {
+        "revenue_yoy": 45.69, "cost_yoy": 58.74, "gap_pp": 13.05,
+        "alert_severity": "ERROR", "period": "20260331",
+    },
+    "L8.fin.debt_pressure": {
+        "interest_debt_to_ebitda": 5.39, "debt_to_assets": 65.87,
+        "alert_severity": "ERROR", "latest_period": "20260331",
+    },
+    "L8.cap.outflow_cut": {
+        "signal": True, "main_net_5d": -2.28e9,
+        "alert_severity": "WARN", "as_of": "2026-05-30T08:09:28+02:00",
+    },
+    "L8.cap.crowdedness": {
+        "turnover_30d_avg": 10.09, "industry_pct_rank": 0.95,
+        "main_net_5d": -94123.11, "alert_severity": "WARN",
+    },
+    "L8.cap.liquidity_short": {
+        "amount_30d_avg": 7.21e6, "industry_pct_rank": 0.5,
+        "dive_day_count": 1, "alert_severity": "WARN",
+    },
+    "L8.cap.short_increase": {
+        "rqye_30d": 1.22e8, "rqye_90d": 7.89e7, "delta_pct": 55.03,
+        "alert_severity": "ERROR",
+    },
+    "L8.fin.eps_downward": {
+        "prev_eps_estimate": 535000.0, "current_eps_estimate": 162500.0,
+        "delta_pct": -69.63, "alert_severity": "ERROR",
+    },
+    "L8.fin.goodwill_impairment": {
+        "current_goodwill": 80.0, "prev_goodwill": 100.0,
+        "drop_pct": 20.0, "alert_severity": "ERROR",
+    },
+    "L8.fin.revenue_profit_miss": {
+        "actual_revenue": 5.0, "forecast_revenue_low": 30.0,
+        "miss_pct": 25.0, "alert_severity": "ERROR",
+    },
+    "L8.industry.valuation_compression": {
+        "industry_pe_30d": 32.0, "industry_pe_90d": 40.0,
+        "compression_pct": 20.0, "alert_severity": "ERROR",
+    },
+    "L8.op.inventory_glut": {
+        "inventory_yoy_pct": 25.34, "turnover_yoy_pct_change": -15.87,
+        "alert_severity": "ERROR",
+    },
+}
+
+
+def test_field_risk_alert_severity_magnitude_and_sign():
+    # Every dp_id in the cluster, with its REAL payload, now produces a negative
+    # signal whose magnitude is the severity tier (WARN 0.5 / ERROR 1.0). Was
+    # dropped (None) → ZERO risk_discount.
+    for dp_id, payload in _RISK_ALERT_REAL_PAYLOADS.items():
+        sig = _realtime_signal(dp_id, payload, "risk_discount")
+        expected = -1.0 if payload["alert_severity"] == "ERROR" else -0.5
+        assert sig == pytest.approx(expected), dp_id
+        assert sig < 0, dp_id  # a fired risk alert is a NEGATIVE contributor
+
+
+def test_field_risk_alert_warn_vs_error_and_missing():
+    # WARN → 0.5, ERROR → 1.0 (magnitude); ERROR is strictly the bigger hit.
+    warn = _realtime_signal(
+        "L8.fin.cash_ar", {"ocf_to_ni": -0.5, "alert_severity": "WARN"},
+        "risk_discount",
+    )
+    error = _realtime_signal(
+        "L8.fin.cash_ar", {"ocf_to_ni": -2.0, "alert_severity": "ERROR"},
+        "risk_discount",
+    )
+    assert warn == pytest.approx(-0.5)
+    assert error == pytest.approx(-1.0)
+    assert error < warn  # ERROR is a larger (more negative) magnitude
+    # Case / whitespace tolerant.
+    assert _realtime_signal(
+        "L8.op.cost_overrun", {"gap_pp": 5.0, "alert_severity": " error "},
+        "risk_discount",
+    ) == pytest.approx(-1.0)
+    # Missing severity → None (no node; we don't fabricate a risk).
+    assert _realtime_signal(
+        "L8.fin.cash_ar", {"ocf_to_ni": -1.0}, "risk_discount"
+    ) is None
+    # Unknown severity vocab → None.
+    assert _realtime_signal(
+        "L8.fin.cash_ar", {"ocf_to_ni": -1.0, "alert_severity": "INFO"},
+        "risk_discount",
+    ) is None
+    # Non-string severity → None.
+    assert _realtime_signal(
+        "L8.fin.cash_ar", {"alert_severity": 2}, "risk_discount"
+    ) is None
+
+
+def test_field_valuation_compression_known_neutral_maps_to_zero_risk():
+    neutral = _realtime_signal(
+        "L8.industry.valuation_compression",
+        {
+            "industry_pe_30d": 47.5966,
+            "industry_pe_90d": 47.9108,
+            "compression_pct": 0.6558,
+            "alert_severity": None,
+        },
+        "risk_discount",
+    )
+    assert neutral == pytest.approx(0.0)
+    assert _realtime_signal(
+        "L8.industry.valuation_compression",
+        {"industry_pe_30d": 47.5966, "industry_pe_90d": 47.9108},
+        "risk_discount",
+    ) is None
+
+
+def test_synthesize_emits_risk_alert_node_negative_direction():
+    # The bridge end-to-end: an ERROR cash_ar alert now emits a node (was a dead
+    # sink). Direction negative; magnitude 1.0 stored on the node.
+    reg = _registry({
+        "L8.fin.cash_ar": _gov("L8.fin.cash_ar", target="risk_discount"),
+    })
+    snap = {
+        "L8.fin.cash_ar": {
+            "value": _RISK_ALERT_REAL_PAYLOADS["L8.fin.cash_ar"],
+            "data_status": "Known", "confidence": 0.7,
+            "source": "tushare:fina_indicator", "updated_at": 1_700_000_000,
+        }
+    }
+    nodes = {
+        n["dp_id"]: n for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="000063.SZ"
+        )
+    }
+    assert "L8.fin.cash_ar" in nodes  # was absent before
+    n = nodes["L8.fin.cash_ar"]
+    assert n["direction"] == "negative"
+    assert n["value"]["score"] == pytest.approx(1.0)
+
+
+def test_e2e_risk_alert_error_lowers_score_more_than_warn():
+    # risk_discount SUBTRACTS the magnitude. An ERROR alert (magnitude 1.0) drives
+    # base_score strictly below a WARN (0.5), which is below no-alert (no node).
+    error = _base_score_for(
+        "L8.fin.debt_pressure", "risk_discount",
+        {"interest_debt_to_ebitda": 6.0, "alert_severity": "ERROR"},
+    )
+    warn = _base_score_for(
+        "L8.fin.debt_pressure", "risk_discount",
+        {"interest_debt_to_ebitda": 3.0, "alert_severity": "WARN"},
+    )
+    no_alert = _base_score_for(
+        "L8.fin.debt_pressure", "risk_discount",
+        {"interest_debt_to_ebitda": 1.0},  # no severity → no node
+    )
+    assert error < warn < no_alert
+    assert error < 0  # a fired ERROR risk alert drags the score negative
+    assert no_alert == pytest.approx(0.0)  # no severity → dead → unchanged base
+
+
+def test_field_beat_miss_maps_classification_to_expectation_gap():
+    beat = _realtime_signal(
+        "L5.surprise.beat_miss",
+        {
+            "actual_revenue_yoy": 65.0,
+            "forecast_range_min": 30.0,
+            "forecast_range_max": 50.0,
+            "deviation_pct": 15.0,
+            "classification": "beat",
+        },
+        "expectation_gap",
+    )
+    miss = _realtime_signal(
+        "L5.surprise.beat_miss",
+        {
+            "actual_revenue_yoy": 5.0,
+            "forecast_range_min": 30.0,
+            "forecast_range_max": 50.0,
+            "deviation_pct": -25.0,
+            "classification": "miss",
+        },
+        "expectation_gap",
+    )
+    in_range = _realtime_signal(
+        "L5.surprise.beat_miss",
+        {
+            "actual_revenue_yoy": 45.0,
+            "forecast_range_min": 30.0,
+            "forecast_range_max": 50.0,
+            "deviation_pct": 5.0,
+            "classification": "in_range",
+        },
+        "expectation_gap",
+    )
+    assert beat > 0
+    assert miss < 0
+    assert in_range == pytest.approx(0.0)
+    assert _realtime_signal(
+        "L5.surprise.beat_miss", {"classification": "unknown"},
+        "expectation_gap",
+    ) is None
+
+
+def test_field_analyst_action_maps_rating_changes_to_expectation_gap():
+    upgrade = _realtime_signal(
+        "L9.media.analyst_action",
+        {
+            "count_7d": 3,
+            "upgrade_count": 3,
+            "downgrade_count": 0,
+            "action_type": "upgrade_event",
+        },
+        "expectation_gap",
+    )
+    downgrade = _realtime_signal(
+        "L9.media.analyst_action",
+        {
+            "count_7d": 2,
+            "upgrades_7d": 0,
+            "downgrades_7d": 2,
+            "action_type": "downgrade_event",
+        },
+        "expectation_gap",
+    )
+    mixed = _realtime_signal(
+        "L9.media.analyst_action",
+        {
+            "count_7d": 2,
+            "upgrades_7d": 1,
+            "downgrades_7d": 1,
+            "action_type": "mixed_event",
+        },
+        "expectation_gap",
+    )
+    assert upgrade > 0
+    assert downgrade < 0
+    assert abs(upgrade) > abs(downgrade)
+    assert mixed == pytest.approx(0.0)
+    assert _realtime_signal(
+        "L9.media.analyst_action", {"action_type": "none"},
+        "expectation_gap",
+    ) == pytest.approx(0.0)
+
+
+# R2-3. L6.mult.ps → valuation_rerating (log-ratio, like ev_ebitda/forward_pe).
+#       L6.mult.mcap_fcf stays DATA-ONLY (None) — negative for ~30% of the
+#       universe, so a single-sided log map would mis-rank cash-burning names.
+
+
+def test_field_ps_expensive_is_negative():
+    # -tanh(ln(ps/4.0)/1.0): RICH P/S → NEGATIVE, CHEAP → POSITIVE, at REF → 0.
+    rich = _realtime_signal(
+        "L6.mult.ps", {"scalar": 17.25, "unit": "ratio"}, "valuation_rerating"
+    )
+    mid = _realtime_signal(
+        "L6.mult.ps", {"scalar": 8.36}, "valuation_rerating"
+    )
+    assert rich == pytest.approx(-math.tanh(math.log(17.25 / 4.0) / 1.0))
+    assert rich < 0
+    assert rich < mid < 0  # richer P/S is strictly more negative
+    # A CHEAP P/S (below the reference) is mildly POSITIVE.
+    cheap = _realtime_signal(
+        "L6.mult.ps", {"scalar": 0.94}, "valuation_rerating"
+    )
+    assert cheap == pytest.approx(-math.tanh(math.log(0.94 / 4.0) / 1.0))
+    assert cheap > 0
+    # At the reference → neutral.
+    assert _realtime_signal(
+        "L6.mult.ps", {"scalar": 4.0}, "valuation_rerating"
+    ) == pytest.approx(0.0)
+    # Non-positive / missing / non-numeric → None (no fabricated signal).
+    assert _realtime_signal(
+        "L6.mult.ps", {"scalar": 0.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.ps", {"scalar": -1.0}, "valuation_rerating"
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.ps", {"unit": "ratio"}, "valuation_rerating"
+    ) is None
+
+
+def test_field_mcap_fcf_is_data_only_none():
+    # DATA-ONLY: mcap/FCF is negative for ~30% of the universe (cash burn) — a
+    # different state from "expensive" — so it is deliberately NOT scored. Both a
+    # positive and a negative scalar fall through to None.
+    assert _realtime_signal(
+        "L6.mult.mcap_fcf",
+        {"scalar": 34.27, "unit": "ratio", "fcf_ttm_cny": 1.0e9},
+        "valuation_rerating",
+    ) is None
+    assert _realtime_signal(
+        "L6.mult.mcap_fcf",
+        {"scalar": -223.11, "unit": "ratio", "fcf_ttm_cny": -7.8e8},
+        "valuation_rerating",
+    ) is None
+
+
+def test_synthesize_emits_ps_node_not_mcap_fcf():
+    # The bridge: P/S now emits a scoring node (was dropped); mcap_fcf stays
+    # absent (data-only).
+    reg = _registry({
+        "L6.mult.ps": _gov("L6.mult.ps", target="valuation_rerating"),
+        "L6.mult.mcap_fcf": _gov("L6.mult.mcap_fcf", target="valuation_rerating"),
+    })
+    snap = {
+        "L6.mult.ps": {
+            "value": {"scalar": 17.25, "unit": "ratio"},
+            "data_status": "Known", "confidence": 0.6,
+            "source": "tushare:daily_basic", "updated_at": 1_700_000_000,
+        },
+        "L6.mult.mcap_fcf": {
+            "value": {"scalar": 34.27, "unit": "ratio"},
+            "data_status": "Known", "confidence": 0.6,
+            "source": "tushare:daily_basic+cashflow", "updated_at": 1_700_000_000,
+        },
+    }
+    nodes = {
+        n["dp_id"]: n for n in synthesize_realtime_nodes(
+            snap, reg, existing_dp_ids=set(), ts_code="000063.SZ"
+        )
+    }
+    assert "L6.mult.ps" in nodes  # was absent (dead sink) before
+    assert nodes["L6.mult.ps"]["direction"] == "negative"  # rich P/S = drag
+    assert "L6.mult.mcap_fcf" not in nodes  # data-only → no node
+
+
+def test_e2e_ps_expensive_lowers_score():
+    expensive = _base_score_for(
+        "L6.mult.ps", "valuation_rerating", {"scalar": 17.25}
+    )
+    cheap = _base_score_for(
+        "L6.mult.ps", "valuation_rerating", {"scalar": 0.94}
+    )
+    assert expensive < cheap
+    assert expensive < 0  # expensive P/S drags valuation_rerating negative
+
+
+# ── M-3: announcement-age gate for guidance_change ──────────────────────────
+# A freshly collected row can carry a forecast pair announced many months ago;
+# without the gate the direction floor (0.1) feeds it into expectation_gap
+# forever. Anchor = snapshot's freshest updated_at (1_700_000_000 → 2023-11-14
+# in these tests).
+
+
+def test_ann_age_weight_unit():
+    from mvp20.aggregator import _ann_age_weight
+
+    ref = 1_700_000_000  # 2023-11-14
+    assert _ann_age_weight({"ann_date": "20231001"}, ref) == 1.0          # 44d fresh
+    assert _ann_age_weight({"ann_date": "20231114"}, ref) == 1.0          # same day
+    w_mid = _ann_age_weight({"ann_date": "20230301"}, ref)                # ~258d
+    assert 0.0 < w_mid < 0.2
+    assert _ann_age_weight({"ann_date": "20220101"}, ref) == 0.0          # ~2y dead
+    # fail-open: missing / garbage ann_date, non-dict payload
+    assert _ann_age_weight({}, ref) == 1.0
+    assert _ann_age_weight({"ann_date": "n/a"}, ref) == 1.0
+    assert _ann_age_weight({"ann_date": "20231301"}, ref) == 1.0          # bad month
+    assert _ann_age_weight(None, ref) == 1.0
+    # no anchor → today fallback: an ancient ann_date still zeroes
+    assert _ann_age_weight({"ann_date": "20220101"}, None) == 0.0
+
+
+def test_e2e_guidance_stale_ann_date_contributes_nothing():
+    fresh_up = _base_score_for(
+        "L5.fcst.guidance_change",
+        "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0,
+         "ann_date": "20231020"},
+    )
+    stale_up = _base_score_for(
+        "L5.fcst.guidance_change",
+        "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0,
+         "ann_date": "20220115"},  # ~22 months before the snapshot anchor
+    )
+    neutral = _base_score_for(
+        "L5.fcst.guidance_change",
+        "expectation_gap",
+        {"change_direction": "unchanged", "current_range_pct": 0.0,
+         "ann_date": "20231020"},
+    )
+    assert fresh_up > stale_up
+    # fully-stale upgraded == zero contribution == a fresh "unchanged"
+    assert stale_up == pytest.approx(neutral, abs=1e-9)
+
+
+def test_e2e_guidance_partial_decay_monotone():
+    def at(ann):
+        return _base_score_for(
+            "L5.fcst.guidance_change",
+            "expectation_gap",
+            {"change_direction": "upgraded", "current_range_pct": 50.0,
+             "ann_date": ann},
+        )
+
+    fresh, mid, dead = at("20231020"), at("20230401"), at("20220601")
+    assert fresh > mid > dead
+
+
+def test_e2e_guidance_without_ann_date_unchanged_behaviour():
+    # fail-open: legacy payloads without ann_date keep their full magnitude
+    with_date = _base_score_for(
+        "L5.fcst.guidance_change", "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0,
+         "ann_date": "20231110"},
+    )
+    without_date = _base_score_for(
+        "L5.fcst.guidance_change", "expectation_gap",
+        {"change_direction": "upgraded", "current_range_pct": 50.0},
+    )
+    assert with_date == pytest.approx(without_date, abs=1e-9)
+
+
+def test_e2e_margin_anomaly_error_lifts_score_more_than_warn():
+    error = _base_score_for(
+        "L9.capital.margin_anomaly",
+        "expectation_gap",
+        {"surge_ratio": 3.2, "alert_severity": "ERROR"},
+    )
+    warn = _base_score_for(
+        "L9.capital.margin_anomaly",
+        "expectation_gap",
+        {"surge_ratio": 2.0, "alert_severity": "WARN"},
+    )
+    no_alert = _base_score_for(
+        "L9.capital.margin_anomaly",
+        "expectation_gap",
+        {"surge_ratio": 3.2},
+    )
+    assert error > warn > no_alert
+    assert no_alert == pytest.approx(0.0)

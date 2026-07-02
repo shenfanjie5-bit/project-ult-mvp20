@@ -14,15 +14,42 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.8
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: -16.81
+    trend: mixed
+    magnitude: moderate
+    evidence_summary: 2026Q1 local aggregate revenue growth mean -0.1681 (median -0.0162). The mean is held up by foreign
+      diversified miners; the A-share-only segment (002460/002466/600111/600362/600489/600547/601600/601899/603799/603993)
+      is far weaker, revenue-YoY mean ≈ -0.51 (median ≈ -0.605), so domestic terminal demand reads soft while rising metals
+      prices cushion the headline.
+    notes: Terminal demand proxy is industry revenue growth. Wide dispersion (min -0.6787, max 0.4371) plus foreign skew keeps
+      trend=mixed rather than clean up/down; metals revenue is price×volume, so a price-driven recovery can lift the aggregate
+      even with soft domestic volumes.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=yoy_pct; mean=-0.1681; median=-0.0162; min=-0.6787; max=0.4371;
+      latest_period=20260331; members[002460.SZ=-0.6016; 002466.SZ=0.0611; 600111.SH=-0.6085; 600362.SH=-0.6487; 600489.SH=-0.3559;
+      600547.SH=-0.4272; (+14 more)]'
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=323.20亿; median=195.26亿; min=2.75亿; max=1391.24亿;
+      latest_period=20260331; members[002460.SZ=91.96亿; 002466.SZ=51.28亿; 600111.SH=118.59亿; 600362.SH=1391.24亿; 600489.SH=225.88亿;
+      600547.SH=325.16亿; (+14 more)]'
+  confidence: 0.6
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.demand.user_count
   node_name: 用户/客户数量变化
   node_type: Industry Demand
@@ -31,15 +58,39 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.6
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: flat
+    evidence_summary: No direct customer-count metric is disclosed locally. For upstream resource producers the buyer base
+      (smelters/traders) is structurally narrow; revenue scale (median 195.26亿) and active investor Q&A (mean 249.30 recent
+      items) support only a weak, flat customer-activity proxy.
+    notes: Customer/user count is inferred from revenue scale and disclosure activity, not directly measured; metals are commodity
+      off-take, so customer count is not a meaningful demand lever here.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=323.20亿; median=195.26亿; min=2.75亿; max=1391.24亿;
+      latest_period=20260331; members[002460.SZ=91.96亿; 002466.SZ=51.28亿; 600111.SH=118.59亿; 600362.SH=1391.24亿; 600489.SH=225.88亿;
+      600547.SH=325.16亿; (+14 more)]'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 10 constituents] field=count_recent; mean=249.30; median=189.50; min=25.00; max=734.00;
+      members[002460.SZ=411.00; 002466.SZ=734.00; 600111.SH=380.00; 600362.SH=26.00; 600489.SH=219.00; 600547.SH=116.00; (+4
+      more)]'
+  confidence: 0.48
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.demand.frequency
   node_name: 使用频次/替换频率
   node_type: Industry Demand
@@ -48,15 +99,35 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: mixed
+    notes: Usage/replacement frequency is not a meaningful concept for raw metals (consumable industrial input, not a durable).
+      No direct cadence telemetry exists locally; aggregate revenue-growth dispersion (mean -0.1681, median -0.0162) is used
+      only as a low-confidence mixed proxy.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=yoy_pct; mean=-0.1681; median=-0.0162; min=-0.6787; max=0.4371;
+      latest_period=20260331; members[002460.SZ=-0.6016; 002466.SZ=0.0611; 600111.SH=-0.6085; 600362.SH=-0.6487; 600489.SH=-0.3559;
+      600547.SH=-0.4272; (+14 more)]'
+  - kind: industry_inference
+    framework: For raw metals, end-use intensity tracks downstream industrial/construction/EV activity rather than a product
+      replacement cycle; with no direct usage telemetry locally, revenue-growth dispersion is a low-confidence frequency proxy.
+    confidence: 0.4
+  confidence: 0.4
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.demand.penetration
   node_name: 渗透率变化
   node_type: Industry Demand
@@ -65,15 +136,37 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.65
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    absolute_pct: null
+    delta_pct: null
+    trend: up
+    notes: No direct penetration series is available locally. Energy-transition demand (copper/aluminium/lithium/rare-earth
+      into EV, grid, renewables) is a structural uptrend, but this is an industry-framework read at low confidence, not a
+      measured local metric.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.revenue_growth
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=yoy_pct; mean=-0.1681; median=-0.0162; min=-0.6787; max=0.4371;
+      latest_period=20260331; members[002460.SZ=-0.6016; 002466.SZ=0.0611; 600111.SH=-0.6085; 600362.SH=-0.6487; 600489.SH=-0.3559;
+      600547.SH=-0.4272; (+14 more)]'
+  - kind: industry_inference
+    framework: Energy-transition metals intensity (copper/aluminium/lithium/rare-earth per unit of EV and grid build-out)
+      is widely modeled as a multi-year secular uptrend independent of the near-term price cycle; used here as a low-confidence
+      directional prior only.
+    confidence: 0.4
+  confidence: 0.42
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.demand.replacement
   node_name: 替换周期与更新需求
   node_type: Industry Demand
@@ -99,15 +192,38 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: bottleneck_min
   aggregation_policy: min_capacity_constraint
   alert_policy: warn_if_material
   materiality: 0.75
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: up
+    magnitude: moderate
+    notes: Capacity proxy is capex/PPE intensity. Aggregate capex mean (-5.65亿) is distorted by a few large foreign outflows;
+      A-share members run sizable positive capex (600547.SH=27.32亿, 600362.SH=9.69亿, 002460.SZ=8.23亿), consistent with continued
+      mine/smelter capacity build-out. Goodwill/PPE scale (mean 17.44亿) confirms a capital-heavy base.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.cf.capex
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=-5.65亿; median=287.40万; min=-123.64亿; max=58.34亿;
+      latest_period=20260331; members[002460.SZ=8.23亿; 002466.SZ=6.22亿; 600111.SH=1.78亿; 600362.SH=9.69亿; 600489.SH=5.93亿;
+      600547.SH=27.32亿; (+14 more)]'
+  - kind: local_dp_id
+    dp_id: L5.bs.goodwill_ppe
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=goodwill; mean=17.44亿; median=5.08亿; min=0.00; max=126.54亿;
+      latest_period=20260331; members[002460.SZ=1.82亿; 002466.SZ=4.16亿; 600111.SH=3174.91万; 600362.SH=13.18亿; 600489.SH=3.23亿;
+      600547.SH=126.54亿; (+14 more)]'
+  confidence: 0.55
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.supply.channel_service
   node_name: 渠道与服务能力
   node_type: Industry Supply
@@ -116,15 +232,38 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: weighted_contribution
   aggregation_policy: weighted_average
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    qualitative: 渠道与服务投入轻（资源品本质）
+    magnitude: weak
+    trend: flat
+    notes: SGA/R&D-to-revenue mean is only 0.0514 (median 0.0290), typical of upstream resource producers that sell commodity
+      off-take with minimal channel/marketing spend; investor Q&A coverage is active (mean 249.30). No direct channel-capacity
+      metric is available.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=sga_rd_ratio_revenue; mean=0.0514; median=0.0290; min=0.0076;
+      max=0.4068; latest_period=20260331; members[002460.SZ=0.0764; 002466.SZ=0.0287; 600111.SH=0.0240; 600362.SH=0.0076;
+      600489.SH=0.0294; 600547.SH=0.0340; (+14 more)]'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 10 constituents] field=count_recent; mean=249.30; median=189.50; min=25.00; max=734.00;
+      members[002460.SZ=411.00; 002466.SZ=734.00; 600111.SH=380.00; 600362.SH=26.00; 600489.SH=219.00; 600547.SH=116.00; (+4
+      more)]'
+  confidence: 0.52
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.supply.chain_eff
   node_name: 供应链效率
   node_type: Industry Supply
@@ -133,15 +272,38 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.6
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    qualitative: 供应链周转中等且分化
+    magnitude: moderate
+    trend: mixed
+    notes: Inventory-turnover-days mean 100.12 (median 88.44) and cash-conversion-cycle mean 77.46 (median 69.28) indicate
+      moderate working-capital intensity with wide dispersion (002460.SZ=202 days vs 600547.SH=27 days; CCC ranges -30 to
+      369 days).
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L4.eff.turnover
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 19 constituents] field=inventory_turnover_days; mean=100.12; median=88.44; min=26.71;
+      max=222.01; members[002460.SZ=202.38; 002466.SZ=133.92; 600111.SH=140.53; 600362.SH=45.42; 600489.SH=86.30; 600547.SH=26.71;
+      (+13 more)]'
+  - kind: local_dp_id
+    dp_id: L4.eff.cycle
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 19 constituents] field=ccc_days; mean=77.46; median=69.28; min=-30.29; max=368.94;
+      members[002460.SZ=29.46; 002466.SZ=89.25; 600111.SH=148.00; 600362.SH=30.06; 600489.SH=70.20; 600547.SH=-30.29; (+13
+      more)]'
+  confidence: 0.58
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.price.discount
   node_name: 折扣与价格压力
   node_type: Industry Price
@@ -150,15 +312,38 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.7
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_delta_pct: null
+    trend: down
+    notes: Metals are exchange-priced, so per-company discounting is largely irrelevant; the live commodity basket is rising
+      (avg_pct_change +1.977, CU/AL/NI/ZN/SN all positive), which reduces realized-price pressure. Gross-margin proxy mean
+      0.2853 (median 0.2436) holds, with a -0.0240 floor (a single loss-making smelter). Discount pressure is read as easing
+      (trend=down on this negative-direction risk node).
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=0.2853; median=0.2436; min=-0.0240; max=0.6266;
+      latest_period=20260331; members[002460.SZ=0.2972; 002466.SZ=0.6266; 600111.SH=0.1322; 600362.SH=0.0507; 600489.SH=0.2047;
+      600547.SH=0.1830; (+14 more)]'
+  - kind: local_dp_id
+    dp_id: L9.disclosure.qa_recent
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 10 constituents] field=count_recent; mean=249.30; median=189.50; min=25.00; max=734.00;
+      members[002460.SZ=411.00; 002466.SZ=734.00; 600111.SH=380.00; 600362.SH=26.00; 600489.SH=219.00; 600547.SH=116.00; (+4
+      more)]'
+  confidence: 0.5
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.price.pricing_power
   node_name: 行业定价权
   node_type: Industry Price
@@ -167,15 +352,33 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.75
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    strength: weak
+    trend: mixed
+    evidence_summary: Metals are price-takers to global exchange benchmarks, so structural pricing power is weak; gross-margin
+      aggregate mean 0.2853 / median 0.2436 is moderate and the wide -0.0240 to 0.6266 spread reflects ore-grade/cost-curve
+      position (high-margin gold/by-product names vs thin-margin smelters) rather than discretionary pricing power.
+    notes: Pricing power is evaluated from the gross-margin proxy only; for resource producers, margin is driven by the commodity
+      price and cost-curve position, not company pricing discretion.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=0.2853; median=0.2436; min=-0.0240; max=0.6266;
+      latest_period=20260331; members[002460.SZ=0.2972; 002466.SZ=0.6266; 600111.SH=0.1322; 600362.SH=0.0507; 600489.SH=0.2047;
+      600547.SH=0.1830; (+14 more)]'
+  confidence: 0.55
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.cost.rent
   node_name: 租金/固定成本压力
   node_type: Industry Cost
@@ -184,15 +387,37 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.5
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: up
+    notes: Fixed-cost pressure is proxied by goodwill/PPE scale (mean 17.44亿, max 600547.SH=126.54亿) and capex; mining/smelting
+      is capital-heavy with high fixed depreciation/depletion. A-share members keep positive capex (600547.SH=27.32亿) while
+      domestic revenue falls, so fixed-cost-to-revenue burden is rising. No direct rent line is locally disclosed.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.bs.goodwill_ppe
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=goodwill; mean=17.44亿; median=5.08亿; min=0.00; max=126.54亿;
+      latest_period=20260331; members[002460.SZ=1.82亿; 002466.SZ=4.16亿; 600111.SH=3174.91万; 600362.SH=13.18亿; 600489.SH=3.23亿;
+      600547.SH=126.54亿; (+14 more)]'
+  - kind: local_dp_id
+    dp_id: L5.cf.capex
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=-5.65亿; median=287.40万; min=-123.64亿; max=58.34亿;
+      latest_period=20260331; members[002460.SZ=8.23亿; 002466.SZ=6.22亿; 600111.SH=1.78亿; 600362.SH=9.69亿; 600489.SH=5.93亿;
+      600547.SH=27.32亿; (+14 more)]'
+  confidence: 0.45
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.cost.cac
   node_name: 获客成本/营销成本
   node_type: Industry Cost
@@ -201,15 +426,37 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.6
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: null
+    trend: flat
+    notes: CAC is proxied by SGA/R&D-to-revenue. Mean 0.0514 (median 0.0290) is very low, as upstream resource producers sell
+      commodity off-take with negligible customer-acquisition/marketing spend; no direct acquisition-cost line is locally
+      available, and the proxy is structurally a non-driver here.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=sga_rd_ratio_revenue; mean=0.0514; median=0.0290; min=0.0076;
+      max=0.4068; latest_period=20260331; members[002460.SZ=0.0764; 002466.SZ=0.0287; 600111.SH=0.0240; 600362.SH=0.0076;
+      600489.SH=0.0294; 600547.SH=0.0340; (+14 more)]'
+  - kind: local_dp_id
+    dp_id: L5.is.revenue
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=323.20亿; median=195.26亿; min=2.75亿; max=1391.24亿;
+      latest_period=20260331; members[002460.SZ=91.96亿; 002466.SZ=51.28亿; 600111.SH=118.59亿; 600362.SH=1391.24亿; 600489.SH=225.88亿;
+      600547.SH=325.16亿; (+14 more)]'
+  confidence: 0.5
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.compete.price_war
   node_name: 价格战风险
   node_type: Industry Competition
@@ -252,15 +499,42 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: ratio_metric
   aggregation_policy: ratio_derive
   alert_policy: warn_if_material
   materiality: 0.65
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    contract_pct: null
+    spot_pct: null
+    spread_pct: null
+    trend: up
+    notes: No direct contract/spot split exists locally. The live exchange basket (CU.SHF +1.853, AL.SHF +1.909, NI.SHF +0.885,
+      ZN.SHF +1.072, SN.SHF +4.164; avg +1.977) is rising, and gross margin holds at median 0.2436, so spot prices are firm
+      relative to contract — a positive backdrop for spot-exposed producers. The numeric spread split is not locally derivable,
+      so it is left null with trend=up at low confidence.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L0.cost.raw_material
+    source: tushare:fut_daily
+    excerpt: '{"commodities": [{"symbol": "CU.SHF", "close": 106620.0, "pct_change": 1.853, "date": "20260602"}, {"symbol":
+      "AL.SHF", "close": 24825.0, "pct_change": 1.909, "date": "20260602"}, {"symbol": "NI.SHF", "close": 144850.0, "pct_change":
+      0.885, "date": "20260602"}, {"symbol": "ZN.SHF", "close": 24985.0, "pct_change": 1.072, "date": "20260602"}, {"symbol":
+      "SN.SHF", "close": 449820.0, "pct_change": 4.164, "date": "20260602"}], "avg_pct_change": 1.977, "symbols_resolved":
+      5, "symbols_requested": 5, "latest_date": "20260602", "unit": "Tushare fut_daily close (CNY)"}'
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=0.2853; median=0.2436; min=-0.0240; max=0.6266;
+      latest_period=20260331; members[002460.SZ=0.2972; 002466.SZ=0.6266; 600111.SH=0.1322; 600362.SH=0.0507; 600489.SH=0.2047;
+      600547.SH=0.1830; (+14 more)]'
+  confidence: 0.5
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: 5f2426f662832ba4
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.price.product_asp
   node_name: 行业产品 ASP
   node_type: Industry Price
@@ -269,15 +543,42 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.7
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    asp_value: null
+    asp_unit: null
+    yoy_pct: null
+    qoq_pct: null
+    trend: up
+    notes: Industry ASP for metals is the exchange price itself. The live SHFE basket is rising (avg_pct_change +1.977; tin
+      SN.SHF +4.164, copper CU.SHF +1.853), so realized ASP trend reads up. A single blended asp_value/unit is not meaningful
+      across copper/aluminium/nickel/zinc/tin/gold, so it is left null.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L0.cost.raw_material
+    source: tushare:fut_daily
+    excerpt: '{"commodities": [{"symbol": "CU.SHF", "close": 106620.0, "pct_change": 1.853, "date": "20260602"}, {"symbol":
+      "AL.SHF", "close": 24825.0, "pct_change": 1.909, "date": "20260602"}, {"symbol": "NI.SHF", "close": 144850.0, "pct_change":
+      0.885, "date": "20260602"}, {"symbol": "ZN.SHF", "close": 24985.0, "pct_change": 1.072, "date": "20260602"}, {"symbol":
+      "SN.SHF", "close": 449820.0, "pct_change": 4.164, "date": "20260602"}], "avg_pct_change": 1.977, "symbols_resolved":
+      5, "symbols_requested": 5, "latest_date": "20260602", "unit": "Tushare fut_daily close (CNY)"}'
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=0.2853; median=0.2436; min=-0.0240; max=0.6266;
+      latest_period=20260331; members[002460.SZ=0.2972; 002466.SZ=0.6266; 600111.SH=0.1322; 600362.SH=0.0507; 600489.SH=0.2047;
+      600547.SH=0.1830; (+14 more)]'
+  confidence: 0.58
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.supply.inventory
   node_name: 行业库存水平
   node_type: Industry Supply
@@ -286,15 +587,33 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.65
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    inventory_days: null
+    vs_normal_pct: null
+    channel_inventory_state: 中
+    trend: mixed
+    notes: Balance-sheet inventory aggregate is large and skewed (mean 144.98亿, median 72.31亿; 600362.SH=666.46亿). For metals
+      this is partly priced ore/metal stock that revalues with rising prices, not pure overhang. No normal-channel baseline
+      exists locally, so state is a low-confidence mid read.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L5.bs.inventory
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=144.98亿; median=72.31亿; min=1.72亿; max=666.46亿;
+      latest_period=20260331; members[002460.SZ=145.34亿; 002466.SZ=28.50亿; 600111.SH=160.69亿; 600362.SH=666.46亿; 600489.SH=172.26亿;
+      600547.SH=78.86亿; (+14 more)]'
+  confidence: 0.48
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.sentiment.social
   node_name: 社交情绪/舆情
   node_type: Industry Sentiment
@@ -303,15 +622,32 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: multiplicative_factor
   aggregation_policy: multiply_chain
   alert_policy: warn_if_material
   materiality: 0.4
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    sentiment_score: null
+    volume_idx: 70
+    top_themes: []
+    trend: null
+    evidence_quality: low
+    notes: Local source provides a follow-count style buzz scalar only (mean 69.79, median 84.97), not sentiment polarity
+      or theme text; volume_idx is the mean buzz value rounded.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L9.media.social_buzz
+    source: local:social_buzz_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=69.79; median=84.97; min=0.0058; max=138.99; members[00358.HK=89.84;
+      01208.HK=44.99; 01772.HK=106.59; 01787.HK=6.26; 01818.HK=107.39; 02259.HK=138.99; (+14 more)]'
+  confidence: 0.42
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: null
+  last_event_id: null
 - dp_id: L0.policy.access_license
   node_name: 准入与牌照
   node_type: Industry Policy
@@ -439,15 +775,40 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    yoy_pct: 1.977
+    trend: up
+    magnitude: weak
+    notes: Energy/logistics cost pressure is proxied by the local metals basket (avg_pct_change +1.977) plus gross-margin
+      resilience; smelting (esp. aluminium/electrolysis) is power-intensive so a rising basket signals modestly higher input/energy-linked
+      cost. No direct freight or power series is included, so this is a weak read.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L0.cost.raw_material
+    source: tushare:fut_daily
+    excerpt: '{"commodities": [{"symbol": "CU.SHF", "close": 106620.0, "pct_change": 1.853, "date": "20260602"}, {"symbol":
+      "AL.SHF", "close": 24825.0, "pct_change": 1.909, "date": "20260602"}, {"symbol": "NI.SHF", "close": 144850.0, "pct_change":
+      0.885, "date": "20260602"}, {"symbol": "ZN.SHF", "close": 24985.0, "pct_change": 1.072, "date": "20260602"}, {"symbol":
+      "SN.SHF", "close": 449820.0, "pct_change": 4.164, "date": "20260602"}], "avg_pct_change": 1.977, "symbols_resolved":
+      5, "symbols_requested": 5, "latest_date": "20260602", "unit": "Tushare fut_daily close (CNY)"}'
+  - kind: local_dp_id
+    dp_id: L5.is.gross_margin
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=scalar; mean=0.2853; median=0.2436; min=-0.0240; max=0.6266;
+      latest_period=20260331; members[002460.SZ=0.2972; 002466.SZ=0.6266; 600111.SH=0.1322; 600362.SH=0.0507; 600489.SH=0.2047;
+      600547.SH=0.1830; (+14 more)]'
+  confidence: 0.5
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: 5f2426f662832ba4
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.cost.labor
   node_name: 行业人工成本
   node_type: Industry Cost
@@ -456,15 +817,38 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.55
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    labor_cost_pct: 6.2
+    yoy_pct: null
+    trend: flat
+    magnitude: weak
+    notes: Labor pressure is proxied by local labor-cost share (mean 6.20, median 3.56) and SGA/R&D ratio; capital-intensive
+      mining/smelting carries a low labor-cost share so wage pressure is a weak driver. No direct wage-inflation series is
+      present.
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L4.cost.labor
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=labor_cost_pct; mean=6.20; median=3.56; min=1.00; max=40.68;
+      members[002460.SZ=8.96; 002466.SZ=9.57; 600111.SH=3.65; 600362.SH=1.58; 600489.SH=4.00; 600547.SH=4.89; (+14 more)]'
+  - kind: local_dp_id
+    dp_id: L5.is.sga_rd
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=sga_rd_ratio_revenue; mean=0.0514; median=0.0290; min=0.0076;
+      max=0.4068; latest_period=20260331; members[002460.SZ=0.0764; 002466.SZ=0.0287; 600111.SH=0.0240; 600362.SH=0.0076;
+      600489.SH=0.0294; 600547.SH=0.0340; (+14 more)]'
+  confidence: 0.55
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: null
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.cost.raw_material
   node_name: 原材料价格
   node_type: Industry Cost
@@ -473,15 +857,43 @@ nodes:
   base_weight: 1.0
   active_weight: 1.0
   required_level: conditional_required
-  data_status: Unknown
+  data_status: Known
   missing_policy: unknown_reduce_confidence
   calculation_type: risk_factor
   aggregation_policy: subtract_risk
   alert_policy: warn_if_material
   materiality: 0.65
   update_frequency: quarterly
-  value: null
-  evidence_sources: []
+  value:
+    pct_change: 1.977
+    raw_material_cost_pct: 68.77
+    trend: up
+    magnitude: moderate
+    notes: 'Live SHFE metals basket (CU +1.853, AL +1.909, NI +0.885, ZN +1.072, SN +4.164; avg +1.977) is rising and raw-material
+      cost share is high (mean 68.77, median 73.53). NOTE: this node''s direction is modeled as a cost risk, but for upstream
+      resource producers a rising metals price is primarily a revenue/margin tailwind (the output IS the metal); the rising
+      basket here is on balance bullish for the sector, with the cost effect concentrated in mid/downstream smelters/processors
+      that buy concentrate.'
+  evidence_sources:
+  - kind: local_dp_id
+    dp_id: L0.cost.raw_material
+    source: tushare:fut_daily
+    excerpt: '{"commodities": [{"symbol": "CU.SHF", "close": 106620.0, "pct_change": 1.853, "date": "20260602"}, {"symbol":
+      "AL.SHF", "close": 24825.0, "pct_change": 1.909, "date": "20260602"}, {"symbol": "NI.SHF", "close": 144850.0, "pct_change":
+      0.885, "date": "20260602"}, {"symbol": "ZN.SHF", "close": 24985.0, "pct_change": 1.072, "date": "20260602"}, {"symbol":
+      "SN.SHF", "close": 449820.0, "pct_change": 4.164, "date": "20260602"}], "avg_pct_change": 1.977, "symbols_resolved":
+      5, "symbols_requested": 5, "latest_date": "20260602", "unit": "Tushare fut_daily close (CNY)"}'
+  - kind: local_dp_id
+    dp_id: L4.cost.raw_material
+    source: local:industry_aggregate
+    excerpt: '[industry-aggregate over 20 constituents] field=raw_material_cost_pct; mean=68.77; median=73.53; min=27.78;
+      max=102.40; members[002460.SZ=61.32; 002466.SZ=27.78; 600111.SH=83.13; 600362.SH=93.35; 600489.SH=75.53; 600547.SH=76.81;
+      (+14 more)]'
+  confidence: 0.6
+  last_updated: '2026-06-05T12:00:00+08:00'
+  source_fingerprint_at_fill: 5f2426f662832ba4
+  last_filled_period: 2026Q1
+  last_event_id: null
 - dp_id: L0.compete.share_concentration
   node_name: 市占率/集中度变化
   node_type: Industry Competition

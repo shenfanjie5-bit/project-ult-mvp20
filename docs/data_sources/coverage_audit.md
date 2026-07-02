@@ -11,7 +11,7 @@
 - **104** 条至少 1 源 full（41%）
 - **218** 条至少 1 源 full 或 partial（87%）
 - **0** 条仅 FMP Premium 升级才能覆盖
-- **32** 条彻底缺失（12%）—— 需 LLM 衍生 / 第三方源 / 留空
+- **42** 条彻底缺失（17%）—— 需 LLM 衍生 / 第三方源 / 留空
 
 ## 2. 各数据源覆盖汇总
 
@@ -42,7 +42,7 @@
 | L8 风险抵消 | 32 | 9 | 6 | 17 | 0 | 0 | 全 partial（无 1 源直取） |
 | L9_catalyst | 20 | 8 | 5 | 7 | 0 | 0 | 全 partial（无 1 源直取） |
 
-## 4. 彻底缺失的 32 个数据点（5 源全 none，无 premium 解锁）
+## 4. 彻底缺失的 42 个数据点（5 源全 none，无 premium 解锁）
 
 这些数据点全部走 LLM 衍生路径——codex 处理细节、prompt 模板、schema slot 规则、行业级/公司级共享逻辑，见 [`llm_derived_nodes.md`](./llm_derived_nodes.md)。schema 里这些节点 **必须留好**（未填时 `data_status: Unknown` + `missing_policy: unknown_reduce_confidence`），不能因缺数据跳过。
 
@@ -80,17 +80,32 @@
 | `L4.eff.conversion_retention` | L4_operating | 转化率/留存/复购 | 公司画像 | quarterly |
 | `L4.share.customer_channel` | L4_operating | 客户/渠道/区域份额 | 公司画像 | quarterly |
 | `L5.surprise.buy_whisper` | L5_financials | 买方/whisper预期 | 分析师预期 | quarterly |
+| `L0.price.product_asp` | L0_industry_uplink | 行业产品均价 | 行业时序 | quarterly |
+| `L0.price.contract_spot` | L0_industry_uplink | 长协/现货价差 | 行业时序 | quarterly |
+| `L0.supply.inventory` | L0_industry_uplink | 行业库存水平 | 行业时序 | quarterly |
+| `L1.position.brand` | L1_company_position | 品牌力 | 公司画像 | quarterly |
+| `L3.product.portfolio` | L3_pccr | 产品组合结构 | 公司画像 | quarterly |
+| `L6.priced.realization_risk` | L6_valuation | 兑现风险折扣 | 衍生评分项 | derived |
+| `L7.reflex.tag` | L7_capital_sentiment | 反身性标签 | 衍生评分项 | derived |
+| `L8.val.slope_risk_off` | L8_risk_offset | risk-off 斜率折扣 | 衍生评分项 | derived |
+| `L10.industry.inventory_orders` | L10_validation | 行业库存/订单验证 | 衍生评分项 | derived |
+| `L10.industry.sales_price` | L10_validation | 行业销量/价格验证 | 衍生评分项 | derived |
 
 ## 5. FMP Premium ($29/mo) 升级 ROI
 
-升级 Premium 后从 premium_locked 解锁 **4** 个数据点（之前没有 full 源覆盖的）：
+当前 FMP Starter catalog 已把 `analyst_estimates`、`dcf_valuation`,
+`sec_filings`、`macro` 和 `forex` 纳入 active capabilities；`L6.mult.dcf`
+也已在 runtime 中由 `fmp:discounted-cash-flow` 落库。因此 Premium 不再
+应被描述为解锁 DCF / analyst 的必要条件。升级 Premium 的主要收益是：
+业绩会 transcript、FMP-native 13F / institutional 持仓、FMP options 和
+分钟级 intraday bars；Ultimate 才解锁 ESG 与政府交易。
 
-| data_point_id | layer | label | FMP endpoint |
+| Unlock area | Layer / usage | Label | FMP endpoint |
 |---|---|---|---|
-| `L6.mult.forward_pe` | L6_valuation | Forward PE | /analyst-estimates |
-| `L6.mult.dcf` | L6_valuation | DCF估值 | /discounted-cash-flow |
 | `L7.flow.institutional` | L7_capital_sentiment | 机构/对冲基金持仓 | /13F, /institutional-holder |
 | `L7.trade.gamma` | L7_capital_sentiment | Gamma暴露 | /historical-chain |
+| earnings transcripts | L9 catalyst / LLM inputs | 业绩会 transcript 事件 | /earning_call_transcript |
+| minute bars | L7 / technical derived inputs | 分钟级盘面结构 | /historical-chart/1min |
 
 ## 6. 多源 full 覆盖（67 个安全数据点）
 
@@ -166,7 +181,7 @@
 | `L10.val.historical_quantile` | L10_validation | 估值历史分位 | Tushare, AKShare |
 | `L11.short.technical` | L11_stock_result | 技术面反应 | FMP, Tushare, AKShare, Futu |
 
-## 7. 完整覆盖矩阵（250 行）
+## 7. 完整覆盖矩阵（256 行）
 
 「✓ full / ○ partial / $ premium_locked / — none」
 
@@ -291,6 +306,12 @@
 | `L5.cf.fcf` | L5 | 自由现金流 | ✓ | ✓ | ✓ | ✓ | ○ | ✓✓ 多源覆盖 |
 | `L5.cf.capex` | L5 | Capex | ✓ | ✓ | ✓ | ✓ | ○ | ✓✓ 多源覆盖 |
 | `L5.cf.buyback_dividend` | L5 | 回购/分红 | ✓ | ✓ | ✓ | ✓ | ○ | ✓✓ 多源覆盖 |
+| `L5.fina.roe` | L5 | ROE(净资产收益率) | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.roa` | L5 | ROA(总资产收益率) | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.debt_ratio` | L5 | 资产负债率(反向) | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.ocf_quality` | L5 | 经营现金流质量 | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.net_profit_yoy` | L5 | 净利润同比增速 | — | ○ | ○ | — | — | ○ realtime 派生 |
+| `L5.fina.asset_turnover` | L5 | 总资产周转率 | — | ○ | ○ | — | — | ○ realtime 派生 |
 | `L5.fcst.revenue_margin` | L5 | 收入/毛利率预期 | $ | ✓ | — | — | — | ✓ 单源覆盖 |
 | `L5.fcst.eps_cf` | L5 | EPS/现金流预期 | $ | ✓ | — | — | — | ✓ 单源覆盖 |
 | `L5.fcst.guidance_change` | L5 | 公司指引变化 | ○ | ✓ | ○ | — | — | ✓ 单源覆盖 |

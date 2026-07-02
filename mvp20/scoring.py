@@ -27,6 +27,7 @@ into the contract documented in the task brief.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -56,25 +57,243 @@ MODE_DISPLAY = {
     MODE_WAIT_FOR_CONFIRMATION: "等待验证",
 }
 
-#: Spec §28 default horizon weight mix.
-#: Short window emphasizes events + capital flow; long window emphasizes
-#: industry space + moat. The default below assumes a balanced mid-cycle
-#: view; callers may override via the ``horizons`` parameter.
+#: Spec §28 default horizon-mix weights — the cross-horizon roll-up used
+#: when ``score_company`` produces a single blended number from the three
+#: per-horizon totals. Each entry weights the *horizon itself* (short /
+#: medium / long); the components inside one horizon are mixed via
+#: :data:`SPEC28_DEFAULT_HORIZON_MIX` below.
 HORIZON_DEFAULT_WEIGHTS = {
     "short": 0.30,
     "medium": 0.45,
     "long": 0.25,
 }
 
-#: Trading signal thresholds applied to the **mix-weighted final score**.
-#: Values are picked so a healthy multi-driver bull (path/company scores
-#: in the 0.4–0.8 range each) clears BUY while a flat/mixed picture lands
-#: on HOLD. WATCH is the "interesting but not enough conviction" bucket;
-#: AVOID is reserved for net-negative final scores.
-SIGNAL_BUY_THRESHOLD = 0.50
-SIGNAL_HOLD_THRESHOLD = 0.15
-SIGNAL_WATCH_THRESHOLD = -0.10
+
+#: Spec §28 per-horizon component mix — feeds ``compute_final_score``'s
+#: ``horizons`` parameter. The structure matches the example in
+#: :func:`compute_final_score`'s docstring:
+#:
+#:   * **short** emphasises events + capital flow — ``capital_sentiment``
+#:     dominates because intraday-to-week price action is driven by news +
+#:     money flow, not fundamentals.
+#:   * **medium** rebalances toward fundamentals while keeping expectation-
+#:     gap weight high — 1-3 month moves rotate as the market digests
+#:     earnings revisions.
+#:   * **long** is fundamentals + structural rerating heavy; short-term
+#:     event noise basically vanishes.
+#:
+#: Risk + priced_in are full subtractions at every horizon (the time
+#: dimension does not make them more or less relevant). This is wired
+#: as the default in :func:`score_company` so the BFF / CLI no longer
+#: render 短=中=长 when the caller forgets to pass an explicit mix.
+SPEC28_DEFAULT_HORIZON_MIX: dict[str, dict[str, float]] = {
+    "short":  {
+        "fundamental": 0.20,
+        "expectation_gap": 0.30,
+        "valuation_rerating": 0.10,
+        "capital_sentiment": 0.40,
+    },
+    "medium": {
+        "fundamental": 0.50,
+        "expectation_gap": 0.30,
+        "valuation_rerating": 0.10,
+        "capital_sentiment": 0.10,
+    },
+    "long":   {
+        "fundamental": 0.60,
+        "expectation_gap": 0.05,
+        "valuation_rerating": 0.30,
+        "capital_sentiment": 0.05,
+    },
+}
+
+#: F7 — saturating scale for the industry-fundamental block in the company
+#: score. ``compute_company_score`` sums an *unbounded* product chain over the
+#: industry variables (one term per participating node), so the raw
+#: ``industry_total`` grows with node count and dominates the other final-score
+#: channels (event / capital / risk / valuation_pressure / priced_in), which
+#: are damped into roughly ``[-1, 1]``. To put fundamental on the *same* scale
+#: — and stop it from inflating merely because an industry overlay has more
+#: filled nodes — the value that feeds ``total`` is squashed through
+#: ``tanh(industry_total / _INDUSTRY_TOTAL_SCALE)``. The raw sum is still
+#: surfaced as ``components["industry_contrib"]`` for transparency.
+#:
+#: K is the fundamental-vs-valuation DIAL. SMALLER K = less squashing = a strong
+#: industry/fundamental keeps more weight (growth-tilt: a great company can stay
+#: BUY despite a rich valuation). LARGER K = more squashing = fundamental matters
+#: less, so the valuation_rerating / priced-in drag dominates (valuation-aware:
+#: expensive run-ups → HOLD even with strong fundamentals).
+#:
+#: Calibrated on the post-L0-wiring A-share distribution (the filled-L0 AI_COMPUTE
+#: cohort is the only one where the bound bites — industry_total p75 ≈ 2.70; every
+#: other name sits near 0 where tanh is ~linear regardless of K). At K=2.0 the
+#: strongest fundamental names (e.g. 688256: industry_total ≈ 3.48 → bounded 0.79,
+#: base_score 0.327) clear the ~31%-BUY cutoff; K=2.70 squashed them to HOLD. The
+#: 31%-BUY threshold ≈ 0.30 holds across K≈2.0–2.7.
+#:
+#: TODO (market-regime adaptive — design pending, see calib discussion): K should
+#: NOT stay a fixed constant. It should shift with the broad-market regime —
+#: smaller K (growth-tilt) in a risk-on / bull tape, larger K (valuation-prudent)
+#: in a risk-off / bear tape — driven by the existing regime signal
+#: (L7.env.market_trend / market_regime_multiplier). Until that is wired, 2.0 is
+#: the fixed default.
+_INDUSTRY_TOTAL_SCALE = 2.0
+
+
+def _bound_industry_total(industry_total: float) -> float:
+    """F7 — squash the raw industry Σ onto ~[-1, 1] via
+    ``tanh(industry_total / _INDUSTRY_TOTAL_SCALE)``.
+
+    Single seam for the bound so both ``compute_company_score`` and the
+    final-score ``fundamental`` derivation share one definition (and tests /
+    calibration can exercise it directly).
+    """
+
+    return math.tanh(industry_total / _INDUSTRY_TOTAL_SCALE)
+
+#: Trading signal thresholds applied to the **market-adjusted** ``base_score``
+#: (the value ``score_company`` thresholds for ``trading_signal`` — i.e.
+#: ``market_adjusted_final_score["base_score"]``).
+#:
+#: T2 re-calibration (post sentiment de-bias) set 0.20 / −0.10 / −0.45 on a
+#: pre-L0-wiring, pre-F7 distribution.
+#:
+#: T3 re-calibration (post L0-wiring + F7 bound): wiring the industry overlay
+#: (Part 1) and bounding the fundamental block via tanh (F7) shifted the
+#: ``base_score`` basis. Across the 121-stock A-share universe it now
+#: distributes as min −1.10 / p25 −0.25 / median +0.08 / p75 +0.33 /
+#: p90 +0.44 / max +1.40. Under the OLD BUY=0.20 this labelled 51/121 (42%)
+#: as BUY — too rich. BUY is re-anchored to 0.30 (≈ the cohort's p70), which
+#: lands 37/121 (31%) BUY — inside the 25–35% target — while the
+#: meaningfully-negative tail (16/121 ≈ 13% AVOID) is preserved. HOLD/WATCH
+#: stay at −0.10 / −0.45: −0.10 sits just below the new median so the broad
+#: middle reads HOLD, and −0.45 keeps the AVOID tail at the bottom ~13%.
+#: Resulting mix: BUY 31% / HOLD 36% / WATCH 20% / AVOID 13%. These remain
+#: calibration constants to revisit if the field set / data distribution
+#: changes.
+#: R-5 (2026-06-05) SUPERSEDES the T2/T3 calibration above. R-2c removed the
+#: confidence_multiplier from base (a ~0.65x haircut → field decompressed ~1.54x)
+#: and the market adapter is empirically ≈ identity for A-shares (multiplier
+#: median 1.007), so base ≈ direct (merit + valuation + flow − risk − priced_in)
+#: and base = 0 is a clean ABSOLUTE neutral. Per user policy these thresholds
+#: carry ABSOLUTE meaning and are NOT pegged to a target BUY% (a weak tape may
+#: legitimately have no BUYs). The participates_in_score governance fix (R-6
+#: follow-up: data_point_roles.yaml is authoritative at runtime, so the 55 dead
+#: qualitative dp_ids finally EXIT the damped denominators instead of inflating
+#: them ~40% with unreadable fake-zeros) un-diluted risk/expectation_gap and
+#: dropped base ~0.16 to its honest scale: 116-stock base p10/p25/median/p75/p90
+#: = −1.07/−0.73/−0.41/−0.08/+0.13. Anchored absolutely: BUY ≥ +0.20 (positives
+#: clearly beat risk — conviction, not merely base>0) / HOLD ≥ −0.15 (roughly
+#: balanced middle) / WATCH ≥ −0.50 (net-negative, monitor) / AVOID < −0.50
+#: (clearly net-negative). Honest weak-tape mix: BUY 10 (9%) / HOLD 30 / WATCH
+#: 28 / AVOID 48 (41%) — few BUYs / many AVOIDs is the TRUTH once risk is counted
+#: without dead-node dilution, not a threshold artifact. Dynamic macro-regime amplification (lifting the
+#: whole field in a bull regime via the currently-dormant market_regime
+#: multiplier, median 1.007) is deferred to R-7 — to be validated by the
+#: point-in-time backtest rather than hand-tuned.
+SIGNAL_BUY_THRESHOLD = 0.20
+SIGNAL_HOLD_THRESHOLD = -0.15
+SIGNAL_WATCH_THRESHOLD = -0.50
 # anything strictly below WATCH threshold => AVOID
+
+
+# ── RD-A dual-axis signal (PARALLEL v2 — headline stays v1 until the P&L loop
+# promotes it; see docs/audit/rda_dual_axis_design_2026-06-10.md) ────────────
+#
+# The single-axis base lets timing variance dominate: a high-merit company in
+# an expensive/overheated tape gets pushed to AVOID ("好公司但贵" failure mode,
+# redesign item RD-A). v2 decomposes the SAME six components into
+#   merit  M = fundamental + expectation_gap − risk_discount     (公司质量)
+#   timing T = valuation_rerating + capital_sentiment − priced_in (入场时机)
+# (so M + T == the core unweighted base, exactly) and reads the signal off a
+# 2-D matrix where strong merit with poor timing degrades to HOLD/WATCH — never
+# AVOID. Bands are provisional absolute cuts on the core scale; the promotion
+# decision (and any re-anchoring) comes from the P&L loop's v1-vs-v2 matured
+# comparison, NOT from hand-tuning.
+MERIT_BAND = 0.15
+TIMING_BAND = 0.15
+#: a deeply negative timing axis (crowding + rich valuation together) degrades
+#: even a strong-merit name from HOLD to WATCH (still never AVOID).
+TIMING_DEEP_NEGATIVE = -0.50
+
+#: G8 — minimum evidence quanta (filled overlay fields + realtime nodes) for
+#: a signal to be shown WITHOUT the abstain marker. Provisional: A-share
+#: n_known typically 40-60; data-starved cross-market names (HK ~33 dp, most
+#: Unknown) fall well under. Display-layer contract only.
+SIGNAL_EVIDENCE_FLOOR = 15
+
+
+def _sum_nested_key(d: Any, key: str) -> int:
+    """Sum every int under ``key`` anywhere in a nested mapping (coverage
+    summaries nest per-parent blocks)."""
+
+    total = 0
+    if isinstance(d, Mapping):
+        for k, v in d.items():
+            if k == key and isinstance(v, (int, float)):
+                total += int(v)
+            else:
+                total += _sum_nested_key(v, key)
+    elif isinstance(d, (list, tuple)):
+        for v in d:
+            total += _sum_nested_key(v, key)
+    return total
+
+
+def dual_axis_signal(merit: float, timing: float) -> str:
+    """BUY/HOLD/WATCH/AVOID from the (merit, timing) 2-D matrix.
+
+    NaN on either axis -> HOLD (neutral abstention): a NaN merit must not be
+    classified as weak merit (review finding — it silently landed in AVOID,
+    contradicting the never-AVOID-on-strong-merit intent when the underlying
+    name might be strong)."""
+
+    if math.isnan(merit) or math.isnan(timing):
+        return "HOLD"
+    if merit > MERIT_BAND:
+        if timing > TIMING_BAND:
+            return "BUY"
+        if timing < TIMING_DEEP_NEGATIVE:
+            return "WATCH"
+        return "HOLD"          # 好公司但时机差 → 持有/等待, 不是回避
+    if merit >= -MERIT_BAND:
+        if timing < -TIMING_BAND:
+            return "WATCH"
+        return "HOLD"
+    # weak merit
+    if timing < -TIMING_BAND:
+        return "AVOID"
+    return "WATCH"             # 差公司好时机 → 最多观察, 不追
+
+
+#: risk_discount nodes whose dp segment matches these prefixes are MARKET-type
+#: (valuation/positioning: overvalued, priced_in, outflow_cut, short_increase,
+#: crowdedness…) and are charged to the TIMING axis per the RD-A design;
+#: everything else in the bucket (L8.fin/op/gov/reg — debt, governance,
+#: operations) is company risk charged to MERIT.
+_MARKET_RISK_DP_MARKERS = ("L8.val.", "L8.cap.")
+
+
+def _risk_market_share(aggregated_nodes: Mapping[str, Any]) -> float:
+    """Fraction of the risk_discount rollup numerator carried by MARKET-type
+    nodes. Exact under the damped rollup: the damp denominator is common to
+    every risk node, so numerator shares partition the rolled total."""
+
+    mkt = 0.0
+    tot = 0.0
+    for node_id, value in aggregated_nodes.items():
+        if not isinstance(value, Mapping):
+            continue
+        if value.get("score_target") != "risk_discount":
+            continue
+        if not _role_participates(value):
+            continue
+        contrib = abs(_coerce_float(value.get("score"), 0.0)) * _coerce_float(
+            value.get("confidence"), 1.0)
+        tot += contrib
+        if any(m in str(node_id) for m in _MARKET_RISK_DP_MARKERS):
+            mkt += contrib
+    return (mkt / tot) if tot > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +492,8 @@ def compute_company_score(
         {
           "score": float,                       # full company score
           "components": {
-              "industry_contrib": float,        # the Σ industry block
+              "industry_contrib": float,        # the RAW Σ industry block
+              "industry_contrib_bounded": float,# F7: tanh-bounded Σ → into score
               "event": float,
               "capital": float,
               "risk": float,
@@ -286,18 +506,36 @@ def compute_company_score(
         }
     """
 
-    industry_total = 0.0
+    # R-2b: coverage-normalized weighted MEAN (was a plain Σ then tanh-bounded).
+    # The sum made ``fundamental`` a coverage proxy — |industry_total| correlated
+    # ~0.95 with the non-zero node count (more covered nodes → bigger sum → tanh
+    # saturated), so it measured "how much data" not "how good". A confidence-
+    # weighted MEAN is already in [-1, 1] (mean of [-1, 1] scores), so node count
+    # no longer inflates it and the F7 tanh / _INDUSTRY_TOTAL_SCALE bound is moot.
+    weighted_sum = 0.0   # Σ(score × weight)
+    weight_sum = 0.0     # Σ weight  (the mean denominator)
     contribs: list[dict[str, Any]] = []
     for v in industry_variables or []:
         score = _coerce_float(v.get("score"))
+        # R-2b follow-up: skip zero-score nodes (the neutral_value default for
+        # unfilled L0/L1 fields = "no signal / abstain"). Averaging them in pulled
+        # the real financial signal toward 0 — empirically 60+ zeros took 74-96%
+        # of the mean denominator, compressing merit ~22× (fund sd 0.018). Letting
+        # only the OPINIONATED signals (financials + non-neutral L0) set the mean
+        # restores merit's magnitude without re-introducing the node-count proxy.
+        if abs(score) < 1e-9:
+            continue
         exposure = _coerce_float(v.get("exposure"), 1.0)
         rev_share = _coerce_float(v.get("revenue_share"), 1.0)
         prof_e = _coerce_float(v.get("profit_elasticity"), 1.0)
         fin_s = _coerce_float(v.get("financial_sensitivity"), 1.0)
         val_s = _coerce_float(v.get("valuation_sensitivity"), 1.0)
+        conf = _coerce_float(v.get("confidence"), 1.0)
 
         contrib = score * exposure * rev_share * prof_e * fin_s * val_s
-        industry_total += contrib
+        weight = exposure * rev_share * prof_e * fin_s * val_s * conf
+        weighted_sum += score * weight
+        weight_sum += weight
 
         contribs.append({
             "name": v.get("name") or v.get("node_id") or "",
@@ -312,12 +550,22 @@ def compute_company_score(
     val_pressure = _coerce_float(valuation_pressure)
     priced_in = _coerce_float(priced_in_discount)
 
-    total = industry_total + event + capital - risk - val_pressure - priced_in
+    # F7 — bound the fundamental block onto the same ~[-1, 1] scale as the
+    # other final-score channels before summing. ``industry_total`` is the raw
+    # (unbounded) Σ; ``industry_bounded`` is what actually enters ``total`` so
+    # fundamental can't dominate / grow merely with node count. The raw sum is
+    # still reported in components["industry_contrib"] for transparency.
+    # Raw weighted sum kept for transparency; the MEAN is what enters the score.
+    industry_total = weighted_sum
+    industry_bounded = weighted_sum / weight_sum if weight_sum > 1e-9 else 0.0
+
+    total = industry_bounded + event + capital - risk - val_pressure - priced_in
 
     return {
         "score": total,
         "components": {
             "industry_contrib": industry_total,
+            "industry_contrib_bounded": industry_bounded,
             "event": event,
             "capital": capital,
             "risk": risk,
@@ -422,24 +670,39 @@ def compute_final_score(
         },
         "primary_positive_path": pos,
         "primary_negative_path": neg,
-        "trading_meaning": _describe_trading_meaning(short_total, medium_total, long_total),
+        "trading_meaning": _describe_trading_meaning(
+            short_total, medium_total, long_total, base_score=base,
+        ),
     }
 
 
-def _describe_trading_meaning(short_t: float, medium_t: float, long_t: float) -> str:
+def _describe_trading_meaning(
+    short_t: float,
+    medium_t: float,
+    long_t: float,
+    base_score: float | None = None,
+) -> str:
     """One-line trading-narrative string derived from the three horizons.
 
     Format: ``短:<short>/中:<medium>/长:<long> => <verb>``. The verb is the
     plain-Chinese version of the trading-signal bucket and is intentionally
-    keep short — UI may use this directly in a tooltip.
+    kept short — UI may use this directly in a tooltip.
+
+    The verb is keyed off ``base_score`` (the unweighted sum) when supplied
+    so it stays aligned with ``_trading_signal_from_mix`` (which also runs
+    on the unweighted scale to preserve threshold calibration). When
+    ``base_score`` is None we fall back to the average of the three
+    horizons — kept for back-compat with callers that pre-date the split.
     """
 
-    avg = (short_t + medium_t + long_t) / 3.0
-    if avg >= SIGNAL_BUY_THRESHOLD:
+    pivot = base_score if base_score is not None else (
+        (short_t + medium_t + long_t) / 3.0
+    )
+    if pivot >= SIGNAL_BUY_THRESHOLD:
         verb = "积极介入"
-    elif avg >= SIGNAL_HOLD_THRESHOLD:
+    elif pivot >= SIGNAL_HOLD_THRESHOLD:
         verb = "维持仓位"
-    elif avg >= SIGNAL_WATCH_THRESHOLD:
+    elif pivot >= SIGNAL_WATCH_THRESHOLD:
         verb = "观察等待"
     else:
         verb = "回避"
@@ -739,6 +1002,23 @@ def _trading_signal_from_mix(short_t: float, medium_t: float, long_t: float,
 # ---------------------------------------------------------------------------
 
 
+#: ``score_target`` values whose magnitude is SUBTRACTED from the final
+#: score (see :func:`_role_components_from_flat`, where every one of these is
+#: rolled up with ``absolute=True`` and then fed to ``compute_*_score`` as a
+#: ``- risk_discount`` / ``- valuation_pressure`` / ``- priced_in_discount``
+#: term). A node tagged with one of these stores a POSITIVE magnitude but is
+#: an *effective negative* contributor, so ``_top_paths`` must never surface it
+#: as a "top positive" driver. Kept in sync with the target sets above.
+_SUBTRACTIVE_SCORE_TARGETS: frozenset[str] = frozenset({
+    # risk_discount group
+    "risk_discount", "uncertainty_discount", "volatility_risk", "overheat_risk",
+    # valuation_pressure
+    "valuation_pressure",
+    # priced_in_discount group
+    "priced_in_discount", "option_priced_in", "time_decay",
+})
+
+
 @dataclass(frozen=True)
 class _PathInfo:
     """Lightweight handle to a path's score + metadata, for ranking."""
@@ -747,6 +1027,23 @@ class _PathInfo:
     score: float
     direction: float
     rationale: str
+    score_target: str | None = None
+
+    @property
+    def effective_score(self) -> float:
+        """Signed contribution to the FINAL score.
+
+        Most nodes contribute their raw ``score``. Nodes whose
+        ``score_target`` is a discount/risk target (see
+        :data:`_SUBTRACTIVE_SCORE_TARGETS`) store a positive magnitude that the
+        scorer SUBTRACTS, so their effective contribution is ``-abs(score)``.
+        Ranking on this value keeps penalties out of the "top positive" list
+        and lets them rank in the "top negative" list — without touching the
+        numeric final score (which is computed separately upstream)."""
+
+        if self.score_target in _SUBTRACTIVE_SCORE_TARGETS:
+            return -abs(self.score)
+        return self.score
 
 
 def _is_flat_aggregator_output(payload: Mapping[str, Any]) -> bool:
@@ -818,32 +1115,47 @@ def _collect_path_infos(
         rationale = str(
             node.get("rationale") or node.get("name") or node_id or ""
         )
+        raw_target = node.get("score_target")
         paths.append(_PathInfo(
             node_id=str(node_id),
             score=score,
             direction=direction,
             rationale=rationale,
+            score_target=str(raw_target) if raw_target is not None else None,
         ))
     return paths
 
 
 def _top_paths(paths: Sequence[_PathInfo], n: int = 3) -> dict[str, list[dict[str, Any]]]:
-    """Pick top ``n`` positive paths (highest score) and top ``n`` negative
-    paths (lowest score). Returns lists of plain dicts (JSON-friendly)."""
+    """Pick top ``n`` positive paths and top ``n`` negative paths, ranked by
+    each path's EFFECTIVE contribution to the final score. Returns lists of
+    plain dicts (JSON-friendly).
+
+    Ranking uses :attr:`_PathInfo.effective_score` rather than the raw score so
+    that discount/risk nodes (``score_target`` in
+    :data:`_SUBTRACTIVE_SCORE_TARGETS`) — which store a positive magnitude but
+    are SUBTRACTED from the score — are correctly treated as negative
+    contributors. This keeps penalties (e.g. ``priced.run_up``, ``overvalued``)
+    out of the "top positive" headline list. The reported ``score`` is the
+    effective (signed) contribution so the magnitude reads honestly. This is a
+    display-only ordering — the numeric final score is computed upstream and is
+    unaffected."""
 
     positive = sorted(
-        (p for p in paths if p.score > 0), key=lambda p: -p.score
+        (p for p in paths if p.effective_score > 0),
+        key=lambda p: -p.effective_score,
     )[:n]
     negative = sorted(
-        (p for p in paths if p.score < 0), key=lambda p: p.score
+        (p for p in paths if p.effective_score < 0),
+        key=lambda p: p.effective_score,
     )[:n]
     return {
         "positive": [
-            {"node_id": p.node_id, "score": p.score, "rationale": p.rationale}
+            {"node_id": p.node_id, "score": p.effective_score, "rationale": p.rationale}
             for p in positive
         ],
         "negative": [
-            {"node_id": p.node_id, "score": p.score, "rationale": p.rationale}
+            {"node_id": p.node_id, "score": p.effective_score, "rationale": p.rationale}
             for p in negative
         ],
     }
@@ -1007,8 +1319,22 @@ def _sum_role_target(
     target: str,
     *,
     absolute: bool = False,
+    damp: bool = False,
 ) -> float:
+    """Roll up ``Σ(score × confidence)`` over nodes tagged ``score_target == target``.
+
+    When ``damp=True`` the raw confidence-weighted sum is divided by
+    ``max(1.0, Σconfidence)``. The ``max(1.0, …)`` floor means a sparse /
+    single low-confidence node (total confidence ≤ 1) is returned unchanged
+    (identical to the non-damped sum, preserving the confidence discount and
+    existing test expectations), while stacked signals (Σconf > 1) are
+    averaged so components no longer inflate. ``damp=False`` (default) keeps
+    every existing caller's raw-sum behaviour.
+    """
+
     total = 0.0
+    conf_sum = 0.0
+    matched = False
     for value in aggregated_nodes.values():
         if not isinstance(value, Mapping):
             continue
@@ -1016,11 +1342,17 @@ def _sum_role_target(
             continue
         if not _role_participates(value):
             continue
+        matched = True
         score = _coerce_float(value.get("score"), 0.0)
         if absolute:
             score = abs(score)
         confidence = _coerce_float(value.get("confidence"), 1.0)
         total += score * confidence
+        conf_sum += confidence
+    if damp:
+        if not matched:
+            return 0.0
+        return total / max(1.0, conf_sum)
     return total
 
 
@@ -1029,11 +1361,42 @@ def _sum_role_targets(
     targets: set[str],
     *,
     absolute: bool = False,
+    damp: bool = False,
 ) -> float:
-    return sum(
-        _sum_role_target(aggregated_nodes, target, absolute=absolute)
-        for target in targets
-    )
+    """Roll up a SET of ``score_target`` values into one component.
+
+    With ``damp=True`` the damping is applied ONCE over the COMBINED group:
+    we accumulate ``Σ(score × conf)`` and ``Σconf`` across every node matching
+    any target in the set, then divide a single time by ``max(1.0, Σconf)``
+    (NOT per-target). ``damp=False`` (default) is the plain sum-of-sums.
+    """
+
+    if not damp:
+        return sum(
+            _sum_role_target(aggregated_nodes, target, absolute=absolute)
+            for target in targets
+        )
+
+    total = 0.0
+    conf_sum = 0.0
+    matched = False
+    for value in aggregated_nodes.values():
+        if not isinstance(value, Mapping):
+            continue
+        if value.get("score_target") not in targets:
+            continue
+        if not _role_participates(value):
+            continue
+        matched = True
+        score = _coerce_float(value.get("score"), 0.0)
+        if absolute:
+            score = abs(score)
+        confidence = _coerce_float(value.get("confidence"), 1.0)
+        total += score * confidence
+        conf_sum += confidence
+    if not matched:
+        return 0.0
+    return total / max(1.0, conf_sum)
 
 
 def _multiplier_factor_from_targets(
@@ -1083,26 +1446,40 @@ def _role_components_from_flat(aggregated_nodes: Mapping[str, Any]) -> dict[str,
         aggregated_nodes, multiplier_targets,
     )
     return {
-        "expectation_gap": _sum_role_target(aggregated_nodes, "expectation_gap"),
-        "valuation_rerating": _sum_role_target(aggregated_nodes, "valuation_rerating"),
-        "funding_score": _sum_role_target(aggregated_nodes, "funding_score"),
-        "sentiment_score": _sum_role_target(aggregated_nodes, "sentiment_score"),
+        # Additive + discount components use a damped denominator
+        # (max(1.0, Σconf)) so stacked realtime signals average instead of
+        # summing. Sparse / single low-conf nodes (Σconf ≤ 1) are unchanged.
+        "expectation_gap": _sum_role_target(
+            aggregated_nodes, "expectation_gap", damp=True,
+        ),
+        "valuation_rerating": _sum_role_target(
+            aggregated_nodes, "valuation_rerating", damp=True,
+        ),
+        "funding_score": _sum_role_target(
+            aggregated_nodes, "funding_score", damp=True,
+        ),
+        "sentiment_score": _sum_role_target(
+            aggregated_nodes, "sentiment_score", damp=True,
+        ),
         "capital_sentiment": _sum_role_targets(
             aggregated_nodes,
             {"capital_sentiment", "funding_score", "sentiment_score"},
+            damp=True,
         ),
         "risk_discount": _sum_role_targets(
             aggregated_nodes,
             {"risk_discount", "uncertainty_discount", "volatility_risk", "overheat_risk"},
             absolute=True,
+            damp=True,
         ),
         "valuation_pressure": _sum_role_target(
-            aggregated_nodes, "valuation_pressure", absolute=True,
+            aggregated_nodes, "valuation_pressure", absolute=True, damp=True,
         ),
         "priced_in_discount": _sum_role_targets(
             aggregated_nodes,
             {"priced_in_discount", "option_priced_in", "time_decay"},
             absolute=True,
+            damp=True,
         ),
         "funding_multiplier": _multiplier_factor_from_targets(
             aggregated_nodes, {"funding_multiplier"},
@@ -1118,6 +1495,9 @@ def _role_components_from_flat(aggregated_nodes: Mapping[str, Any]) -> dict[str,
         ),
         "reflexivity_multiplier": _multiplier_factor_from_targets(
             aggregated_nodes, {"reflexivity_multiplier"},
+        ),
+        "liquidity_multiplier": _multiplier_factor_from_targets(
+            aggregated_nodes, {"liquidity_multiplier"},
         ),
         "valuation_sensitivity_multiplier": _multiplier_factor_from_targets(
             aggregated_nodes,
@@ -1207,6 +1587,89 @@ def _industry_variables_from_flat(
             "confidence": _coerce_float(agg.get("confidence"), 0.0),
             "materiality": _coerce_float(n.get("materiality"), 1.0),
         })
+
+    # ---- Realtime-bridge dead-sink rescue ----------------------------------
+    # The overlay loop above only sees authored YAML nodes, so synthetic
+    # realtime leaves (node_id ``<ts>:<dp_id>:rt``) never reach the company
+    # score this way. Two score-targets have a sink HERE (industry_contrib →
+    # the §27.4 `fundamental` term) but NO flat sink in
+    # ``_role_components_from_flat``: ``fundamental_score`` and
+    # ``optionality_score``. Without this, ~96/250 participating spec fields
+    # that target fundamental_score are a dead sink via the bridge.
+    #
+    # ⚠️ Restrict STRICTLY to {fundamental_score, optionality_score}. Every
+    # other live target (valuation_rerating, expectation_gap, risk_discount,
+    # funding/sentiment_score, priced_in_discount, *_multiplier,
+    # confidence_multiplier) already counts once via _role_components_from_flat
+    # path #1 — routing them here too would double-count them.
+    if use_governance:
+        _DEAD_SINK_TARGETS = {"fundamental_score", "optionality_score"}
+        emitted_ids = {v.get("node_id") for v in out}
+        # Accumulate ALL synthetic dead-sink nodes into a single damped-mean
+        # variable instead of emitting one industry-variable per node. Each
+        # synthetic node defaults every weight to 1.0, so N of them would SUM
+        # in compute_company_score → inflation as more realtime fields wire in.
+        # We collapse them to ONE var whose score is
+        # ``Σ(node_score × conf) / max(1.0, Σconf)`` (the same damping the
+        # additive components use), confidence = mean conf, direction = sign.
+        synth_total = 0.0          # Σ(node_score × conf)
+        synth_conf_sum = 0.0       # Σ conf (damping denominator)
+        synth_conf_count = 0       # for the mean confidence
+        synth_matched = False
+        for node_id, agg in aggregated_nodes.items():
+            if not isinstance(agg, Mapping):
+                continue
+            # Prefer the explicit flag (propagated through aggregation); fall
+            # back to the ``:rt`` node_id suffix so detection stays reliable
+            # even if a future refactor drops the flag.
+            is_synthetic = bool(agg.get("synthetic_realtime")) or (
+                isinstance(node_id, str) and node_id.endswith(":rt")
+            )
+            if not is_synthetic:
+                continue
+            if node_id in emitted_ids:
+                continue
+            if agg.get("score_target") not in _DEAD_SINK_TARGETS:
+                continue
+            if not _role_participates(agg):
+                continue
+            score = _coerce_float(agg.get("score"), 0.0)
+            confidence = _coerce_float(agg.get("confidence"), 0.0)
+            synth_total += score * confidence
+            synth_conf_sum += confidence
+            synth_conf_count += 1
+            synth_matched = True
+
+        if synth_matched:
+            # Damped mean — identical to a single node when Σconf ≤ 1 (the
+            # max(1.0, …) floor preserves the lone-node confidence discount),
+            # averaging when signals stack so industry_contrib does not scale
+            # linearly with the node count.
+            collapsed_score = synth_total / max(1.0, synth_conf_sum)
+            mean_conf = (
+                synth_conf_sum / synth_conf_count if synth_conf_count else 0.0
+            )
+            direction = (
+                "positive" if collapsed_score > 0
+                else "negative" if collapsed_score < 0 else "neutral"
+            )
+            # Synthetic nodes have no overlay weights; default every
+            # multiplicative factor to 1.0 so the damped-mean score flows
+            # through compute_company_score unchanged. A future B-calibration
+            # pass can tune these per dp_id / score_target.
+            out.append({
+                "name": "realtime_fundamental",
+                "node_id": "realtime_fundamental",
+                "score": collapsed_score,
+                "exposure": 1.0,
+                "revenue_share": 1.0,
+                "profit_elasticity": 1.0,
+                "financial_sensitivity": 1.0,
+                "valuation_sensitivity": 1.0,
+                "direction": direction,
+                "confidence": mean_conf,
+                "materiality": 1.0,
+            })
     return out
 
 
@@ -1324,10 +1787,20 @@ def score_company(
     # input, and the event signal as part of the fundamental too (since
     # company-specific events are operational, not market-driven). Capital
     # sentiment / risk / priced-in are then injected once at the §27.4 level.
-    industry_contrib = company_score["components"]["industry_contrib"]
+    #
+    # F7 — use the *bounded* industry block (tanh-squashed, see
+    # _INDUSTRY_TOTAL_SCALE) so the fundamental that drives the final score /
+    # base_score / trading_signal sits on the same ~[-1, 1] scale as the other
+    # channels and can't grow merely with industry-node count. The raw Σ is
+    # still surfaced as components["industry_contrib"] for transparency.
+    industry_contrib = company_score["components"]["industry_contrib_bounded"]
+    # R-2b: ``industry_contrib_bounded`` is now the coverage-normalized industry
+    # MEAN (no longer tanh(Σ)). The post-tanh ``*= multiplier_stack`` is removed:
+    # multiplying a SIGNED fundamental by a >=1 tailwind made 41% of names
+    # (negative fundamental) MORE negative (inflows worsening weak names) and
+    # pushed every stock past the F7 bound. Tailwind multipliers belong in a
+    # timing/sentiment channel, not multiplied onto company quality.
     fundamental = industry_contrib + company_event_score
-    if role_components:
-        fundamental *= role_components.get("multiplier_stack", 1.0)
     expectation_gap_score = _coerce_float(
         aggregated_nodes.get("expectation_gap_score"),
         role_components.get("expectation_gap", 0.0),
@@ -1345,6 +1818,15 @@ def score_company(
     path_infos = _collect_path_infos(aggregated_nodes)
     top = _top_paths(path_infos, n=3)
 
+    # Apply spec §28 default per-horizon component mix when the caller
+    # didn't supply one. ``compute_final_score`` itself stays back-compat
+    # (None → unweighted base for all three horizons) so low-level math
+    # callers + the existing test_unweighted_base assertion are unchanged;
+    # the high-level orchestrator is the right place to enforce the
+    # default since this is where "produce a stock view" intent lives.
+    effective_horizons = (
+        horizons if horizons is not None else SPEC28_DEFAULT_HORIZON_MIX
+    )
     final = compute_final_score(
         fundamental_score=fundamental,
         expectation_gap_score=expectation_gap_score,
@@ -1352,18 +1834,21 @@ def score_company(
         capital_sentiment_score=capital_sentiment,
         risk_discount=risk_discount,
         priced_in_discount=priced_in_discount,
-        horizons=horizons,
+        horizons=effective_horizons,
         primary_positive_path=top["positive"],
         primary_negative_path=top["negative"],
     )
+    # R-2c: confidence is a CONVICTION band, not a magnitude. Record it alongside
+    # the score but do NOT multiply it into base/totals. Multiplying conflated
+    # "how sure are we" (coverage / evidence quality) with "how strong is the
+    # signal", and crushed genuinely high-merit but low-coverage names — a
+    # ~0.65× haircut compressed base ~1.54× for every low-confidence stock,
+    # which is why BUY% collapsed. The band is surfaced for display / mode; the
+    # point estimate stays on the signal's own scale. BUY/HOLD/WATCH thresholds
+    # were re-anchored to this (un-compressed) scale in R-5.
     confidence_multiplier = role_components.get("confidence_multiplier", 1.0)
-    if role_components and confidence_multiplier < 1.0:
-        for key in ("short_total", "medium_total", "long_total", "base_score"):
-            final[key] *= confidence_multiplier
+    if role_components:
         final["components"]["confidence_multiplier"] = confidence_multiplier
-        final["trading_meaning"] = _describe_trading_meaning(
-            final["short_total"], final["medium_total"], final["long_total"]
-        )
     core_final = dict(final)
     market_adapter = apply_market_adapter(
         final_score=core_final,
@@ -1373,6 +1858,25 @@ def score_company(
     )
     market_final = market_adapter["adjusted_final_score"]
 
+    # Align the RETURNED trading_meaning verb with the trading_signal basis.
+    # ``apply_market_adapter`` deep-copies ``core_final`` (including its
+    # ``trading_meaning``, which was computed on the core / pre-market-adapter
+    # base_score whose scale is ~0.5 lower than the market-adjusted base the
+    # signal thresholds). Under the higher T1 thresholds that stale verb would
+    # read 回避/观察 even when ``trading_signal`` is BUY — a visible
+    # contradiction. Recompute the verb on the market-adjusted short/medium/
+    # long totals + market-adjusted base so verb and signal agree. The returned
+    # ``final_score`` and ``market_adjusted_final_score`` are this same object,
+    # so the single override fixes both; ``core_final_score["trading_meaning"]``
+    # is left as-is (it documents the pre-adapter view). The displayed
+    # short/medium/long totals are not changed.
+    market_final["trading_meaning"] = _describe_trading_meaning(
+        _coerce_float(market_final.get("short_total"), 0.0),
+        _coerce_float(market_final.get("medium_total"), 0.0),
+        _coerce_float(market_final.get("long_total"), 0.0),
+        base_score=_coerce_float(market_final.get("base_score"), 0.0),
+    )
+
     signals = _signals_from_inputs(
         company_score=company_score,
         aggregated_nodes=aggregated_nodes,
@@ -1381,10 +1885,55 @@ def score_company(
     )
     mode = classify_mode(final_score=market_final, signals=signals)
 
+    # Trading signal is computed off the **unweighted base** so the
+    # BUY/HOLD/WATCH/AVOID thresholds remain on the same scale they were
+    # calibrated for. The per-horizon totals stay weighted (spec §28) for
+    # the UI time-profile view (短/中/长), but signal is the "overall
+    # bullishness" answer — orthogonal to "when does it show up". Pre-fix
+    # this happened to coincide because horizons defaulted to None and
+    # short=medium=long=base; we now make the contract explicit.
+    base_score = _coerce_float(market_final.get("base_score"), 0.0)
     signal = _trading_signal_from_mix(
-        market_final["short_total"], market_final["medium_total"], market_final["long_total"],
+        base_score, base_score, base_score,
         horizon_weights=horizon_weights,
     )
+
+    # RD-A v2 (parallel): merit/timing decomposition of the SAME six core
+    # components (M + T == core unweighted base). Computed on the CORE scale
+    # (pre-market-adapter; regime modulation is R-7's job, not v2's).
+    # risk attribution per the registered design: market-type risk
+    # (valuation/positioning) charges TIMING, company risk charges MERIT —
+    # share-based split is exact w.r.t. the damped rollup (common denominator).
+    _mkt_risk_share = _risk_market_share(aggregated_nodes or {})
+    risk_market = risk_discount * _mkt_risk_share
+    risk_company = risk_discount - risk_market
+    merit = fundamental + expectation_gap_score - risk_company
+    timing = (valuation_rerating_score + capital_sentiment
+              - priced_in_discount - risk_market)
+    signal_v2 = dual_axis_signal(merit, timing)
+
+    # G8 — evidence/abstain marker. R-2c correctly stopped multiplying
+    # confidence into the score, but nothing replaced its decision role: a
+    # signal computed off a handful of scored paths prints exactly like one
+    # backed by a hundred (the HK/US starvation mode: missing data masquerading
+    # as confident neutrality). Parallel-info pattern: the signal STRINGS stay
+    # untouched; ``signal_evidence.abstain`` tells the consumer to render
+    # "证据不足" instead of a confident label. Floor is provisional (well below
+    # the A-share in-score median ~118 paths); the P&L loop can later test
+    # whether low-evidence signals underperform and justify hard enforcement.
+    # Evidence basis (review fix): tree paths over-count (parents/root
+    # re-count one datum along the ancestor chain) and miss neutral-Known
+    # fields. Count FILLED overlay fields (coverage n_known, summed across
+    # parents) + realtime synthetic nodes — actual data quanta.
+    n_known = _sum_nested_key(coverage_report or {}, "n_known")
+    n_rt = sum(1 for nid in (aggregated_nodes or {}) if str(nid).endswith(":rt"))
+    n_evidence = n_known + n_rt
+    signal_evidence = {
+        "n_known_fields": n_known,
+        "n_realtime_nodes": n_rt,
+        "abstain": n_evidence < SIGNAL_EVIDENCE_FLOOR,
+        "floor": SIGNAL_EVIDENCE_FLOOR,
+    }
 
     return {
         "ts_code": ts_code,
@@ -1404,6 +1953,10 @@ def score_company(
         "market_adapter": market_adapter,
         "top_paths": top,
         "trading_signal": signal,
+        "merit": merit,
+        "timing": timing,
+        "trading_signal_v2": signal_v2,
+        "signal_evidence": signal_evidence,
         "signals": signals,
         "role_components": role_components,
     }
@@ -1411,6 +1964,7 @@ def score_company(
 
 __all__ = [
     "HORIZON_DEFAULT_WEIGHTS",
+    "SPEC28_DEFAULT_HORIZON_MIX",
     "MODE_DE_RATING",
     "MODE_DIGESTION",
     "MODE_DISPLAY",
@@ -1427,5 +1981,7 @@ __all__ = [
     "compute_final_score",
     "compute_node_score",
     "compute_path_score",
+    "SIGNAL_EVIDENCE_FLOOR",
+    "dual_axis_signal",
     "score_company",
 ]

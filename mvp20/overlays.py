@@ -30,6 +30,7 @@ STOCK_TEMPLATE_VERSION = "stock-overlay-v2"
 INDUSTRY_TEMPLATE_VERSION = "industry-overlay-v2"
 DEFAULT_PERIOD = "2026-Q1"
 PENDING_INDUSTRY_ID = "SPACE_ECONOMY"
+_SAFE_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 DATA_STATUSES = {
     "Known",
@@ -312,6 +313,9 @@ _Z3_COMPANY_DERIVED_SLOTS: tuple[SlotDef, ...] = (
     # ── L8 risk offsets (15 slots) — event-driven default Inactive ─────────
     SlotDef("L8.gov.fraud_control", "财务造假/内控", "Risk Offset", "risk_governance", direction="negative", materiality=0.85, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
     SlotDef("L8.gov.litigation", "法律诉讼", "Risk Offset", "risk_governance", direction="negative", materiality=0.7, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
+    # Track-B 可脚本填充的 risk 节点(stk_holdertrade 减持 / stk_managers 高管离任);data_point_roles participates_in_score=true。
+    SlotDef("L8.gov.insider_sell", "股东减持", "Risk Offset", "risk_governance", direction="negative", materiality=0.65, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
+    SlotDef("L8.gov.management_change", "管理层变动", "Risk Offset", "risk_governance", direction="negative", materiality=0.6, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
     SlotDef("L8.industry.demand_supply", "行业需求/供给恶化", "Risk Offset", "risk_industry", direction="negative", materiality=0.7, calculation_type="risk_factor", aggregation_policy="subtract_risk"),
     SlotDef("L8.industry.price_war", "行业价格战", "Risk Offset", "risk_industry", direction="negative", materiality=0.7, calculation_type="risk_factor", aggregation_policy="subtract_risk"),
     SlotDef("L8.industry.substitute", "替代品出现", "Risk Offset", "risk_industry", direction="negative", materiality=0.65, calculation_type="risk_factor", aggregation_policy="subtract_risk"),
@@ -328,6 +332,9 @@ _Z3_COMPANY_DERIVED_SLOTS: tuple[SlotDef, ...] = (
     # ── L9 catalysts (3 stock-level slots) — event-driven defaults ─────────
     SlotDef("L9.company.ma", "并购", "Company Catalyst", "catalyst_company", materiality=0.6, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="or_gate", aggregation_policy="or_max_trigger", active_weight=0.0, default_missing_reason=None),
     SlotDef("L9.company.product_order", "新产品发布/大订单", "Company Catalyst", "catalyst_company", materiality=0.65, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="or_gate", aggregation_policy="or_max_trigger", active_weight=0.0, default_missing_reason=None),
+    # Track-B 可脚本填充的 catalyst 节点(dividend 分红回购 / forecast 业绩指引);data_point_roles participates_in_score=true。
+    SlotDef("L9.company.buyback_dividend", "分红回购", "Company Catalyst", "catalyst_company", materiality=0.6, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="or_gate", aggregation_policy="or_max_trigger", active_weight=0.0, default_missing_reason=None),
+    SlotDef("L9.company.earnings_guidance", "业绩指引", "Company Catalyst", "catalyst_company", materiality=0.7, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="or_gate", aggregation_policy="or_max_trigger", active_weight=0.0, default_missing_reason=None),
     SlotDef("L9.media.short_report", "做空报告", "Media Catalyst", "catalyst_media", direction="negative", materiality=0.7, data_status="Inactive", missing_policy="inactive_zero_weight", calculation_type="risk_factor", aggregation_policy="subtract_risk", active_weight=0.0, default_missing_reason=None),
 )
 
@@ -365,7 +372,7 @@ class Membership:
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return yaml.load(path.read_text(encoding="utf-8"), Loader=_SAFE_YAML_LOADER) or {}
 
 
 def _field_governance_registry():
@@ -1280,6 +1287,112 @@ def merge_preserve_existing_overlay(
     return result
 
 
+def apply_status_induced_invariants(overlay: dict[str, Any]) -> int:
+    """Ensure every node's missing_policy / active_weight / legacy ``status`` field
+    match its ``data_status`` semantics (the same canonical mapping merge_preserve
+    applies via ``Z5 Fix 1``). Returns the count of nodes modified.
+
+    Runnable as a standalone post-fill pass: codex marks a node N/A by setting
+    ``data_status`` AFTER the last generate-overlays, so the merge-time induction
+    never sees it and the node reaches compile carrying the SLOT_DEFS default
+    ``missing_policy`` → ``N/A node must use not_applicable_remove`` hard error.
+    That error fails the WHOLE compile (one bad overlay starves every other stock
+    of its compiled snapshot), so the onboard pipeline calls this right after the
+    codex fill, before recompile.
+    """
+    modified = 0
+    for node in overlay.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        ds = node.get("data_status")
+        induced = _STATUS_INDUCED_FIELDS.get(ds)
+        if not induced:
+            continue
+        changed = False
+        for k, v in induced.items():
+            if node.get(k) != v:
+                node[k] = v
+                changed = True
+        # mirror data_status into the legacy ``status`` field (validator reads
+        # data_status; coverage/alerts read status — keep them consistent).
+        if "status" in node and node.get("status") != ds:
+            node["status"] = ds
+            changed = True
+        if changed:
+            modified += 1
+    return modified
+
+
+def sanitize_node_scalar_fields(overlay: dict[str, Any]) -> int:
+    """Coerce node fields that map to scalar SQL columns back to scalars so a
+    malformed fill can't crash compile (``sqlite3.ProgrammingError: type 'list'
+    is not supported`` when binding the node row). The observed failure: a fill
+    engine occasionally writes the evidence_sources list into ``confidence`` —
+    recover it into evidence_sources when that slot is empty, then null the
+    scalar. Returns the count of nodes modified."""
+    modified = 0
+    for node in overlay.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        changed = False
+        conf = node.get("confidence")
+        if isinstance(conf, (list, dict)):
+            # recover a misplaced evidence list into evidence_sources when empty
+            if (isinstance(conf, list) and conf
+                    and all(isinstance(x, dict) for x in conf)
+                    and not node.get("evidence_sources")):
+                node["evidence_sources"] = conf
+            node["confidence"] = None
+            changed = True
+        if node.get("materiality") is not None and not isinstance(node.get("materiality"), (int, float)):
+            node["materiality"] = None
+            changed = True
+        if changed:
+            modified += 1
+    return modified
+
+
+def normalize_overlay_file_status(path: Path) -> int:
+    """Load an overlay YAML, apply ``apply_status_induced_invariants`` +
+    ``sanitize_node_scalar_fields``, and write it back (via the canonical
+    serializer, only if changed). Returns modified node count (0 = no change /
+    file absent / parse error → best-effort)."""
+    try:
+        overlay = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return 0
+    n = apply_status_induced_invariants(overlay) + sanitize_node_scalar_fields(overlay)
+    if n:
+        _write_yaml_if_changed(path, overlay)
+    return n
+
+
+def restore_overlay_top_level(path: Path, reference: dict[str, Any]) -> bool:
+    """After a fill, restore any non-``nodes`` top-level overlay section that the
+    fill dropped. An agentic fill engine (observed with Claude) sometimes rewrites
+    only ``nodes`` and loses scores/views/causal_edges/hierarchy_edges/coverage →
+    the overlay is missing required top-level fields → compile-invalid. ``reference``
+    is the pre-fill overlay snapshot (full structure). The fill only legitimately
+    touches ``nodes``, so every other top-level key is restored verbatim. If the
+    fill nuked ``nodes`` entirely, restore those too (lose the fill but stay valid).
+    Returns True if anything was restored."""
+    try:
+        post = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    changed = False
+    for k, v in (reference or {}).items():
+        if k != "nodes" and k not in post:
+            post[k] = v
+            changed = True
+    if not post.get("nodes") and (reference or {}).get("nodes"):
+        post["nodes"] = reference["nodes"]
+        changed = True
+    if changed:
+        _write_yaml_if_changed(path, post)
+    return changed
+
+
 def generate_overlay_files(
     *,
     universe_path: Path,
@@ -1289,14 +1402,49 @@ def generate_overlay_files(
     stock_overlays_dir: Path,
     period: str = DEFAULT_PERIOD,
     force: bool = False,
+    only_ts_code: str | None = None,
 ) -> dict[str, int]:
+    """Generate industry + stock overlay shells.
+
+    ``only_ts_code`` (case-insensitive) scopes generation to a single stock:
+    its overlay shell(s) are (re)generated and NO other stock overlay or any
+    industry overlay is touched. This is the onboarding path — a full,
+    universe-wide regeneration would otherwise reset every *other* stock's
+    event-driven Inactive nodes back to Unknown via merge_preserve (those
+    transient Inactive nodes are intentionally NOT preserved), degrading their
+    data_coverage. When ``only_ts_code`` is None the behaviour is unchanged
+    (full regeneration of every industry + stock overlay).
+    """
     display_names = industry_display_names(industries_path)
     industries = load_industries(industries_path)
     memberships = expand_memberships(universe_path, industries_path)
+    if only_ts_code is not None:
+        want = only_ts_code.upper()
+        memberships = [m for m in memberships if m.ts_code.upper() == want]
 
     industry_overlays_dir.mkdir(parents=True, exist_ok=True)
     stock_overlays_dir.mkdir(parents=True, exist_ok=True)
     industry_graphs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Scoped single-stock generation must not rewrite other stocks' overlays —
+    # and regenerating the shared industry overlays would re-touch the files
+    # every stock inherits from, so skip them entirely in the scoped path.
+    if only_ts_code is not None:
+        for membership in memberships:
+            out_dir = stock_overlays_dir / membership.industry_id
+            out_dir.mkdir(parents=True, exist_ok=True)
+            overlay = build_stock_overlay(membership, period=period)
+            stock_path = out_dir / f"{membership.ts_code}.yaml"
+            existing_stock = _load_yaml(stock_path) if stock_path.exists() else None
+            merged_stock = merge_preserve_existing_overlay(
+                overlay, existing_stock, force=force
+            )
+            _write_yaml_if_changed(stock_path, merged_stock)
+        return {
+            "industry_overlay_count": 0,
+            "stock_overlay_count": len(memberships),
+            "company_count": len((_load_yaml(universe_path).get("constituents") or [])),
+        }
 
     for industry in industries:
         industry_id = str(industry["id"])

@@ -77,6 +77,7 @@ class _StubPro:
     def balancesheet(self, **kw):    return self._dispatch("balancesheet", **kw)
     def cashflow(self, **kw):        return self._dispatch("cashflow", **kw)
     def income(self, **kw):          return self._dispatch("income", **kw)
+    def index_daily(self, **kw):     return self._dispatch("index_daily", **kw)
 
 
 @pytest.fixture(autouse=True)
@@ -724,3 +725,334 @@ def test_period_days_quarterly_lookup() -> None:
     assert tushare_source._period_days("20260630") == 180
     assert tushare_source._period_days("20260930") == 270
     assert tushare_source._period_days("20261231") == 360
+
+
+# ---------------------------------------------------------------------------
+# L5.is.revenue_growth — H-1 (same-period prior-year YoY) + H-2 (percent unit).
+#
+# These exercise the income-derived L5.is.revenue_growth row emitted inside
+# ``_fetch_a_share_financials``. We stub only ``pro.income``; the cashflow /
+# balancesheet / dividend / daily_basic calls return None so the function
+# emits just the income-derived rows. Fully hermetic — no network, no DB.
+# ---------------------------------------------------------------------------
+
+
+class _IncomeOnlyPro:
+    """Minimal ``pro`` stub: serves a canned income DataFrame, None elsewhere.
+
+    Covers every endpoint ``_fetch_a_share_financials`` touches so we never
+    rely on a swallowed AttributeError.
+    """
+
+    def __init__(self, income_records: list[dict[str, Any]]):
+        self._income = _StubDF(income_records)
+
+    def income(self, **kw):        return self._income
+    def cashflow(self, **kw):      return None
+    def balancesheet(self, **kw):  return None
+    def dividend(self, **kw):      return None
+    def daily_basic(self, **kw):   return None
+
+
+def _revenue_growth_payload(rows: list[tuple]) -> dict:
+    """Extract the single L5.is.revenue_growth payload from upsert rows."""
+
+    matches = [r for r in rows if r[1] == "L5.is.revenue_growth"]
+    assert len(matches) == 1, f"expected exactly one revenue_growth row, got {len(matches)}"
+    return json.loads(matches[0][2])
+
+
+def test_revenue_growth_picks_same_period_prior_year_not_positional() -> None:
+    """H-1: with the latest quarter = Q1 (20260331), the YoY compare must be
+    the *same* end-date one year prior (20250331), NOT positional records[3].
+
+    The records are deliberately ordered so that positional ``records[3]``
+    would land on a MID-YEAR cut (20250630) with a very different revenue —
+    proving we no longer pick by position. Current rev = 259.55 vs the
+    20250331 rev = 100.0 → +159.55% YoY.
+    """
+
+    # Sorted-desc inside the producer; supply unsorted to exercise the sort.
+    income_records = [
+        {"end_date": "20250630", "total_revenue": 999.0},   # would be records[3] positionally
+        {"end_date": "20260331", "total_revenue": 259.55},  # current (latest)
+        {"end_date": "20251231", "total_revenue": 220.0},
+        {"end_date": "20250930", "total_revenue": 180.0},
+        {"end_date": "20250331", "total_revenue": 100.0},   # TRUE prior-year same period
+    ]
+    pro = _IncomeOnlyPro(income_records)
+    rows = tushare_source._fetch_a_share_financials(pro, ["600519.SH"], now=1_700_000_000)
+    payload = _revenue_growth_payload(rows)
+
+    assert payload["current_period"] == "20260331"
+    # H-1: compare period is the same MM-DD one year earlier, not 20250630.
+    assert payload["yoy_compare_period"] == "20250331"
+    # H-2: yoy_pct is a PERCENT — (259.55-100)/100*100 = 159.55 (was 1.5955).
+    assert payload["yoy_pct"] == pytest.approx(159.55, abs=0.01)
+
+
+def test_revenue_growth_yoy_pct_is_percent_matches_consumer_scale() -> None:
+    """H-2: a 2.5955x revenue YoY must emit yoy_pct ≈ 159.55 (percent), the
+    same unit as sibling L5.fina.revenue_yoy and what the /50 consumer
+    (aggregator ``tanh(yoy/50)`` / derive ``rev_yoy/50``) expects.
+
+    The old ratio (1.5955) would have read as tanh(1.5955/50)=~0.032 in the
+    consumer — essentially no signal — so this guards the unit explicitly.
+    """
+
+    income_records = [
+        {"end_date": "20260331", "total_revenue": 259.55},
+        {"end_date": "20251231", "total_revenue": 240.0},  # QoQ prior period
+        {"end_date": "20250331", "total_revenue": 100.0},  # YoY same period
+    ]
+    pro = _IncomeOnlyPro(income_records)
+    rows = tushare_source._fetch_a_share_financials(pro, ["000001.SZ"], now=1_700_000_000)
+    payload = _revenue_growth_payload(rows)
+
+    assert payload["yoy_pct"] == pytest.approx(159.55, abs=0.01)
+    # It is clearly a percent (>>5), so the consumer's de-saturation lands near
+    # the top instead of ~0.
+    import math
+    assert math.tanh(payload["yoy_pct"] / 50.0) > 0.9
+    # QoQ also stored as percent for payload-internal consistency:
+    # (259.55-240)/240*100 = 8.1458%.
+    assert payload["qoq_pct"] == pytest.approx(8.1458, abs=0.01)
+
+
+def test_revenue_growth_skips_when_no_prior_year_record() -> None:
+    """H-1: if no same-period prior-year record exists, emit NOTHING rather
+    than backing into a wrong-period positional compare.
+
+    Three quarters present but none is the prior-year same-period (no
+    20250331), so revenue_growth must be absent.
+    """
+
+    income_records = [
+        {"end_date": "20260331", "total_revenue": 259.55},
+        {"end_date": "20251231", "total_revenue": 240.0},
+        {"end_date": "20250930", "total_revenue": 180.0},
+        {"end_date": "20250630", "total_revenue": 150.0},
+    ]
+    pro = _IncomeOnlyPro(income_records)
+    rows = tushare_source._fetch_a_share_financials(pro, ["600000.SH"], now=1_700_000_000)
+    matches = [r for r in rows if r[1] == "L5.is.revenue_growth"]
+    assert matches == []
+    # Sanity: the latest-quarter revenue row IS still emitted (so we know the
+    # producer ran and only the YoY-dependent row was skipped).
+    assert any(r[1] == "L5.is.revenue" for r in rows)
+
+
+def test_revenue_growth_dedups_duplicate_end_date_filings() -> None:
+    """H-1b: Tushare returns multiple rows per end_date (``update_flag='0'``
+    original vs ``'1'`` restated). The producer must dedup by end_date BEFORE
+    the YoY/QoQ math, preferring the restated revenue.
+
+    Two live failure modes this guards (observed on 300308/000063/000977/
+    688041, whose growth stayed stale):
+      (a) a duplicated latest period consumes a slot in the fetch window so
+          the prior-year same-period record falls out → YoY lookup skips;
+      (b) ``records[1]`` becomes a same-period twin of ``records[0]`` →
+          QoQ collapses to ~0.
+    After dedup the records hold one row per distinct period, so the
+    20250331 YoY record is found and QoQ uses the distinct 20251231 period.
+    """
+
+    income_records = [
+        # latest period filed twice: original then restated (preferred).
+        {"end_date": "20260331", "total_revenue": 200.0, "update_flag": "0"},
+        {"end_date": "20260331", "total_revenue": 259.55, "update_flag": "1"},
+        {"end_date": "20251231", "total_revenue": 240.0, "update_flag": "1"},
+        {"end_date": "20250331", "total_revenue": 100.0, "update_flag": "1"},
+    ]
+    pro = _IncomeOnlyPro(income_records)
+    rows = tushare_source._fetch_a_share_financials(pro, ["300308.SZ"], now=1_700_000_000)
+    payload = _revenue_growth_payload(rows)
+
+    assert payload["current_period"] == "20260331"
+    assert payload["yoy_compare_period"] == "20250331"
+    # Restated current revenue (259.55) used, NOT the original (200.0):
+    # (259.55-100)/100*100 = 159.55.
+    assert payload["yoy_pct"] == pytest.approx(159.55, abs=0.01)
+    # QoQ uses the DISTINCT prior period 20251231 (240.0), not the 20260331
+    # twin → clearly non-zero: (259.55-240)/240*100 = 8.1458.
+    assert payload["qoq_pct"] == pytest.approx(8.1458, abs=0.01)
+    assert payload["qoq_pct"] != 0.0
+
+
+class _BalanceOnlyPro:
+    """Minimal ``pro`` stub serving a canned balancesheet, None elsewhere."""
+
+    def __init__(self, bs_records: list[dict[str, Any]]):
+        self._bs = _StubDF(bs_records)
+
+    def income(self, **kw):        return None
+    def cashflow(self, **kw):      return None
+    def balancesheet(self, **kw):  return self._bs
+    def dividend(self, **kw):      return None
+    def daily_basic(self, **kw):   return None
+
+
+def _goodwill_payload(rows: list[tuple]) -> dict:
+    matches = [r for r in rows if r[1] == "L5.bs.goodwill_ppe"]
+    assert len(matches) == 1, f"expected one goodwill_ppe row, got {len(matches)}"
+    return json.loads(matches[0][2])
+
+
+def test_goodwill_ppe_imputes_zero_when_null_and_balancesheet_present() -> None:
+    """B1: a null 商誉 line on a fetched balance sheet (total_assets present)
+    means "zero goodwill" (organically-grown / fabless name), not "unknown".
+    Impute 0 so goodwill_to_assets=0 (clean, no impairment risk) reaches
+    fundamental_score instead of being dropped as missing.
+    """
+
+    bs = _balancesheet_records("20260331", total_assets=1000.0,
+                               goodwill=None, fix_assets=200.0)
+    rows = tushare_source._fetch_a_share_financials(
+        _BalanceOnlyPro(bs), ["688256.SH"], now=1_700_000_000,
+    )
+    payload = _goodwill_payload(rows)
+    assert payload["goodwill"] == 0.0
+    assert payload["goodwill_to_assets"] == 0.0
+    assert payload["goodwill_imputed_zero"] is True
+
+
+def test_goodwill_ppe_not_imputed_without_balancesheet() -> None:
+    """B1 guard: with no total_assets (balance sheet absent / unfetched) and
+    no fix_assets, we must NOT fabricate a 0 goodwill — emit nothing.
+    """
+
+    bs = _balancesheet_records("20260331", goodwill=None)  # no total_assets
+    rows = tushare_source._fetch_a_share_financials(
+        _BalanceOnlyPro(bs), ["688256.SH"], now=1_700_000_000,
+    )
+    assert [r for r in rows if r[1] == "L5.bs.goodwill_ppe"] == []
+
+
+# ---------------------------------------------------------------------------
+# B4: L7.env.style — MARKET:CN growth-vs-value regime via index_daily
+# ---------------------------------------------------------------------------
+
+
+def _index_daily_frame(code: str, total_pct_over_window: float,
+                       n: int = 25) -> _StubDF:
+    """Synthetic ``index_daily`` frame: ``n`` daily closes whose close[window]
+    -> close[0] move equals ``total_pct_over_window`` (a decimal ratio), so the
+    ~20-day window return is exactly that value. Dates are most-recent-first.
+    """
+
+    window = tushare_source._CN_STYLE_WINDOW_DAYS
+    base = 100.0
+    # close at `window` bars ago = base; latest (index 0) = base*(1+ret).
+    latest = base * (1.0 + total_pct_over_window)
+    records = []
+    for i in range(n):
+        # Linear interpolation between latest (i=0) and base (i=window);
+        # beyond the window the exact value is irrelevant to the window return.
+        if i <= window:
+            close = latest + (base - latest) * (i / window)
+        else:
+            close = base
+        # trade_date descending so the helper's reverse-sort is exercised.
+        day = n - i
+        records.append({
+            "ts_code": code,
+            "trade_date": f"202605{day:02d}",
+            "close": round(close, 6),
+            "pct_chg": 0.0,
+        })
+    return _StubDF(records)
+
+
+def test_emit_market_style_growth_minus_value() -> None:
+    """Growth +8% vs value -4% over 20 trading days => gmv ≈ +0.12, a small
+    tilt; MARKET:CN row emitted Known with the documented payload keys."""
+
+    growth_code = tushare_source._CN_STYLE_GROWTH[0]
+    value_code = tushare_source._CN_STYLE_VALUE[0]
+
+    def _index_daily(ts_code, **_kw):
+        if ts_code == growth_code:
+            return _index_daily_frame(growth_code, 0.08)
+        if ts_code == value_code:
+            return _index_daily_frame(value_code, -0.04)
+        return _StubDF([])
+
+    pro = _StubPro(index_daily=_index_daily)
+    rows = tushare_source._emit_market_style(pro, now=1_700_000_000)
+    assert len(rows) == 1
+    ts_code, dp_id, value_json, status, conf, source, _now = rows[0]
+    assert ts_code == "MARKET:CN"
+    assert dp_id == "L7.env.style"
+    assert status == "Known"
+    assert source == "tushare:index_daily"
+
+    payload = json.loads(value_json)
+    assert payload["growth_ret"] == pytest.approx(0.08, abs=1e-6)
+    assert payload["value_ret"] == pytest.approx(-0.04, abs=1e-6)
+    # The consumer reads style.get("growth_minus_value").
+    assert payload["growth_minus_value"] == pytest.approx(0.12, abs=1e-6)
+    assert payload["scalar"] == pytest.approx(0.12, abs=1e-6)
+    # Small tilt: well within the documented [-0.2, +0.2] band.
+    assert -0.2 <= payload["growth_minus_value"] <= 0.2
+    assert payload["regime"] == "growth"
+    assert payload["window_days"] == tushare_source._CN_STYLE_WINDOW_DAYS
+    assert payload["growth_code"] == growth_code
+    assert payload["value_code"] == value_code
+
+
+def test_emit_market_style_value_leading_negative_tilt() -> None:
+    """Value leg outperforming => negative growth_minus_value, regime=value."""
+
+    growth_code = tushare_source._CN_STYLE_GROWTH[0]
+    value_code = tushare_source._CN_STYLE_VALUE[0]
+
+    def _index_daily(ts_code, **_kw):
+        if ts_code == growth_code:
+            return _index_daily_frame(growth_code, -0.03)
+        if ts_code == value_code:
+            return _index_daily_frame(value_code, 0.05)
+        return _StubDF([])
+
+    rows = tushare_source._emit_market_style(
+        _StubPro(index_daily=_index_daily), now=1)
+    payload = json.loads(rows[0][2])
+    assert payload["growth_minus_value"] == pytest.approx(-0.08, abs=1e-6)
+    assert payload["regime"] == "value"
+
+
+def test_emit_market_style_inactive_when_index_missing() -> None:
+    """If either index leg returns no data, emit a single Inactive MARKET:CN
+    row (mirrors _emit_market_trend's no-data behaviour)."""
+
+    growth_code = tushare_source._CN_STYLE_GROWTH[0]
+
+    def _index_daily(ts_code, **_kw):
+        # Growth returns data, value returns nothing.
+        if ts_code == growth_code:
+            return _index_daily_frame(growth_code, 0.08)
+        return _StubDF([])
+
+    rows = tushare_source._emit_market_style(
+        _StubPro(index_daily=_index_daily), now=42)
+    assert len(rows) == 1
+    ts_code, dp_id, value_json, status, _conf, source, now = rows[0]
+    assert ts_code == "MARKET:CN"
+    assert dp_id == "L7.env.style"
+    assert status == "Inactive"
+    assert source == "tushare:index_daily"
+    assert now == 42
+    assert json.loads(value_json)["reason"] == "index_unavailable"
+
+
+def test_emit_market_style_inactive_when_index_daily_errors() -> None:
+    """index_daily raising is isolated per-leg => Inactive, no exception."""
+
+    rows = tushare_source._emit_market_style(
+        _StubPro(index_daily=RuntimeError("boom")), now=7)
+    assert len(rows) == 1
+    assert rows[0][3] == "Inactive"
+    assert json.loads(rows[0][2])["reason"] == "index_unavailable"
+
+
+def test_market_style_dp_id_in_supported_set() -> None:
+    assert "L7.env.style" in tushare_source.SUPPORTED_DP_IDS

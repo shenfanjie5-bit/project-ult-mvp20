@@ -1,12 +1,14 @@
 """Tests for ``mvp20.sources.akshare_source.fetch_cls_telegraph_batch``.
 
-Covers the three MARKET:CN-keyed CLS telegraph buckets:
+Covers the four MARKET:CN-keyed CLS telegraph buckets:
   * ``L9.media.report``           — all headlines in 24h window
   * ``L9.industry.policy_change`` — policy-keyword filtered subset
   * ``L9.industry.compete_risk``  — risk-keyword filtered subset
+  * ``L9.macro.geo``              — geo-risk keyword filtered subset
 
-Network calls are stubbed via monkeypatch on the ``akshare`` module's
-``stock_info_global_cls`` symbol so the suite stays hermetic.
+Network calls are stubbed via monkeypatch on the direct CLS helper or the
+``akshare`` module's ``stock_info_global_cls`` symbol so the suite stays
+hermetic.
 """
 
 from __future__ import annotations
@@ -25,11 +27,14 @@ from mvp20.sources import akshare_source
 
 
 @pytest.fixture(autouse=True)
-def _reset_cls_cache() -> None:
+def _reset_cls_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear the module-level TTL cache between tests."""
 
     akshare_source._LAST_CLS_FETCH["ts"] = 0
     akshare_source._LAST_CLS_FETCH["rows"] = []
+    monkeypatch.setattr(
+        akshare_source, "_fetch_cls_telegraph_records_direct", lambda: None,
+    )
     yield
     akshare_source._LAST_CLS_FETCH["ts"] = 0
     akshare_source._LAST_CLS_FETCH["rows"] = []
@@ -91,11 +96,11 @@ def _make_cls_frame():
 
 
 # ---------------------------------------------------------------------------
-# Happy path — all 3 dp_ids emitted with correct keyword filtering
+# Happy path — all 4 dp_ids emitted with correct keyword filtering
 # ---------------------------------------------------------------------------
 
 
-def test_emits_three_dp_ids_with_market_sentinel(
+def test_emits_market_level_dp_ids_with_market_sentinel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import akshare as ak
@@ -105,12 +110,13 @@ def test_emits_three_dp_ids_with_market_sentinel(
     now = int(time.time())
     rows = akshare_source.fetch_cls_telegraph_batch(now)
 
-    assert len(rows) == 3, "must emit exactly 3 rows for the 3 dp_ids"
+    assert len(rows) == 4, "must emit exactly 4 rows for the CLS dp_ids"
     dp_ids = {r[1] for r in rows}
     assert dp_ids == {
         "L9.media.report",
         "L9.industry.policy_change",
         "L9.industry.compete_risk",
+        "L9.macro.geo",
     }
     # Sentinel ts_code on every row.
     for r in rows:
@@ -138,9 +144,18 @@ def test_keyword_filter_buckets_correctly(
     # L9.media.report — all 5 headlines flow through.
     assert by_dp["L9.media.report"]["count_24h"] == 5
     assert len(by_dp["L9.media.report"]["top_headlines"]) == 5
+    # The 造假/调查 headline is consumed by the risk bucket, not double-counted
+    # as media-report expectation_gap.
+    assert by_dp["L9.media.report"]["net_media_score"] == 0
+    assert by_dp["L9.media.report"]["positive_media_count"] == 0
+    assert by_dp["L9.media.report"]["negative_media_count"] == 0
+    assert by_dp["L9.media.report"]["classified_media_count"] == 0
 
     # L9.industry.policy_change — exactly 1 hit (政策/补贴 keywords).
     assert by_dp["L9.industry.policy_change"]["count_24h"] == 1
+    assert by_dp["L9.industry.policy_change"]["positive_policy_count"] == 1
+    assert by_dp["L9.industry.policy_change"]["negative_policy_count"] == 0
+    assert by_dp["L9.industry.policy_change"]["net_policy_score"] == 1
     policy_title = by_dp["L9.industry.policy_change"]["top_headlines"][0]["title"]
     assert "政策" in policy_title or "补贴" in policy_title
 
@@ -148,6 +163,11 @@ def test_keyword_filter_buckets_correctly(
     assert by_dp["L9.industry.compete_risk"]["count_24h"] == 1
     risk_title = by_dp["L9.industry.compete_risk"]["top_headlines"][0]["title"]
     assert any(kw in risk_title for kw in ("诉讼", "调查", "造假"))
+
+    # L9.macro.geo — no geo keyword in this fixture, but successful decode
+    # still records a Known neutral observation.
+    assert by_dp["L9.macro.geo"]["count_24h"] == 0
+    assert by_dp["L9.macro.geo"]["event_active"] is False
 
 
 def test_status_known_when_bucket_has_hits(
@@ -160,18 +180,66 @@ def test_status_known_when_bucket_has_hits(
     now = int(time.time())
     rows = akshare_source.fetch_cls_telegraph_batch(now)
     statuses = {r[1]: r[3] for r in rows}
-    # All 3 buckets have at least one hit → Known.
+    # Successful decode makes all 4 buckets Known; empty buckets are neutral
+    # observations rather than missing data.
     assert statuses == {
         "L9.media.report": "Known",
         "L9.industry.policy_change": "Known",
         "L9.industry.compete_risk": "Known",
+        "L9.macro.geo": "Known",
     }
+
+
+def test_direct_cls_roll_api_is_preferred(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Current cls.cn web API rows are used before the stale akshare wrapper."""
+
+    from datetime import datetime
+
+    import akshare as ak
+
+    base = datetime.now()
+    direct_records = [
+        {
+            "标题": "龙头公司涨停并创历史新高",
+            "内容": "订单大增推动市场关注。",
+            "发布日期": base.strftime("%Y-%m-%d"),
+            "发布时间": base.strftime("%H:%M:%S"),
+        },
+        {
+            "标题": "产业补贴政策发布",
+            "内容": "专项资金支持先进制造。",
+            "发布日期": base.strftime("%Y-%m-%d"),
+            "发布时间": base.strftime("%H:%M:%S"),
+        },
+    ]
+
+    def _legacy_should_not_run():
+        raise RuntimeError("legacy akshare should not be called")
+
+    monkeypatch.setattr(
+        akshare_source,
+        "_fetch_cls_telegraph_records_direct",
+        lambda: list(direct_records),
+    )
+    monkeypatch.setattr(ak, "stock_info_global_cls", _legacy_should_not_run)
+
+    rows = akshare_source.fetch_cls_telegraph_batch(int(time.time()))
+    by_dp = {r[1]: json.loads(r[2]) for r in rows}
+
+    assert len(rows) == 4
+    assert by_dp["L9.media.report"]["count_24h"] == 2
+    assert by_dp["L9.media.report"]["positive_media_count"] == 1
+    assert by_dp["L9.industry.policy_change"]["count_24h"] == 1
+    assert by_dp["L9.industry.compete_risk"]["count_24h"] == 0
+    assert by_dp["L9.macro.geo"]["count_24h"] == 0
 
 
 def test_status_inactive_when_bucket_misses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If a bucket has 0 keyword matches, that dp_id is Inactive."""
+    """If a bucket has 0 keyword matches, that dp_id is Known-neutral."""
 
     from datetime import datetime
 
@@ -198,9 +266,172 @@ def test_status_inactive_when_bucket_misses(
     statuses = {r[1]: r[3] for r in rows}
     # L9.media.report still has the headline → Known.
     assert statuses["L9.media.report"] == "Known"
-    # Policy / risk filters miss → Inactive.
-    assert statuses["L9.industry.policy_change"] == "Inactive"
-    assert statuses["L9.industry.compete_risk"] == "Inactive"
+    report_payload = json.loads(
+        next(r[2] for r in rows if r[1] == "L9.media.report")
+    )
+    assert report_payload["net_media_score"] == 0
+    assert report_payload["event_active"] is False
+    # Policy / risk misses are decoded neutral observations.
+    assert statuses["L9.industry.policy_change"] == "Known"
+    policy_payload = json.loads(
+        next(r[2] for r in rows if r[1] == "L9.industry.policy_change")
+    )
+    assert policy_payload["count_24h"] == 0
+    assert policy_payload["net_policy_score"] == 0
+    assert statuses["L9.industry.compete_risk"] == "Known"
+    risk_payload = json.loads(
+        next(r[2] for r in rows if r[1] == "L9.industry.compete_risk")
+    )
+    assert risk_payload["count_24h"] == 0
+    assert risk_payload["event_active"] is False
+    assert statuses["L9.macro.geo"] == "Known"
+    geo_payload = json.loads(
+        next(r[2] for r in rows if r[1] == "L9.macro.geo")
+    )
+    assert geo_payload["count_24h"] == 0
+    assert geo_payload["event_active"] is False
+
+
+def test_geo_bucket_matches_geopolitical_keywords(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+
+    import akshare as ak
+
+    base = datetime.now()
+
+    class _GeoDF:
+        def __len__(self):
+            return 2
+
+        def to_dict(self, orient="records"):
+            return [
+                {
+                    "标题": "红海航运冲突扰动出口供应链",
+                    "内容": "地缘风险升温，贸易摩擦加剧。",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+                {
+                    "标题": "A股早盘震荡",
+                    "内容": "盘中个股涨跌互现。",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+            ]
+
+    monkeypatch.setattr(ak, "stock_info_global_cls", lambda: _GeoDF())
+
+    rows = akshare_source.fetch_cls_telegraph_batch(int(time.time()))
+    payload = json.loads(
+        next(r[2] for r in rows if r[1] == "L9.macro.geo")
+    )
+    assert payload["count_24h"] == 1
+    assert payload["event_active"] is True
+    assert "红海" in payload["top_headlines"][0]["title"]
+
+
+def test_policy_direction_keeps_generic_words_neutral(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+
+    import akshare as ak
+
+    base = datetime.now()
+
+    class _PolicyDF:
+        def __len__(self):
+            return 3
+
+        def to_dict(self, orient="records"):
+            return [
+                {
+                    "标题": "产业补贴政策发布",
+                    "内容": "专项资金支持先进制造",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+                {
+                    "标题": "出口管制措施收紧",
+                    "内容": "相关产品限制出口",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+                {
+                    "标题": "行业管理办法征求意见",
+                    "内容": "公开征求意见",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+            ]
+
+    monkeypatch.setattr(ak, "stock_info_global_cls", lambda: _PolicyDF())
+
+    rows = akshare_source.fetch_cls_telegraph_batch(int(time.time()))
+    payload = json.loads(
+        next(r[2] for r in rows if r[1] == "L9.industry.policy_change")
+    )
+    assert payload["count_24h"] == 3
+    assert payload["positive_policy_count"] == 1
+    assert payload["negative_policy_count"] == 1
+    assert payload["net_policy_score"] == 0
+
+
+def test_media_report_direction_keeps_generic_volume_neutral(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime
+
+    import akshare as ak
+
+    base = datetime.now()
+
+    class _MediaDF:
+        def __len__(self):
+            return 4
+
+        def to_dict(self, orient="records"):
+            return [
+                {
+                    "标题": "龙头公司涨停并创历史新高",
+                    "内容": "订单大增推动市场关注",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+                {
+                    "标题": "某公司跌停并业绩预亏",
+                    "内容": "公司公告业绩预亏",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+                {
+                    "标题": "A股早盘上涨",
+                    "内容": "盘中震荡，个股涨跌互现",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+                {
+                    "标题": "行业管理办法征求意见",
+                    "内容": "公开征求意见",
+                    "发布日期": base.strftime("%Y-%m-%d"),
+                    "发布时间": base.strftime("%H:%M:%S"),
+                },
+            ]
+
+    monkeypatch.setattr(ak, "stock_info_global_cls", lambda: _MediaDF())
+
+    rows = akshare_source.fetch_cls_telegraph_batch(int(time.time()))
+    payload = json.loads(
+        next(r[2] for r in rows if r[1] == "L9.media.report")
+    )
+    assert payload["count_24h"] == 4
+    assert payload["positive_media_count"] == 1
+    assert payload["negative_media_count"] == 1
+    assert payload["classified_media_count"] == 2
+    assert payload["net_media_score"] == 0
+    assert payload["event_active"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +451,13 @@ def test_top_headlines_cap_at_10(monkeypatch: pytest.MonkeyPatch) -> None:
         {
             "标题": f"研报-{i}",  # benign keyword
             "内容": f"内容 {i}",
-            "发布日期": base.strftime("%Y-%m-%d"),
+            # Derive 发布日期 AND 发布时间 from the SAME (base+i) instant so they
+            # stay consistent across a midnight boundary. Previously the date was
+            # pinned to ``base`` while the time advanced by i minutes — when base
+            # sat at 23:5x, records past midnight got time "00:0x" with the prior
+            # day's date, which ``_parse_cls_publish_epoch`` reads as ~24h ago →
+            # dropped by the 24h window → count_24h flaky (<20) near midnight.
+            "发布日期": (base + timedelta(minutes=i)).strftime("%Y-%m-%d"),
             "发布时间": (base + timedelta(minutes=i)).strftime("%H:%M:%S"),
         }
         for i in range(20)
@@ -316,15 +553,47 @@ def test_filters_out_headlines_older_than_24h(
     assert report_payload["top_headlines"][0]["title"] == "新政策出台"
 
 
-# ---------------------------------------------------------------------------
-# Failure-tolerance — Inactive triplet emitted when upstream fails
-# ---------------------------------------------------------------------------
-
-
-def test_inactive_triplet_on_upstream_error(
+def test_report_known_neutral_when_no_recent_headlines(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Endpoint 502 / RuntimeError → emit 3 Inactive rows, never crash."""
+    from datetime import datetime, timedelta
+
+    import akshare as ak
+
+    stale = datetime.now() - timedelta(hours=48)
+
+    class _StaleOnlyDF:
+        def __len__(self):
+            return 1
+
+        def to_dict(self, orient="records"):
+            return [{
+                "标题": "陈年利好旧闻",
+                "内容": "不应进入24小时窗口",
+                "发布日期": stale.strftime("%Y-%m-%d"),
+                "发布时间": stale.strftime("%H:%M:%S"),
+            }]
+
+    monkeypatch.setattr(ak, "stock_info_global_cls", lambda: _StaleOnlyDF())
+
+    rows = akshare_source.fetch_cls_telegraph_batch(int(time.time()))
+    report_row = next(r for r in rows if r[1] == "L9.media.report")
+    payload = json.loads(report_row[2])
+    assert report_row[3] == "Known"
+    assert payload["count_24h"] == 0
+    assert payload["net_media_score"] == 0
+    assert payload["event_active"] is False
+
+
+# ---------------------------------------------------------------------------
+# Failure-tolerance — Inactive CLS rows emitted when upstream fails
+# ---------------------------------------------------------------------------
+
+
+def test_inactive_cls_rows_on_upstream_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Endpoint 502 / RuntimeError → emit Inactive rows, never crash."""
 
     import akshare as ak
 
@@ -336,13 +605,14 @@ def test_inactive_triplet_on_upstream_error(
     now = int(time.time())
     rows = akshare_source.fetch_cls_telegraph_batch(now)
 
-    assert len(rows) == 3
+    assert len(rows) == 4
     assert {r[3] for r in rows} == {"Inactive"}
     assert {r[0] for r in rows} == {"MARKET:CN"}
     assert {r[1] for r in rows} == {
         "L9.media.report",
         "L9.industry.policy_change",
         "L9.industry.compete_risk",
+        "L9.macro.geo",
     }
     # Reason embedded in payload for diagnostics.
     for r in rows:
@@ -351,10 +621,10 @@ def test_inactive_triplet_on_upstream_error(
         assert "simulated CLS 502" in payload["reason"]
 
 
-def test_inactive_triplet_on_empty_frame(
+def test_inactive_cls_rows_on_empty_frame(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Empty DataFrame → Inactive triplet, not crash."""
+    """Empty DataFrame → Inactive rows, not crash."""
 
     import akshare as ak
 
@@ -369,11 +639,11 @@ def test_inactive_triplet_on_empty_frame(
 
     now = int(time.time())
     rows = akshare_source.fetch_cls_telegraph_batch(now)
-    assert len(rows) == 3
+    assert len(rows) == 4
     assert {r[3] for r in rows} == {"Inactive"}
 
 
-def test_inactive_triplet_when_symbol_missing(
+def test_inactive_cls_rows_when_symbol_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Older akshare versions without the symbol → graceful Inactive."""
@@ -385,7 +655,7 @@ def test_inactive_triplet_when_symbol_missing(
 
     now = int(time.time())
     rows = akshare_source.fetch_cls_telegraph_batch(now)
-    assert len(rows) == 3
+    assert len(rows) == 4
     assert {r[3] for r in rows} == {"Inactive"}
 
 
@@ -445,7 +715,7 @@ def test_ttl_cache_expires_after_window(
 
 
 # ---------------------------------------------------------------------------
-# SUPPORTED_DP_IDS contract — module-level set declares the 3 new dp_ids
+# SUPPORTED_DP_IDS contract — module-level set declares the CLS dp_ids
 # ---------------------------------------------------------------------------
 
 
@@ -454,6 +724,7 @@ def test_supported_dp_ids_contains_market_level() -> None:
         "L9.media.report",
         "L9.industry.policy_change",
         "L9.industry.compete_risk",
+        "L9.macro.geo",
     }
     assert expected.issubset(akshare_source.SUPPORTED_DP_IDS)
     assert expected == akshare_source.MARKET_LEVEL_DP_IDS

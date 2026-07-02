@@ -1,4 +1,4 @@
-"""Tests for Bucket A — 14 hard-data dp_ids added to ``tushare_source``.
+"""Tests for Bucket A hard-data dp_ids in ``tushare_source``.
 
 All Tushare HTTP calls are stubbed via fake DataFrames so the suite stays
 hermetic. We exercise each fetcher and the dispatcher contract:
@@ -6,6 +6,7 @@ hermetic. We exercise each fetcher and the dispatcher contract:
   * L2.segment.revenue_share / gross_margin / growth  — fina_mainbz
   * L5.fcst.guidance_change  — forecast (2 most recent)
   * L5.surprise.beat_miss    — express + forecast
+  * L5.surprise.preprice     — forecast announcement + daily price window
   * L8.fin.eps_downward      — forecast EPS midpoint delta
   * L8.fin.goodwill_impairment — balancesheet goodwill drop
   * L8.fin.revenue_profit_miss — derived from beat_miss
@@ -20,6 +21,7 @@ hermetic. We exercise each fetcher and the dispatcher contract:
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
@@ -115,17 +117,19 @@ def _clear_caches():
 
 
 # ---------------------------------------------------------------------------
-# SUPPORTED_DP_IDS contract — all 14 dp_ids registered.
+# SUPPORTED_DP_IDS contract — all Bucket A + direct priced dp_ids registered.
 # ---------------------------------------------------------------------------
 
 
-def test_supported_dp_ids_includes_fourteen_bucket_a() -> None:
+def test_supported_dp_ids_includes_bucket_a_and_priced_crowdedness() -> None:
     expected = {
         "L2.segment.revenue_share", "L2.segment.gross_margin",
         "L2.segment.growth",
         "L5.fcst.guidance_change", "L5.surprise.beat_miss",
+        "L5.surprise.preprice",
         "L8.fin.eps_downward", "L8.fin.goodwill_impairment",
         "L8.fin.revenue_profit_miss",
+        "L6.priced.crowdedness",
         "L8.cap.crowdedness", "L8.cap.short_increase",
         "L8.cap.liquidity_short",
         "L8.industry.valuation_compression", "L8.op.cost_overrun",
@@ -251,6 +255,59 @@ def test_derive_beat_miss_miss() -> None:
     assert payload["deviation_pct"] < 0
 
 
+def test_derive_beat_miss_prefers_net_profit_yoy() -> None:
+    express = [
+        {
+            "ann_date": "20260415",
+            "end_date": "20260331",
+            "yoy_net_profit": 65.0,
+            "yoy_sales": 5.0,
+        },
+    ]
+    forecast = [
+        {"ann_date": "20260315", "end_date": "20260331",
+         "p_change_min": 30.0, "p_change_max": 50.0},
+    ]
+    payload, status = tushare_source._derive_beat_miss(express, forecast)
+    assert status == "Known"
+    assert payload["classification"] == "beat"
+    assert payload["actual_yoy_pct"] == 65.0
+    assert payload["actual_yoy_metric"] == "net_profit_yoy"
+    assert payload["actual_revenue_yoy"] is None
+
+
+def test_derive_beat_miss_computes_yoy_from_express_amounts() -> None:
+    express = [
+        {
+            "ann_date": "20260415",
+            "end_date": "20260331",
+            "n_income": 150.0,
+            # Local DockCase/Tushare express archives may store prior-period
+            # amount in this column; this value must not be treated as pct.
+            "yoy_net_profit": 100.0,
+        },
+        {
+            "ann_date": "20250415",
+            "end_date": "20250331",
+            "n_income": 100.0,
+        },
+    ]
+    forecast = [
+        {"ann_date": "20260315", "end_date": "20260331",
+         "p_change_min": 30.0, "p_change_max": 40.0},
+    ]
+
+    payload, status = tushare_source._derive_beat_miss(express, forecast)
+
+    assert status == "Known"
+    assert payload["actual_yoy_pct"] == 50.0
+    assert payload["actual_yoy_metric"] == "net_profit_yoy"
+    assert payload["actual_value"] == 150.0
+    assert payload["prior_value"] == 100.0
+    assert payload["yoy_compare_period"] == "20250331"
+    assert payload["classification"] == "beat"
+
+
 def test_derive_beat_miss_in_range() -> None:
     express = [
         {"ann_date": "20260415", "end_date": "20260331",
@@ -279,6 +336,165 @@ def test_derive_beat_miss_inactive_when_no_forecast() -> None:
          "yoy_sales": 5.0},
     ], [])
     assert status == "Inactive"
+
+
+def test_derive_beat_miss_inactive_when_all_yoy_metrics_missing() -> None:
+    payload, status = tushare_source._derive_beat_miss([
+        {"ann_date": "20260415", "end_date": "20260331",
+         "revenue": 100.0, "n_income": 10.0},
+    ], [
+        {"ann_date": "20260315", "end_date": "20260331",
+         "p_change_min": 30.0, "p_change_max": 50.0},
+    ])
+    assert status == "Inactive"
+    assert payload["reason"] == (
+        "express missing comparable n_income/total_profit/"
+        "operate_profit/revenue or plausible yoy pct fields"
+    )
+
+
+def test_fetch_earnings_risk_batch_emits_only_event_risk_rows() -> None:
+    pro = _StubPro(
+        forecast=_StubDF([
+            {"ann_date": "20260315", "end_date": "20260331",
+             "p_change_min": 30.0, "p_change_max": 50.0},
+        ]),
+        express=_StubDF([
+            {"ann_date": "20260415", "end_date": "20260331",
+             "yoy_net_profit": 5.0},
+        ]),
+        balancesheet=_StubDF([
+            {"end_date": "20260331", "goodwill": 80.0},
+            {"end_date": "20251231", "goodwill": 100.0},
+        ]),
+    )
+
+    rows = tushare_source.fetch_earnings_risk_batch(
+        pro, ["300750.SZ", "NVDA.US"], now=1700000000, sample_size=10,
+    )
+
+    assert {row[1] for row in rows} == {
+        "L5.surprise.beat_miss",
+        "L8.fin.revenue_profit_miss",
+        "L8.fin.goodwill_impairment",
+    }
+    assert len(rows) == 3
+    by_dp = {row[1]: row for row in rows}
+    assert by_dp["L5.surprise.beat_miss"][3] == "Known"
+    assert json.loads(by_dp["L5.surprise.beat_miss"][2])["classification"] == "miss"
+    assert by_dp["L8.fin.revenue_profit_miss"][3] == "Known"
+    assert json.loads(by_dp["L8.fin.revenue_profit_miss"][2])["alert_severity"] == "ERROR"
+    assert by_dp["L8.fin.goodwill_impairment"][3] == "Known"
+    assert json.loads(by_dp["L8.fin.goodwill_impairment"][2])["alert_severity"] == "ERROR"
+
+
+# ---------------------------------------------------------------------------
+# _derive_preprice_surprise — L5.surprise.preprice
+# ---------------------------------------------------------------------------
+
+
+def _daily_price_rows(anchor: date = date(2026, 4, 15)) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for offset in range(40):
+        close = {
+            0: 120.0,
+            5: 100.0,
+            10: 80.0,
+            20: 60.0,
+        }.get(offset, 110.0)
+        rows.append({
+            "trade_date": (anchor - timedelta(days=offset)).strftime("%Y%m%d"),
+            "close": close,
+            "amount": 50_000,
+            "pct_chg": (-8.0 if offset == 0 else 0.5),
+            "vol": 8000.0 if offset == 0 else 1000.0,
+        })
+    return rows
+
+
+def test_derive_preprice_surprise_known_from_forecast_and_daily() -> None:
+    forecast = [
+        {"ann_date": "20260415", "end_date": "20260331", "type": "预增",
+         "p_change_min": 30.0, "p_change_max": 50.0},
+    ]
+    payload, status = tushare_source._derive_preprice_surprise(
+        forecast, _daily_price_rows(),
+    )
+
+    assert status == "Known"
+    assert payload["ann_date"] == "20260415"
+    assert payload["anchor_trade_date"] == "20260415"
+    assert payload["forecast_mid_pct"] == 40.0
+    assert payload["run_up_5d_pct"] == pytest.approx(0.2)
+    assert payload["run_up_10d_pct"] == pytest.approx(0.5)
+    assert payload["run_up_20d_pct"] == pytest.approx(1.0)
+
+
+def test_derive_preprice_surprise_anchors_to_prior_trading_day() -> None:
+    forecast = [
+        {"ann_date": "20260416", "end_date": "20260331", "type": "预增"},
+    ]
+    payload, status = tushare_source._derive_preprice_surprise(
+        forecast, _daily_price_rows(),
+    )
+
+    assert status == "Known"
+    assert payload["anchor_trade_date"] == "20260415"
+
+
+def test_derive_preprice_surprise_inactive_when_missing_inputs() -> None:
+    forecast = [
+        {"ann_date": "20260415", "end_date": "20260331", "type": "预增"},
+    ]
+    assert tushare_source._derive_preprice_surprise([], _daily_price_rows())[1] == "Inactive"
+    assert tushare_source._derive_preprice_surprise(forecast, [])[1] == "Inactive"
+    assert tushare_source._derive_preprice_surprise(
+        [{"end_date": "20260331"}], _daily_price_rows(),
+    )[1] == "Inactive"
+
+
+def test_fetch_preprice_surprise_batch_emits_only_preprice() -> None:
+    pro = _StubPro(
+        forecast=_StubDF([
+            {"ann_date": "20260415", "end_date": "20260331", "type": "预增",
+             "p_change_min": 30.0, "p_change_max": 50.0},
+        ]),
+        daily=_StubDF(_daily_price_rows()),
+    )
+
+    rows = tushare_source.fetch_preprice_surprise_batch(
+        pro, ["300750.SZ", "NVDA.US"], now=1700000000,
+    )
+
+    assert len(rows) == 1
+    ts_code, dp_id, value_json, status, confidence, source, updated_at = rows[0]
+    assert ts_code == "300750.SZ"
+    assert dp_id == "L5.surprise.preprice"
+    assert status == "Known"
+    assert confidence == 0.75
+    assert source == "tushare:forecast+daily.derived"
+    assert updated_at == 1700000000
+    payload = json.loads(value_json)
+    assert payload["run_up_20d_pct"] == pytest.approx(1.0)
+    assert {r[1] for r in rows} == {"L5.surprise.preprice"}
+
+
+def test_fetch_preprice_surprise_batch_inactive_without_daily_call() -> None:
+    pro = _StubPro(
+        forecast=_StubDF([]),
+        daily=RuntimeError("daily should not be called without forecast"),
+    )
+
+    rows = tushare_source.fetch_preprice_surprise_batch(
+        pro, ["300750.SZ"], now=1700000000,
+    )
+
+    assert len(rows) == 1
+    assert rows[0][1] == "L5.surprise.preprice"
+    assert rows[0][3] == "Inactive"
+    assert json.loads(rows[0][2])["reason"] == "no forecast"
+    assert pro.call_counts["forecast"] == 1
+    assert pro.call_counts["daily"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -349,13 +565,32 @@ def test_derive_goodwill_impairment_warn() -> None:
 
 
 def test_derive_goodwill_impairment_inactive_when_field_missing() -> None:
-    # Cache fields don't include goodwill — payload returns Inactive.
+    # Upstream schema drift or permission-limited responses can still omit
+    # goodwill; payload should remain Inactive rather than fabricating an event.
     records = [
         {"end_date": "20260331"},
         {"end_date": "20251231"},
     ]
     payload, status = tushare_source._derive_goodwill_impairment(records)
     assert status == "Inactive"
+
+
+def test_get_balancesheet_records_requests_goodwill() -> None:
+    seen: dict[str, str] = {}
+
+    def balancesheet(**kwargs):
+        seen["fields"] = kwargs["fields"]
+        return _StubDF([
+            {"end_date": "20260331", "goodwill": 80.0},
+            {"end_date": "20251231", "goodwill": 100.0},
+        ])
+
+    records = tushare_source._get_balancesheet_records(
+        _StubPro(balancesheet=balancesheet), "000001.SZ", now=1_700_000_000,
+    )
+
+    assert "goodwill" in seen["fields"].split(",")
+    assert records[0]["goodwill"] == 80.0
 
 
 def test_derive_goodwill_impairment_inactive_when_steady() -> None:
@@ -375,7 +610,9 @@ def test_derive_goodwill_impairment_inactive_when_steady() -> None:
 def test_derive_revenue_profit_miss_known_when_miss() -> None:
     bm = {
         "classification": "miss",
-        "actual_revenue_yoy": 5.0,
+        "actual_yoy_pct": 5.0,
+        "actual_yoy_metric": "net_profit_yoy",
+        "actual_revenue_yoy": None,
         "forecast_range_min": 30.0,
         "forecast_range_max": 50.0,
         "deviation_pct": -25.0,
@@ -384,6 +621,8 @@ def test_derive_revenue_profit_miss_known_when_miss() -> None:
     payload, status = tushare_source._derive_revenue_profit_miss(bm)
     assert status == "Known"
     assert payload["alert_severity"] == "ERROR"
+    assert payload["actual_yoy_pct"] == 5.0
+    assert payload["actual_yoy_metric"] == "net_profit_yoy"
 
 
 def test_derive_revenue_profit_miss_inactive_when_beat() -> None:
@@ -430,6 +669,18 @@ def test_derive_crowdedness_inactive_when_normal_turnover() -> None:
         records, main_net_inflow_5d=None,
     )
     assert status == "Inactive"
+
+
+def test_derive_priced_crowdedness_percentile_from_turnover_history() -> None:
+    records = (
+        [{"trade_date": "20260510", "turnover_rate": 35.0}]
+        + [{"trade_date": f"202604{i:02d}", "turnover_rate": float(i)}
+           for i in range(1, 30)]
+    )
+    payload, status = tushare_source._derive_priced_crowdedness(records)
+    assert status == "Known"
+    assert payload["label"] in {"crowded", "extreme"}
+    assert payload["percentile"] > 0.75
 
 
 # ---------------------------------------------------------------------------
@@ -507,14 +758,47 @@ def test_derive_valuation_compression_error_on_severe_drop() -> None:
     assert payload["alert_severity"] == "ERROR"
 
 
-def test_derive_valuation_compression_inactive_when_expanding() -> None:
+def test_derive_valuation_compression_known_neutral_when_expanding() -> None:
     payload, status = tushare_source._derive_valuation_compression(25.0, 20.0)
-    assert status == "Inactive"
+    assert status == "Known"
+    assert payload["alert_severity"] is None
+    assert payload["compression_pct"] < 0
 
 
 def test_derive_valuation_compression_inactive_when_missing_data() -> None:
     payload, status = tushare_source._derive_valuation_compression(None, 20.0)
     assert status == "Inactive"
+
+
+def test_fetch_industry_valuation_compression_batch_known_neutral(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tushare_source,
+        "_active_industry_ids",
+        lambda: ["AI_COMPUTE", "STORAGE_GRID"],
+    )
+
+    def _history(_pro, ts_code, _now):
+        assert ts_code == "000001.SZ"
+        return [
+            {"trade_date": f"202606{i:02d}", "pe_ttm": 25.0}
+            for i in range(1, 31)
+        ] + [
+            {"trade_date": f"202605{i:02d}", "pe_ttm": 20.0}
+            for i in range(1, 61)
+        ]
+
+    monkeypatch.setattr(tushare_source, "_get_daily_basic_history", _history)
+
+    rows = tushare_source.fetch_industry_valuation_compression_batch(
+        object(), ["000001.SZ", "AAPL.US"], now=1700000000, sample_size=10,
+    )
+
+    assert len(rows) == 2
+    assert {row[0] for row in rows} == {"INDUSTRY:AI_COMPUTE", "INDUSTRY:STORAGE_GRID"}
+    assert {row[3] for row in rows} == {"Known"}
+    payload = json.loads(rows[0][2])
+    assert payload["alert_severity"] is None
+    assert payload["sampled_stock_count"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -629,12 +913,7 @@ def _make_bucket_a_pro(yoy_period: str = "20250331") -> _StubPro:
          "pe_ttm": 12.0 if i < 30 else 20.0}
         for i in range(120)
     ])
-    daily = _StubDF([
-        {"trade_date": f"2026040{i}", "amount": 50_000,
-         "pct_chg": (-8.0 if i == 0 else 0.5),
-         "vol": 8000.0 if i == 0 else 1000.0}
-        for i in range(40)
-    ])
+    daily = _StubDF(_daily_price_rows())
     margin = _StubDF(
         # rqye: 30 newest at 120, then 60 older at 90 → 30/90 ratio +20%
         [{"trade_date": f"d{i:03d}", "rqye": 120.0, "rzmre": 500.0}
@@ -651,12 +930,12 @@ def _make_bucket_a_pro(yoy_period: str = "20250331") -> _StubPro:
     )
 
 
-def test_fetch_bucket_a_batch_emits_all_14_dp_ids() -> None:
+def test_fetch_bucket_a_batch_emits_all_15_dp_ids() -> None:
     pro = _make_bucket_a_pro()
     rows = tushare_source.fetch_bucket_a_batch(
         pro, ["300750.SZ"], now=1700000000,
     )
-    assert rows, "expected at least 13 per-stock rows"
+    assert rows, "expected at least 15 per-stock rows"
     by_dp: dict[str, list[tuple]] = {}
     for r in rows:
         by_dp.setdefault(r[1], []).append(r)
@@ -664,8 +943,10 @@ def test_fetch_bucket_a_batch_emits_all_14_dp_ids() -> None:
         "L2.segment.revenue_share", "L2.segment.gross_margin",
         "L2.segment.growth",
         "L5.fcst.guidance_change", "L5.surprise.beat_miss",
+        "L5.surprise.preprice",
         "L8.fin.eps_downward", "L8.fin.goodwill_impairment",
         "L8.fin.revenue_profit_miss",
+        "L6.priced.crowdedness",
         "L8.cap.crowdedness", "L8.cap.short_increase",
         "L8.cap.liquidity_short",
         "L8.op.cost_overrun",
@@ -705,8 +986,10 @@ def test_fetch_bucket_a_batch_handles_empty_data() -> None:
         "L2.segment.revenue_share", "L2.segment.gross_margin",
         "L2.segment.growth",
         "L5.fcst.guidance_change", "L5.surprise.beat_miss",
+        "L5.surprise.preprice",
         "L8.fin.eps_downward", "L8.fin.goodwill_impairment",
         "L8.fin.revenue_profit_miss",
+        "L6.priced.crowdedness",
         "L8.cap.crowdedness", "L8.cap.short_increase",
         "L8.cap.liquidity_short",
         "L8.op.cost_overrun",
@@ -732,6 +1015,8 @@ def test_fetch_bucket_a_batch_isolates_endpoint_failures() -> None:
     assert by_dp["L5.fcst.guidance_change"][3] == "Inactive"
     assert "L5.surprise.beat_miss" in by_dp
     assert by_dp["L5.surprise.beat_miss"][3] == "Inactive"
+    assert "L5.surprise.preprice" in by_dp
+    assert by_dp["L5.surprise.preprice"][3] == "Inactive"
     assert "L8.fin.eps_downward" in by_dp
     assert by_dp["L8.fin.eps_downward"][3] == "Inactive"
     # Income-only dp_ids still flow

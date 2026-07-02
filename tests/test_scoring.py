@@ -16,6 +16,7 @@ from mvp20.scoring import (
     SIGNAL_BUY_THRESHOLD,
     SIGNAL_HOLD_THRESHOLD,
     SIGNAL_WATCH_THRESHOLD,
+    SPEC28_DEFAULT_HORIZON_MIX,
     classify_mode,
     compute_company_score,
     compute_final_score,
@@ -206,9 +207,16 @@ class TestCompanyScore:
             valuation_pressure=0.0,
             priced_in_discount=0.0,
         )
-        # 0.3 + 0.4*0.5 + (-0.1) = 0.4
-        assert out["score"] == pytest.approx(0.4)
+        # R-2b: ``industry_contrib`` is now the RAW weighted_sum Σ(score×weight)
+        # where weight = exposure×rev_share×prof_e×fin_s×val_s×confidence.
+        # weights: v1 conf1 → w=1.0; v2 exposure0.5 conf1 → w=0.5; v3 w=1.0.
+        # weighted_sum = 0.3*1 + 0.4*0.5 + (-0.1)*1 = 0.4 (surfaced for
+        # transparency). The value that enters ``score`` is the COVERAGE-WEIGHTED
+        # MEAN weighted_sum/weight_sum = 0.4 / (1.0+0.5+1.0) = 0.4/2.5 = 0.16
+        # (already in [-1,1]; no tanh). No other channels here, so score == mean.
         assert out["components"]["industry_contrib"] == pytest.approx(0.4)
+        assert out["components"]["industry_contrib_bounded"] == pytest.approx(0.16)
+        assert out["score"] == pytest.approx(0.16)
         assert len(out["industry_contributions"]) == 3
 
     def test_discount_terms_subtract(self) -> None:
@@ -220,10 +228,27 @@ class TestCompanyScore:
             valuation_pressure=0.1,
             priced_in_discount=0.05,
         )
-        # 0.5 + 0.2 + 0.1 - 0.1 - 0.1 - 0.05
-        assert out["score"] == pytest.approx(0.55)
+        # R-2b: the fundamental block is now the COVERAGE-WEIGHTED MEAN of the
+        # industry vars (already in [-1,1], no tanh). A single node's mean is
+        # the node score itself (the multipliers only scale its weight, which
+        # cancels in the 1-node mean), so mean = 0.5. The discount/additive
+        # channels then subtract/add unchanged:
+        #   score = 0.5 + 0.2 + 0.1 - 0.1 - 0.1 - 0.05 = 0.55.
+        # The raw weighted_sum (0.5*weight, weight=1.0 here) still lives in
+        # components["industry_contrib"].
+        assert out["components"]["industry_contrib"] == pytest.approx(0.5)
+        assert out["score"] == pytest.approx(0.5 + 0.2 + 0.1 - 0.1 - 0.1 - 0.05)
 
-    def test_multiplier_chain_applied(self) -> None:
+    def test_multiplier_chain_applied_to_raw_contrib_not_mean(self) -> None:
+        # R-2b: the multiplier chain (exposure×rev_share×prof_e×fin_s×val_s) now
+        # scales only the WEIGHT, not the value that enters ``score``. For a
+        # SINGLE industry var the coverage-weighted mean is the node score
+        # itself (the weight cancels: weighted_sum/weight_sum = score×w / w =
+        # score), so score = 1.0 regardless of the multipliers. The multipliers
+        # still surface in the RAW weighted_sum reported as
+        # components["industry_contrib"]: contrib = score×weight, and with
+        # confidence defaulting to 1.0 the weight == the product chain
+        # 0.5*0.5*2.0*1.5*1.0 = 0.75 → weighted_sum = 1.0*0.75 = 0.75.
         out = compute_company_score(
             industry_variables=[
                 self._industry_var(
@@ -238,8 +263,9 @@ class TestCompanyScore:
             valuation_pressure=0.0,
             priced_in_discount=0.0,
         )
-        # 1.0 * 0.5 * 0.5 * 2.0 * 1.5 * 1.0 = 0.75
-        assert out["score"] == pytest.approx(0.75)
+        assert out["components"]["industry_contrib"] == pytest.approx(0.75)
+        assert out["components"]["industry_contrib_bounded"] == pytest.approx(1.0)
+        assert out["score"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -498,12 +524,21 @@ class TestTradingSignal:
     def test_horizon_weights_used(self) -> None:
         """Weighted mix uses HORIZON_DEFAULT_WEIGHTS by default; medium
         carries the largest weight, so a strong-medium picture should
-        push the mix higher than the simple average would."""
+        push the mix higher than the simple average would.
+
+        T3 thresholds (BUY 0.30 / HOLD -0.10 / WATCH -0.45): pick a
+        medium-only input where the weighted mix clears BUY but the naive
+        simple average would not — this is what proves the weighting (not
+        just the magnitude) is doing the work.
+        """
 
         from mvp20.scoring import _trading_signal_from_mix
-        # short=0, medium=0.8, long=0 — default weights give
-        # 0 * 0.30 + 0.8 * 0.45 + 0 * 0.25 = 0.36 ⇒ HOLD
-        assert _trading_signal_from_mix(0.0, 0.8, 0.0) == "HOLD"
+        # short=0, medium=0.7, long=0 — default weights give
+        # 0 * 0.30 + 0.7 * 0.45 + 0 * 0.25 = 0.315 ⇒ BUY (≥ 0.30).
+        # The simple average would be 0.7 / 3 = 0.233 ⇒ only HOLD (≥ -0.10,
+        # < 0.30), so the BUY label here is attributable to medium's heavier
+        # weight rather than the raw magnitude.
+        assert _trading_signal_from_mix(0.0, 0.7, 0.0) == "BUY"
 
 
 # ---------------------------------------------------------------------------
@@ -635,6 +670,84 @@ def test_default_horizon_weights_sum_to_one() -> None:
     assert total == pytest.approx(1.0)
 
 
+# ---------------------------------------------------------------------------
+# Spec §28 default per-horizon component mix
+# ---------------------------------------------------------------------------
+
+
+def test_spec28_default_horizon_mix_component_weights_sum_to_one() -> None:
+    """Each horizon's 4 component weights must sum to 1.0 (so the mix is
+    a proper convex combination, not an arbitrary scaling)."""
+
+    for horizon, weights in SPEC28_DEFAULT_HORIZON_MIX.items():
+        total = sum(weights.values())
+        assert total == pytest.approx(1.0), (
+            f"horizon={horizon} weights={weights} sum={total}"
+        )
+
+
+def test_spec28_default_horizon_mix_short_emphasises_capital_sentiment() -> None:
+    """Short horizon must weight capital_sentiment > fundamental (intraday
+    moves are flow-driven). Long horizon must invert that ordering."""
+
+    s = SPEC28_DEFAULT_HORIZON_MIX["short"]
+    l = SPEC28_DEFAULT_HORIZON_MIX["long"]
+    assert s["capital_sentiment"] > s["fundamental"]
+    assert l["fundamental"] > l["capital_sentiment"]
+
+
+def test_score_company_horizons_diverge_without_explicit_override() -> None:
+    """Regression for the bug surfaced on 浪潮信息 (000977.SZ) where the
+    UI rendered 短/中/长 all equal because the BFF called ``score_company``
+    without supplying ``horizons``. After wiring SPEC §28 defaults inside
+    ``score_company``, three horizons must differ as long as the input
+    signal is not perfectly symmetric across components."""
+
+    stock_overlay = {"ts_code": "TEST.HORIZON", "industry_id": "TEST"}
+    # Inject only a fundamental signal (industry-driven) so the per-horizon
+    # weight on `fundamental` (short=0.20 vs long=0.60) directly shows up
+    # as a divergent total. No risk / priced-in / capital so the math is
+    # unambiguous.
+    aggregated = {
+        "industry_variables": [],
+        "company_event_score": 0.0,
+        "capital_sentiment_score": 0.0,
+        "risk_discount": 0.0,
+        "valuation_pressure": 0.0,
+        "priced_in_discount": 0.0,
+        "expectation_gap_score": 0.0,
+        "valuation_rerating_score": 0.0,
+        "nodes": {
+            "fund": {
+                "node_id": "fund",
+                "path_score": 0.5,
+                "direction": 1.0,
+                "name": "fundamental",
+            },
+        },
+        # Inject industry_contrib via the company-aggregate shortcut.
+        "company_event_score": 0.0,
+    }
+    # Use the envelope shape so industry_contrib flows through.
+    aggregated["industry_variables"] = [
+        {"score": 0.5, "weight": 1.0, "confidence": 1.0},
+    ]
+
+    result = score_company(
+        stock_overlay=stock_overlay,
+        aggregated_nodes=aggregated,
+    )
+    short_t = result["short_total"]
+    medium_t = result["medium_total"]
+    long_t = result["long_total"]
+    # Fundamental dominates ⇒ long > medium > short (since long has the
+    # heaviest fundamental weight: 0.60 vs 0.50 vs 0.20).
+    assert long_t > medium_t > short_t, (
+        f"expected long > medium > short with fundamental-only signal; "
+        f"got short={short_t} medium={medium_t} long={long_t}"
+    )
+
+
 def test_role_configuration_takes_priority_over_layer_inference() -> None:
     stock_overlay = {
         "ts_code": "ROLE.TEST",
@@ -744,7 +857,7 @@ def test_scoring_keeps_legacy_layer_inference_when_roles_are_absent() -> None:
     assert result["role_components"] == {}
 
 
-def test_confidence_role_compresses_final_score_without_adding_signal() -> None:
+def test_confidence_role_recorded_as_band_without_compressing_base() -> None:
     stock_overlay = {
         "ts_code": "CONF.TEST",
         "industry_id": "TEST",
@@ -790,8 +903,13 @@ def test_confidence_role_compresses_final_score_without_adding_signal() -> None:
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
     assert result["company_score"]["components"]["industry_contrib"] == pytest.approx(1.0)
+    # R-2c: confidence is a SEPARATE conviction band, recorded but NOT multiplied
+    # into the point estimate. Multiplying it (the old 0.5× here) conflated "how
+    # sure" with "how strong" and crushed low-coverage names. So base stays at the
+    # signal's own magnitude (1.0) while the 0.5 confidence is surfaced alongside.
     assert result["role_components"]["confidence_multiplier"] == pytest.approx(0.5)
-    assert result["final_score"]["base_score"] == pytest.approx(0.5)
+    assert result["final_score"]["components"]["confidence_multiplier"] == pytest.approx(0.5)
+    assert result["final_score"]["base_score"] == pytest.approx(1.0)
 
 
 def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -> None:
@@ -822,6 +940,14 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
                 "layer": "funding_sentiment",
                 "field_role": "multiplier",
                 "score_target": "theme_multiplier",
+                "participates_in_score": True,
+            },
+            {
+                "node_id": "liquidity",
+                "node_name": "liquidity",
+                "layer": "funding_sentiment",
+                "field_role": "multiplier",
+                "score_target": "liquidity_multiplier",
                 "participates_in_score": True,
             },
             {
@@ -859,6 +985,14 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
             "participates_in_score": True,
             "score_enabled": True,
         },
+        "liquidity": {
+            "score": 0.4,
+            "confidence": 1.0,
+            "field_role": "multiplier",
+            "score_target": "liquidity_multiplier",
+            "participates_in_score": True,
+            "score_enabled": True,
+        },
         "uncertainty": {
             "score": -0.1,
             "confidence": 1.0,
@@ -874,9 +1008,19 @@ def test_semantic_targets_route_to_additive_multiplier_and_discount_channels() -
     assert result["company_score"]["components"]["industry_contrib"] == pytest.approx(1.0)
     assert result["role_components"]["funding_score"] == pytest.approx(0.2)
     assert result["role_components"]["theme_multiplier"] == pytest.approx(1.5)
+    assert result["role_components"]["liquidity_multiplier"] == pytest.approx(1.4)
     assert result["role_components"]["risk_discount"] == pytest.approx(0.1)
-    assert result["core_final_score"]["base_score"] == pytest.approx(1.6)
+    # R-2b: fundamental is the single-node coverage-weighted mean = 1.0 (no
+    # tanh). The post-tanh ``fundamental *= multiplier_stack`` was REMOVED, so
+    # the theme_multiplier (1.5) no longer scales the fundamental block — it is
+    # still routed to role_components for downstream/timing channels. The
+    # additive funding_score (+0.2) and the risk_discount (-0.1) net +0.1 on top
+    # of the fundamental: base_score = 1.0 + 0.2 - 0.1 = 1.1. The semantic
+    # routing intent stands: additive→add, discount→subtract, multiplier→its
+    # own channel. Pre-R-2b this was tanh(1.0)*1.5 + 0.1.
+    assert result["core_final_score"]["base_score"] == pytest.approx(1.0 + 0.2 - 0.1)
     assert result["market_adapter"]["market_code"] == "US"
+    assert result["market_adapter"]["raw_factor_signals"]["liquidity"] == pytest.approx(0.4)
     assert result["final_score"]["base_score"] > result["core_final_score"]["base_score"]
 
 
@@ -925,7 +1069,243 @@ def test_score_company_outputs_core_and_market_adjusted_scores() -> None:
 
     result = score_company(stock_overlay, aggregated_nodes=aggregated)
 
-    assert result["core_final_score"]["base_score"] == pytest.approx(1.5)
+    # R-2b: fundamental is the single-node coverage-weighted mean = 1.0 (no
+    # tanh), and the ``fundamental *= multiplier_stack`` step was REMOVED, so
+    # the theme_multiplier (1.5) no longer scales the fundamental block. No
+    # additive/discount channels here ⇒ core base_score = 1.0. Pre-R-2b:
+    # tanh(1.0)*1.5.
+    assert result["core_final_score"]["base_score"] == pytest.approx(1.0)
     assert result["market_adapter"]["market_code"] == "CN_A"
     assert result["market_adjusted_final_score"] is result["final_score"]
     assert result["short_total"] == pytest.approx(result["final_score"]["short_total"])
+
+
+# ---------------------------------------------------------------------------
+# Damped role-target roll-up: ``Σ(score×conf) / max(1.0, Σconf)``.
+#   * Σconf ≤ 1 (sparse / single low-conf node) → denominator floored to 1.0
+#     → identical to the raw confidence-weighted sum (UNCHANGED behaviour).
+#   * Σconf > 1 (signals stack) → averages, killing the inflation.
+# ---------------------------------------------------------------------------
+
+
+class TestDampedRoleTarget:
+    def _node(self, score: float, conf: float, target: str = "expectation_gap") -> dict:
+        return {"score": score, "confidence": conf, "score_target": target}
+
+    def test_sparse_single_low_conf_node_is_unchanged(self) -> None:
+        """One node score 0.8 conf 0.5: Σconf=0.5 ≤ 1 → max(1.0, 0.5)=1.0,
+        so damp = 0.8×0.5 / 1.0 = 0.4 == the non-damped sum (0.4)."""
+
+        from mvp20.scoring import _sum_role_target
+
+        agg = {"n1": self._node(0.8, 0.5)}
+        non_damped = _sum_role_target(agg, "expectation_gap", damp=False)
+        damped = _sum_role_target(agg, "expectation_gap", damp=True)
+        assert non_damped == pytest.approx(0.4)   # 0.8 * 0.5
+        assert damped == pytest.approx(0.4)        # / max(1.0, 0.5) = /1.0
+        assert damped == pytest.approx(non_damped)
+
+    def test_dense_signals_average_not_sum(self) -> None:
+        """Three nodes each score 0.8 conf 0.9: Σconf=2.7 > 1.
+        non-damped = 3 × (0.8×0.9) = 2.16.
+        damped = 2.16 / max(1.0, 2.7) = 2.16 / 2.7 = 0.8 (≈ per-node score)."""
+
+        from mvp20.scoring import _sum_role_target
+
+        agg = {f"n{i}": self._node(0.8, 0.9) for i in range(3)}
+        non_damped = _sum_role_target(agg, "expectation_gap", damp=False)
+        damped = _sum_role_target(agg, "expectation_gap", damp=True)
+        assert non_damped == pytest.approx(2.16)   # 3 * 0.72
+        assert damped == pytest.approx(0.8)         # 2.16 / 2.7
+        assert damped < non_damped
+
+    def test_absolute_true_dampens_magnitude(self) -> None:
+        """absolute=True takes abs(score) before ×conf, then damps once.
+        Three nodes score -0.8 conf 0.9: |−0.8|×0.9 = 0.72 each.
+        non-damped = 2.16; damped = 2.16 / 2.7 = 0.8."""
+
+        from mvp20.scoring import _sum_role_target
+
+        agg = {f"n{i}": self._node(-0.8, 0.9, "risk_discount") for i in range(3)}
+        non_damped = _sum_role_target(agg, "risk_discount", absolute=True, damp=False)
+        damped = _sum_role_target(agg, "risk_discount", absolute=True, damp=True)
+        assert non_damped == pytest.approx(2.16)
+        assert damped == pytest.approx(0.8)
+        assert damped < non_damped
+
+    def test_no_matching_node_returns_zero(self) -> None:
+        from mvp20.scoring import _sum_role_target
+
+        assert _sum_role_target({}, "expectation_gap", damp=True) == pytest.approx(0.0)
+
+
+class TestDampedRoleTargets:
+    """``_sum_role_targets`` over a SET — damping applied ONCE over the
+    combined group (accumulate total + conf_sum across all targets, divide
+    a single time), NOT per-target."""
+
+    def test_sparse_set_is_unchanged(self) -> None:
+        """One node (funding_score) score 0.8 conf 0.5 in a 2-target set:
+        Σconf=0.5 ≤ 1 → damp = 0.4 == non-damped sum."""
+
+        from mvp20.scoring import _sum_role_targets
+
+        agg = {"a": {"score": 0.8, "confidence": 0.5, "score_target": "funding_score"}}
+        targets = {"funding_score", "sentiment_score"}
+        non_damped = _sum_role_targets(agg, targets, damp=False)
+        damped = _sum_role_targets(agg, targets, damp=True)
+        assert non_damped == pytest.approx(0.4)
+        assert damped == pytest.approx(0.4)
+        assert damped == pytest.approx(non_damped)
+
+    def test_dense_set_dampens_once_over_combined_group(self) -> None:
+        """Three nodes (one per target in the set), each score 0.8 conf 0.9:
+        combined Σ(score×conf)=2.16, combined Σconf=2.7.
+        damped = 2.16 / max(1.0, 2.7) = 0.8 — a SINGLE divide over the group,
+        not 3 separate per-target damps (each of which would also be 0.8 and
+        then SUM back to 2.4)."""
+
+        from mvp20.scoring import _sum_role_targets
+
+        agg = {
+            "a": {"score": 0.8, "confidence": 0.9, "score_target": "funding_score"},
+            "b": {"score": 0.8, "confidence": 0.9, "score_target": "sentiment_score"},
+            "c": {"score": 0.8, "confidence": 0.9, "score_target": "capital_sentiment"},
+        }
+        targets = {"funding_score", "sentiment_score", "capital_sentiment"}
+        non_damped = _sum_role_targets(agg, targets, damp=False)
+        damped = _sum_role_targets(agg, targets, damp=True)
+        assert non_damped == pytest.approx(2.16)
+        assert damped == pytest.approx(0.8)        # combined-once, NOT 2.4
+        assert damped < non_damped
+
+    def test_absolute_true_set_dampens_once(self) -> None:
+        from mvp20.scoring import _sum_role_targets
+
+        agg = {
+            "a": {"score": -0.8, "confidence": 0.9, "score_target": "risk_discount"},
+            "b": {"score": -0.8, "confidence": 0.9, "score_target": "overheat_risk"},
+            "c": {"score": -0.8, "confidence": 0.9, "score_target": "volatility_risk"},
+        }
+        targets = {"risk_discount", "overheat_risk", "volatility_risk"}
+        non_damped = _sum_role_targets(agg, targets, absolute=True, damp=False)
+        damped = _sum_role_targets(agg, targets, absolute=True, damp=True)
+        assert non_damped == pytest.approx(2.16)
+        assert damped == pytest.approx(0.8)
+        assert damped < non_damped
+
+    def test_no_matching_node_returns_zero(self) -> None:
+        from mvp20.scoring import _sum_role_targets
+
+        assert _sum_role_targets({}, {"funding_score"}, damp=True) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Fundamental collapse: synthetic dead-sink nodes (fundamental_score /
+# optionality_score) collapse into a SINGLE "realtime_fundamental" damped-mean
+# industry variable so industry_contrib does not scale linearly with the
+# synthetic node count.
+# ---------------------------------------------------------------------------
+
+
+class TestFundamentalCollapse:
+    def _governed_overlay(self) -> dict:
+        # One authored governance node so _has_role_governance() is True and
+        # the synthetic dead-sink rescue path runs. The authored node carries
+        # no aggregate score (kept out of the collapse below).
+        return {
+            "ts_code": "X",
+            "industry_id": "TEST",
+            "nodes": [
+                {
+                    "node_id": "auth",
+                    "dp_id": "L5.is.eps",
+                    "node_name": "auth",
+                    "layer": "industry_macro",
+                    "field_role": "score_component",
+                    "score_target": "fundamental_score",
+                    "participates_in_score": True,
+                }
+            ],
+        }
+
+    def _synthetic(self, score: float, conf: float) -> dict:
+        return {
+            "score": score,
+            "confidence": conf,
+            "score_target": "fundamental_score",
+            "synthetic_realtime": True,
+            "participates_in_score": True,
+            "score_enabled": True,
+        }
+
+    def test_three_synthetic_nodes_collapse_to_one_damped_mean(self) -> None:
+        """3 synthetic fundamental_score nodes (0.6/0.9, 0.9/0.9, 0.3/0.9).
+        Σ(score×conf) = (0.6+0.9+0.3)×0.9 = 1.8×0.9 = 1.62; Σconf = 2.7.
+        damped mean = 1.62 / max(1.0, 2.7) = 0.6. Exactly ONE
+        "realtime_fundamental" var, score 0.6, conf = mean(0.9)=0.9."""
+
+        from mvp20.scoring import _industry_variables_from_flat
+
+        overlay = self._governed_overlay()
+        agg = {
+            # authored node has no real score → excluded from the collapse,
+            # but its presence keeps the governance path on.
+            "auth": {
+                "score": 0.0, "confidence": 0.5,
+                "field_role": "score_component",
+                "score_target": "fundamental_score",
+                "participates_in_score": True, "score_enabled": True,
+            },
+            "X:dp1:rt": self._synthetic(0.6, 0.9),
+            "X:dp2:rt": self._synthetic(0.9, 0.9),
+            "X:dp3:rt": self._synthetic(0.3, 0.9),
+        }
+        ivars = _industry_variables_from_flat(agg, overlay)
+        rt = [v for v in ivars if v["node_id"] == "realtime_fundamental"]
+        assert len(rt) == 1                              # collapsed to ONE var
+        assert rt[0]["score"] == pytest.approx(0.6)      # 1.62 / 2.7
+        assert rt[0]["confidence"] == pytest.approx(0.9)  # mean conf
+        assert rt[0]["name"] == "realtime_fundamental"
+
+    def test_industry_contrib_does_not_scale_linearly_with_node_count(self) -> None:
+        """1 vs 3 synthetic nodes of the SAME score/conf must NOT triple the
+        industry contribution. With per-node summing (the old behaviour) 3
+        nodes would have summed to 3×. With the damped-mean collapse the
+        contribution stays bounded near the single-node value."""
+
+        from mvp20.scoring import score_company
+
+        overlay = self._governed_overlay()
+
+        def contrib_for(n: int) -> float:
+            agg = {
+                "auth": {
+                    "score": 0.0, "confidence": 0.5,
+                    "field_role": "score_component",
+                    "score_target": "fundamental_score",
+                    "participates_in_score": True, "score_enabled": True,
+                },
+            }
+            for i in range(n):
+                agg[f"X:dp{i}:rt"] = self._synthetic(0.8, 0.9)
+            res = score_company(overlay, aggregated_nodes=agg)
+            return res["company_score"]["components"]["industry_contrib"]
+
+        one = contrib_for(1)
+        three = contrib_for(3)
+        # Two stages now bound the contribution against node count:
+        #  (1) the dead-sink rescue collapses the synthetic nodes into ONE
+        #      "realtime_fundamental" var via a damped mean — 1 node →
+        #      0.72/max(1.0,0.9)=0.72; 3 nodes → 2.16/2.7=0.8.
+        #  (2) R-2b: ``industry_contrib`` is then the RAW weighted_sum of the
+        #      industry vars = collapsed_score × weight, weight = mean_conf (0.9)
+        #      since the synthetic var defaults the other multipliers to 1.0:
+        #        1 node → 0.72 * 0.9 = 0.648
+        #        3 nodes → 0.80 * 0.9 = 0.720
+        assert one == pytest.approx(0.648)
+        assert three == pytest.approx(0.72)
+        # Crucially NOT linear: 3 nodes is ~1.1×, not 3× (per-node summing
+        # would have been 3 * 0.648 ≈ 1.94).
+        assert three < 3.0 * one
+        assert three < 1.0
