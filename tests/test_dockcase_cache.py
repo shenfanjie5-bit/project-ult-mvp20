@@ -33,6 +33,13 @@ def _income_csv() -> str:
 def cache_root(tmp_path, monkeypatch):
     monkeypatch.setenv("DOCKCASE_ROOT", str(tmp_path))
     monkeypatch.setenv("DOCKCASE_CACHE", "1")
+    # Explicit writeback precondition: build_quant_scores / factor_research
+    # panel set os.environ.setdefault("DOCKCASE_WRITEBACK", "0") at MODULE
+    # level as a scoring-run safety valve, so merely importing them earlier
+    # in the pytest process silently disables writeback and the refresh
+    # tests return 0 (observed as a full-suite-only, order-dependent
+    # failure). Pin the env this fixture actually assumes.
+    monkeypatch.setenv("DOCKCASE_WRITEBACK", "1")
     dc._PATH_CACHE.clear()
     _seed(tmp_path, "股票数据/财务数据/利润表", "600519.SH", _income_csv())
     return tmp_path
