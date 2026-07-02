@@ -979,6 +979,32 @@ def test_llm_stock_context_rejects_non_a_share_as_unsupported(running_server) ->
     assert body["data"]["context"] is None
 
 
+def test_llm_post_routes_reject_unsupported_market(running_server) -> None:
+    # ``market`` becomes a path segment in read_context_snapshot; the POST
+    # helper must refuse unsupported values (incl. traversal-shaped strings)
+    # exactly like the GET handlers, instead of joining them into paths.
+    host, port, *_ = running_server
+    for route in (
+        "/api/project-ult/llm/stock-decision",
+        "/api/project-ult/llm/stock-extraction",
+    ):
+        for market in ("US", "../../tmp"):
+            status, _h, body = _post(
+                host,
+                port,
+                route,
+                {
+                    "ts_code": "000977.SZ",
+                    "horizon": "5d",
+                    "market": market,
+                    "context_id": "20260701T000000-abcdef",
+                    "dry_run": True,
+                },
+            )
+            assert status == 400, (route, market, body)
+            assert body["error"]["code"] == "LLM_CONTEXT_ERROR"
+
+
 def test_score_missing_ts_code_returns_400(running_server) -> None:
     host, port, *_ = running_server
     status, _h, body = _get(host, port, "/api/project-ult/score")
@@ -1001,7 +1027,9 @@ def test_signal_5d_stock_endpoint_returns_honest_block(monkeypatch, tmp_path, ru
     monkeypatch.setattr(signal_5d, "ARTIFACT_DIR", tmp_path)
     artifact = {
         "market": "A_share",
-        "asof": "20260619",
+        # Dynamic asof: a hardcoded date trips STALE_AFTER_DAYS once the wall
+        # clock moves past it, flipping stale/validated and breaking the test.
+        "asof": time.strftime("%Y%m%d"),
         "horizon_days": 5,
         "target": signal_5d.TARGET_LABEL,
         "target_display": signal_5d.TARGET_DISPLAY,
@@ -1066,7 +1094,9 @@ def test_signal_5d_top_endpoint_is_a_share_only(monkeypatch, tmp_path, running_s
     monkeypatch.setattr(signal_5d, "ARTIFACT_DIR", tmp_path)
     artifact = {
         "market": "A_share",
-        "asof": "20260619",
+        # Dynamic asof: a hardcoded date trips STALE_AFTER_DAYS once the wall
+        # clock moves past it, flipping stale/validated and breaking the test.
+        "asof": time.strftime("%Y%m%d"),
         "horizon_days": 5,
         "target": signal_5d.TARGET_LABEL,
         "target_display": signal_5d.TARGET_DISPLAY,
@@ -1140,7 +1170,9 @@ def test_signal_up_5d_stock_top_and_score_embed(monkeypatch, tmp_path, running_s
     monkeypatch.setattr(signal_up_5d, "ARTIFACT_DIR", tmp_path)
     artifact = {
         "market": "A_share",
-        "asof": "20260619",
+        # Dynamic asof: a hardcoded date trips STALE_AFTER_DAYS once the wall
+        # clock moves past it, flipping stale/validated and breaking the test.
+        "asof": time.strftime("%Y%m%d"),
         "horizon_days": 5,
         "target": signal_up_5d.TARGET_LABEL,
         "target_display": signal_up_5d.TARGET_DISPLAY,
