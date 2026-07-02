@@ -222,26 +222,49 @@ export function MarketOverviewPage() {
   )
   const displayedSignalLabel = activeSource === 'up_5d' ? '5 日上涨概率' : '5 日相对胜率'
   const displayedSignalSource = activeSource === 'up_5d' ? 'signal_up_5d' : 'signal_5d'
-  const signalLoading = signalUp5dQuery.isLoading || signal5dQuery.isLoading
+  // Loading/error track the ACTIVE source only: once signal_up_5d is usable
+  // its rows render immediately even while the (unused) fallback query is
+  // still in flight — no spinner flicker from the inactive source.
+  const signalLoading =
+    activeSource === 'up_5d' ? signalUp5dQuery.isLoading : signal5dQuery.isLoading
   const signalError =
     activeSource === 'up_5d' ? signalUp5dQuery.isError : signal5dQuery.isError
-  const fallbackNote = usingFallback
+  // The fallback itself can be unusable too (stale artifact / no validated
+  // rows). In that state the "已回落" note would contradict the empty body,
+  // so surface "both sources down" explicitly instead.
+  const fallback5dArtifact = signal5dQuery.data?.artifact
+  const fallbackUnusable =
+    usingFallback &&
+    !signal5dQuery.isLoading &&
+    (fallback5dArtifact?.available === false ||
+      fallback5dArtifact?.stale === true ||
+      (fallback5dArtifact?.n_validated ?? 0) === 0)
+  const fallbackNote = usingFallback && !fallbackUnusable
     ? ' signal_up_5d 暂无已验证概率，已回落到 signal_5d 相对胜率。'
     : ''
+  const bothSourcesDownMessage = `signal_up_5d 暂无已验证概率，signal_5d ${
+    fallback5dArtifact?.stale
+      ? `已陈旧${fallback5dArtifact.asof ? `（asof ${fallback5dArtifact.asof}）` : ''}`
+      : '亦无已验证行'
+  }——两个 5 日信号源均不可用。`
   const signalEmptyMessage = unsupportedSignalMarket
     ? '港股 / 美股 5 日信号尚未完成独立校准。'
-    : `当前筛选条件下没有命中 A 股 ${displayedSignalLabel}。`
+    : fallbackUnusable
+      ? bothSourcesDownMessage
+      : `当前筛选条件下没有命中 A 股 ${displayedSignalLabel}。`
   const signalCardDescription = signalLoading
     ? '正在加载 A 股 5 日信号。'
     : signalError
       ? 'A 股 5 日信号接口暂时不可用。'
       : unsupportedSignalMarket
         ? '当前市场暂无已校准的 5 日信号。'
-        : signalArtifact?.stale && signalArtifact.asof
-          ? `A 股 ${displayedSignalLabel} artifact 已陈旧（asof ${signalArtifact.asof}）。${fallbackNote}`
-          : signalArtifact?.available === false
-            ? `A 股 ${displayedSignalSource} artifact 暂不可用。`
-            : `A 股 ${displayedSignalLabel}排序（top ${displayedSignals.length}）。${fallbackNote}`
+        : fallbackUnusable
+          ? bothSourcesDownMessage
+          : signalArtifact?.stale && signalArtifact.asof
+            ? `A 股 ${displayedSignalLabel} artifact 已陈旧（asof ${signalArtifact.asof}）。${fallbackNote}`
+            : signalArtifact?.available === false
+              ? `A 股 ${displayedSignalSource} artifact 暂不可用。`
+              : `A 股 ${displayedSignalLabel}排序（top ${displayedSignals.length}）。${fallbackNote}`
 
   function signalIsRenderable(row: OverviewSignalRow): boolean {
     return (
