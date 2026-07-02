@@ -39,6 +39,13 @@ dev = [
     # protobuf / pycryptodome / simplejson / pandas), so it installs cleanly on
     # CI without a daemon. Without it those 20 tests degrade to Inactive/KeyError.
     "futu-api>=9.0",
+    # scripts/audit_repo_binary_semantics.py + tests/test_repo_binary_semantics.py
+    # import PIL/numpy at module top; a missing PIL aborts the WHOLE pytest run
+    # at collection (observed on CI run 28559392929). numpy already arrives
+    # transitively via akshare→pandas but is declared explicitly because the
+    # test imports it directly.
+    "pillow>=10.0",
+    "numpy>=1.26",
 ]
 # Seven upstream project-ult modules vendored under upstream/. The 6 originally
 # planned (audit-eval / data-platform / entity-registry / graph-engine /

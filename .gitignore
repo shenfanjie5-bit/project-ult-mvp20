@@ -9,7 +9,10 @@ dist/
 *.egg-info/
 
 runtime/
-artifacts/
+# Root-anchored: a bare `artifacts/` would also swallow the curated
+# upstream/*/artifacts/frontend-api/ contract fixtures (see the vendored-
+# upstream section below for the scoped heavy-artifact ignores).
+/artifacts/
 raw_payload*.json
 provider_payload*.json
 payloads/
@@ -59,7 +62,14 @@ upstream/**/dist/
 upstream/**/.venv/
 upstream/**/.ruff_cache/
 upstream/**/.mypy_cache/
-upstream/**/artifacts/
+# Heavy generated artefacts stay ignored — but the curated frontend-api
+# JSON payloads under upstream/*/artifacts/frontend-api/ are the artifact-
+# backed serving surface the mvp20 adapters + test_server contract tests
+# read (~68KB total). The old blanket `upstream/**/artifacts/` rule kept
+# them out of git, so CI could never satisfy the 200-artifact-envelope
+# contract that passes locally. Ignore the heavy dirs specifically instead.
+upstream/**/benchmarks/artifacts/
+upstream/contracts/artifacts/
 
 # Claude Code session / plan state (per-user, not portable).
 .claude/
