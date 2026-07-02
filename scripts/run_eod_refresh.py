@@ -119,41 +119,64 @@ def _run_derive_inprocess() -> dict:
                 "elapsed_s": round(time.time() - t0, 1), "error": str(exc)}
 
 
+# Steps that consume the collected cross-section. Skipped (not run) when the
+# collect-core gate fails: deriving/scoring on a stale daily_basic/moneyflow
+# cross-section bakes mixed-freshness features into L11 and the signal
+# artifacts for a whole day (review finding #4).
+_DERIVE_CHAIN: list[tuple[str, list[str], int]] = [
+    ("derive-snapshot",
+     ["-m", "mvp20.cli", "derive-snapshot",
+      "--db", "runtime/hot.sqlite", "--no-show-stats"], 1800),
+    ("compile-overlays",
+     ["-m", "mvp20.cli", "compile-overlays",
+      "--db", "runtime/hot.sqlite"], 1800),
+    ("build-peer-context",
+     ["-m", "mvp20.cli", "build-peer-context"], 1800),
+    ("build-quant-scores", ["scripts/build_quant_scores.py"], 1800),
+    ("build-signal-5d", ["scripts/build_signal_5d.py"], 1800),
+    ("build-signal-up-5d", ["scripts/build_signal_up_5d.py"], 1800),
+]
+
+
 def main() -> int:
     t0 = time.time()
-    results = [
-        # step 0: FULL tushare collect (financials/forecast/express/etc. —
-        # the slow per-stock fetch_batch the minute-level launchd collector
-        # intentionally skips). One cycle then exit. Generous 3h budget.
-        _run("collect-full",
-             [PY, "scripts/collector.py", "--source", "tushare",
-              "--max-cycles", "1"], 10800),
-        # The full collector may be slow or partially fail on long per-stock
-        # endpoints. Re-run the fast cross-sectional market rows so EOD derives
-        # and signal artifacts always see the latest daily_basic / moneyflow.
-        _run("collect-core",
-             [PY, "scripts/collector.py", "--source", "tushare-core",
-              "--max-cycles", "1"], 900),
-        _run("collect-macro",
-             [PY, "scripts/collector.py", "--source", "tushare-macro",
-              "--max-cycles", "1"], 900),
-        _run_derive_inprocess(),
-        _run("derive-snapshot",
-             [PY, "-m", "mvp20.cli", "derive-snapshot",
-              "--db", "runtime/hot.sqlite", "--no-show-stats"], 1800),
-        _run("compile-overlays",
-             [PY, "-m", "mvp20.cli", "compile-overlays",
-              "--db", "runtime/hot.sqlite"], 1800),
-        _run("build-peer-context",
-             [PY, "-m", "mvp20.cli", "build-peer-context"], 1800),
-        _run("build-quant-scores",
-             [PY, "scripts/build_quant_scores.py"], 1800),
-        _run("build-signal-5d",
-             [PY, "scripts/build_signal_5d.py"], 1800),
-        _run("build-signal-up-5d",
-             [PY, "scripts/build_signal_up_5d.py"], 1800),
-    ]
+    results: list[dict] = []
+    # step 0: FULL tushare collect (financials/forecast/express/etc. —
+    # the slow per-stock fetch_batch the minute-level launchd collector
+    # intentionally skips). One cycle then exit. Generous 3h budget.
+    # Partial failure here is tolerated BY DESIGN (collect-core re-fetches
+    # the cross-section right after); it degrades to yesterday's financial
+    # rows, which is bounded and visible in the step output.
+    results.append(_run("collect-full",
+                        [PY, "scripts/collector.py", "--source", "tushare",
+                         "--max-cycles", "1"], 10800))
+    # The full collector may be slow or partially fail on long per-stock
+    # endpoints. Re-run the fast cross-sectional market rows so EOD derives
+    # and signal artifacts always see the latest daily_basic / moneyflow.
+    core = _run("collect-core",
+                [PY, "scripts/collector.py", "--source", "tushare-core",
+                 "--max-cycles", "1"], 900)
+    results.append(core)
+    results.append(_run("collect-macro",
+                        [PY, "scripts/collector.py", "--source", "tushare-macro",
+                         "--max-cycles", "1"], 900))
+
+    if core["ok"]:
+        results.append(_run_derive_inprocess())
+        for label, args, timeout_s in _DERIVE_CHAIN:
+            results.append(_run(label, [PY, *args], timeout_s))
+    else:
+        # Freshness gate: refuse to derive/score on a stale cross-section.
+        # Yesterday's derived layers stay in place (still consistent with
+        # each other); the exit code + skipped markers alert ops.
+        log.error("collect-core failed — skipping derive/score chain "
+                  "(refusing to bake a stale cross-section into signals)")
+        for label in ("derive", *(step[0] for step in _DERIVE_CHAIN)):
+            results.append({"step": label, "ok": False, "skipped": True,
+                            "reason": "gate: collect-core failed"})
+
     out = {"steps": results, "all_ok": all(r["ok"] for r in results),
+           "gated_on": "collect-core",
            "elapsed_s": round(time.time() - t0, 1),
            "finished_at": time.strftime("%Y-%m-%d %H:%M:%S")}
     print(json.dumps(out, ensure_ascii=False, indent=1))
