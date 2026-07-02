@@ -628,7 +628,17 @@ def _schema_one_line(node: dict) -> str | None:
         )
     sch = DP_SCHEMA.get(dp_id)
     if not sch:
-        return None
+        # Review #5: a fillable dp_id can be governance-registered without a
+        # DP_SCHEMA entry (34 such slots today). Silently omitting the row
+        # left codex free to invent field names with no validator backstop
+        # (validate_value returns [] for unregistered dp_ids). Emit an
+        # explicit conservative contract instead of no contract.
+        return (
+            "⚠️ 该 dp_id 未注册 DP_SCHEMA（schema_validator 不校验其 value 形状）。"
+            "保守输出：优先沿用 overlay 中该节点既有 value 的字段名与类型；"
+            "若既有 value 为空，用 {notes:str}（中文结论写入 notes）；"
+            "禁止发明新的字段名或复杂嵌套结构。"
+        )
     parts: list[str] = []
     req = sch.get("required") or {}
     opt = sch.get("optional") or {}

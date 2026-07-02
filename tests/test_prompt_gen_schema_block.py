@@ -91,8 +91,15 @@ def test_stock_attr_prompt_guidance_rejects_valuation_percentile_tags() -> None:
     assert "未使用具体估值数值或相对位置作为标签" in text
 
 
-def test_schema_one_line_unknown_dp_returns_none() -> None:
-    assert cpg._schema_one_line({"dp_id": "L99.fake.field", "data_status": "Unknown"}) is None
+def test_schema_one_line_unregistered_dp_emits_conservative_warning() -> None:
+    # Review #5: 34 governance-registered fillable dp_ids have no DP_SCHEMA
+    # entry and validate_value([]) gives them no backstop. The block must
+    # say so explicitly instead of silently omitting the row (which left
+    # codex free to invent field names).
+    spec = cpg._schema_one_line({"dp_id": "L99.fake.field", "data_status": "Unknown"})
+    assert spec is not None
+    assert "未注册 DP_SCHEMA" in spec
+    assert "禁止发明新的字段名" in spec
 
 
 def test_format_schema_block_has_rules_and_rows() -> None:
@@ -109,7 +116,13 @@ def test_format_schema_block_has_rules_and_rows() -> None:
     assert "内部抵消不当作渠道模式" in text
 
 
-def test_format_schema_block_empty_when_no_known_schema() -> None:
-    assert cpg._format_schema_block(
+def test_format_schema_block_renders_warning_row_for_unregistered_dp() -> None:
+    # Flipped from the old "empty block" contract: an unregistered fillable
+    # dp_id now gets an explicit ⚠️ row so the gap is visible in the prompt.
+    block = cpg._format_schema_block(
         [{"dp_id": "L99.fake.field", "data_status": "Unknown"}]
-    ) == []
+    )
+    text = "\n".join(block)
+    assert "`L99.fake.field`" in text
+    assert "未注册 DP_SCHEMA" in text
+    assert "铁律" in text
