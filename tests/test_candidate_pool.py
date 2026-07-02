@@ -221,4 +221,22 @@ def test_event_hit_becomes_review_packet_not_known(tmp_path: Path, monkeypatch) 
     event = next(r for r in rows if r["dp_id"] == "L9.company.earnings_guidance")
     assert event["data_status"] == "ReviewGated"
     assert event["value"] is None
-    assert event["review_packet"]["proposed_data_status"] == "Known"
+    # Review #11: assert the packet CONTENT, not just its existence — a
+    # reversed/broken packet would previously still pass this test.
+    packet = event["review_packet"]
+    assert packet["proposed_data_status"] == "Known"
+    assert packet["proposed_value"] == {"score": 0.5, "type": "预减"}
+    assert packet["direction"] == "negative"
+    assert packet["evidence_sources"] == [{"kind": "local_dp_id", "dp_id": "forecast"}]
+    # The gated row itself must still carry the evidence + review flag.
+    assert event["evidence_sources"] == [{"kind": "local_dp_id", "dp_id": "forecast"}]
+    assert event["quality"]["review_required"] is True
+    assert "not written as Known" in event["quality"]["reason"]
+    assert event["confidence"] == 0.82  # Known-status default
+    assert event["method"] == "script_fill.event_review_packet"
+    # And the gate must not over-fire: only the event-gated dp is gated.
+    # (In this minimal fixture the mocked parser inputs are empty, so the
+    # event row may be the only emission — the guard is then vacuous but
+    # still locks the invariant for richer fixtures.)
+    others = [r for r in rows if r["dp_id"] != "L9.company.earnings_guidance"]
+    assert all(r["data_status"] != "ReviewGated" for r in others)
