@@ -1,0 +1,1 @@
+import{r as e,t}from"./client-YoYPQALu.js";function n(n={}){return e({queryKey:[`subsystems`,`status`],queryFn:()=>t.get(`/subsystems/status`),enabled:n.enabled??!0})}function r(n=7,r={}){return e({queryKey:[`subsystems`,`history`,n],queryFn:()=>t.get(`/subsystems/history?days=${n}`),enabled:r.enabled??!0})}export{n,r as t};

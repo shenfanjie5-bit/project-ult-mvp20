@@ -1,0 +1,2 @@
+Official python-build-standalone license collection at release 20260203, source commit 0f1d12e309d6705556d4fdcfdd85bd6b38b06bb1.
+This collection includes licenses for supported components; individual platforms may not contain every component. CPython license and Python package licenses are also retained inside each runtime and packages directory. This file does not replace or relicense those original notices.

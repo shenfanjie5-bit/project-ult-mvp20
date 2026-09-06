@@ -1,0 +1,1 @@
+import{r as e,t}from"./client-YoYPQALu.js";function n(n=`latest`,r={}){return e({queryKey:[`recommendations`,n],queryFn:()=>t.get(n===`latest`?`/recommendations/latest`:`/recommendations/${n}`),enabled:r.enabled??!0,retry:!1})}export{n as t};

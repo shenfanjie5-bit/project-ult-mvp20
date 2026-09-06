@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-C_NKgizd.js";var t=e();function n({label:e}){return(0,t.jsx)(`span`,{className:`rounded-md bg-[var(--bg-secondary)] px-2 py-1 text-[11px] font-medium text-[var(--text-secondary)]`,children:e})}export{n as t};
